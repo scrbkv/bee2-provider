@@ -101,6 +101,7 @@ extern const OSSL_DISPATCH bee2_brng_hmac_hbelt_functions[];
 extern const OSSL_DISPATCH bee2_bign_256_keymgmt_functions[];
 extern const OSSL_DISPATCH bee2_bign_384_keymgmt_functions[];
 extern const OSSL_DISPATCH bee2_bign_512_keymgmt_functions[];
+extern const OSSL_DISPATCH bee2_bign_keymgmt_functions[];
 
 /* ---- KEYEXCH dispatch tables ------------------------------------- */
 
@@ -113,6 +114,7 @@ extern const OSSL_DISPATCH bee2_bign_keyexchange_functions[];
 extern const OSSL_DISPATCH bee2_bign_256_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_384_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_512_signature_functions[];
+extern const OSSL_DISPATCH bee2_bign_generic_signature_functions[];
 
 /* ---- Asymmetric cipher dispatch tables ---------------------------- */
 
@@ -126,9 +128,9 @@ extern const OSSL_DISPATCH bee2_bign_384_pem_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_384_der_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_512_pem_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_512_der_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_256_decoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_384_decoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_512_decoder_functions[];
+extern const OSSL_DISPATCH bee2_bign_pem_encoder_functions[];
+extern const OSSL_DISPATCH bee2_bign_der_encoder_functions[];
+extern const OSSL_DISPATCH bee2_bign_decoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_store_functions[];
 
 /* ---- CORE BIO helpers -------------------------------------------- */

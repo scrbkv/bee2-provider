@@ -80,14 +80,11 @@ static const bee2_oid_definition_t bee2_oid_definitions[] = {
 
 static int bee2_register_bign_oids(void) {
     int nid_bign_pubkey;
-    static const struct {
-        const char *signature_oid;
-        const char *digest_oid;
-    } signature_ids[] = {{BEE2_OID_BIGN_WITH_HSPEC, NULL},
-                         {BEE2_OID_BIGN_WITH_HBELT, BEE2_OID_BELT_HASH},
-                         {BEE2_OID_BIGN_WITH_BASH256, BEE2_OID_BASH256},
-                         {BEE2_OID_BIGN_WITH_BASH384, BEE2_OID_BASH384},
-                         {BEE2_OID_BIGN_WITH_BASH512, BEE2_OID_BASH512}};
+    static const char *signature_oids[] = {BEE2_OID_BIGN_WITH_HSPEC,
+                                           BEE2_OID_BIGN_WITH_HBELT,
+                                           BEE2_OID_BIGN_WITH_BASH256,
+                                           BEE2_OID_BIGN_WITH_BASH384,
+                                           BEE2_OID_BIGN_WITH_BASH512};
     size_t i;
 
     for (i = 0; i < sizeof(bee2_oid_definitions) / sizeof(bee2_oid_definitions[0]); ++i) {
@@ -100,13 +97,10 @@ static int bee2_register_bign_oids(void) {
     nid_bign_pubkey = OBJ_txt2nid(BEE2_OID_BIGN_PUBKEY);
     if (nid_bign_pubkey == NID_undef)
         return 0;
-    for (i = 0; i < sizeof(signature_ids) / sizeof(signature_ids[0]); ++i) {
-        int signature_nid = OBJ_txt2nid(signature_ids[i].signature_oid);
-        int digest_nid =
-            signature_ids[i].digest_oid ? OBJ_txt2nid(signature_ids[i].digest_oid) : NID_undef;
+    for (i = 0; i < sizeof(signature_oids) / sizeof(signature_oids[0]); ++i) {
+        int signature_nid = OBJ_txt2nid(signature_oids[i]);
         if (signature_nid == NID_undef ||
-            (signature_ids[i].digest_oid && digest_nid == NID_undef) ||
-            !bee2_add_sigid(signature_nid, digest_nid, nid_bign_pubkey))
+            !bee2_add_sigid(signature_nid, NID_undef, nid_bign_pubkey))
             return 0;
     }
     return 1;
@@ -298,7 +292,11 @@ static const OSSL_ALGORITHM bee2_rands[] = {{BEE2_ALG_BRNG_CTR_HBELT,
                                              "BRNG HMAC over HBELT (STB 34.101.47)"},
                                             {NULL, NULL, NULL, NULL}};
 
-static const OSSL_ALGORITHM bee2_keymgmts[] = {{BEE2_ALG_BIGN_256,
+static const OSSL_ALGORITHM bee2_keymgmts[] = {{BEE2_ALG_BIGN_KEY,
+                                                "provider=bee2",
+                                                bee2_bign_keymgmt_functions,
+                                                "BIGN key management for encoded keys"},
+                                               {BEE2_ALG_BIGN_256,
                                                 "provider=bee2",
                                                 bee2_bign_256_keymgmt_functions,
                                                 "BIGN key management, curve 256-bit"},
@@ -312,7 +310,11 @@ static const OSSL_ALGORITHM bee2_keymgmts[] = {{BEE2_ALG_BIGN_256,
                                                 "BIGN key management, curve 512-bit"},
                                                {NULL, NULL, NULL, NULL}};
 
-static const OSSL_ALGORITHM bee2_keyexchanges[] = {{BEE2_ALG_BIGN_256,
+static const OSSL_ALGORITHM bee2_keyexchanges[] = {{BEE2_ALG_BIGN,
+                                                    "provider=bee2",
+                                                    bee2_bign_keyexchange_functions,
+                                                    "BIGN Diffie--Hellman key agreement"},
+                                                   {BEE2_ALG_BIGN_256,
                                                     "provider=bee2",
                                                     bee2_bign_keyexchange_functions,
                                                     "BIGN-256 Diffie--Hellman key agreement"},
@@ -326,7 +328,11 @@ static const OSSL_ALGORITHM bee2_keyexchanges[] = {{BEE2_ALG_BIGN_256,
                                                     "BIGN-512 Diffie--Hellman key agreement"},
                                                    {NULL, NULL, NULL, NULL}};
 
-static const OSSL_ALGORITHM bee2_signatures[] = {{BEE2_ALG_BIGN_256 ":" BEE2_ALG_BIGN_WITH_HSPEC
+static const OSSL_ALGORITHM bee2_signatures[] = {{BEE2_ALG_BIGN,
+                                                  "provider=bee2",
+                                                  bee2_bign_generic_signature_functions,
+                                                  "BIGN signature for encoded keys"},
+                                                 {BEE2_ALG_BIGN_256 ":" BEE2_ALG_BIGN_WITH_HSPEC
                                                                     ":" BEE2_ALG_BIGN_WITH_HBELT
                                                                     ":" BEE2_ALG_BIGN_WITH_BASH256,
                                                   "provider=bee2",
@@ -343,6 +349,22 @@ static const OSSL_ALGORITHM bee2_signatures[] = {{BEE2_ALG_BIGN_256 ":" BEE2_ALG
                                                  {NULL, NULL, NULL, NULL}};
 
 static const OSSL_ALGORITHM bee2_encoders[] = {
+    {BEE2_ALG_BIGN_KEY,
+     "provider=bee2,output=pem,structure=PrivateKeyInfo",
+     bee2_bign_pem_encoder_functions,
+     "BIGN private key encoder (PEM, PKCS#8)"},
+    {BEE2_ALG_BIGN_KEY,
+     "provider=bee2,output=der,structure=PrivateKeyInfo",
+     bee2_bign_der_encoder_functions,
+     "BIGN private key encoder (DER, PKCS#8)"},
+    {BEE2_ALG_BIGN_KEY,
+     "provider=bee2,output=pem,structure=SubjectPublicKeyInfo",
+     bee2_bign_pem_encoder_functions,
+     "BIGN public key encoder (PEM, SPKI)"},
+    {BEE2_ALG_BIGN_KEY,
+     "provider=bee2,output=der,structure=SubjectPublicKeyInfo",
+     bee2_bign_der_encoder_functions,
+     "BIGN public key encoder (DER, SPKI)"},
     {BEE2_ALG_BIGN_256,
      "provider=bee2,output=pem,structure=PrivateKeyInfo",
      bee2_bign_256_pem_encoder_functions,
@@ -394,78 +416,14 @@ static const OSSL_ALGORITHM bee2_encoders[] = {
     {NULL, NULL, NULL, NULL}};
 
 static const OSSL_ALGORITHM bee2_decoders[] = {
-    {BEE2_ALG_BIGN_256,
-     "provider=bee2,input=der,structure=SubjectPublicKeyInfo",
-     bee2_bign_256_decoder_functions,
-     "BIGN-256 public key decoder (DER, SPKI)"},
-    {BEE2_ALG_BIGN_256,
-     "provider=bee2,input=pem,structure=SubjectPublicKeyInfo",
-     bee2_bign_256_decoder_functions,
-     "BIGN-256 public key decoder (PEM, SPKI)"},
-    {BEE2_ALG_BIGN_384,
-     "provider=bee2,input=der,structure=SubjectPublicKeyInfo",
-     bee2_bign_384_decoder_functions,
-     "BIGN-384 public key decoder (DER, SPKI)"},
-    {BEE2_ALG_BIGN_384,
-     "provider=bee2,input=pem,structure=SubjectPublicKeyInfo",
-     bee2_bign_384_decoder_functions,
-     "BIGN-384 public key decoder (PEM, SPKI)"},
-    {BEE2_ALG_BIGN_512,
-     "provider=bee2,input=der,structure=SubjectPublicKeyInfo",
-     bee2_bign_512_decoder_functions,
-     "BIGN-512 public key decoder (DER, SPKI)"},
-    {BEE2_ALG_BIGN_512,
-     "provider=bee2,input=pem,structure=SubjectPublicKeyInfo",
-     bee2_bign_512_decoder_functions,
-     "BIGN-512 public key decoder (PEM, SPKI)"},
-    {BEE2_ALG_BIGN_256,
+    {BEE2_ALG_BIGN_KEY,
      "provider=bee2,input=der,structure=PrivateKeyInfo",
-     bee2_bign_256_decoder_functions,
-     "BIGN-256 private key decoder (DER, PKCS#8)"},
-    {BEE2_ALG_BIGN_256,
-     "provider=bee2,input=pem,structure=PrivateKeyInfo",
-     bee2_bign_256_decoder_functions,
-     "BIGN-256 private key decoder (PEM, PKCS#8)"},
-    {BEE2_ALG_BIGN_256,
-     "provider=bee2,input=der,structure=pkcs8",
-     bee2_bign_256_decoder_functions,
-     "BIGN-256 private key decoder (DER, PKCS#8)"},
-    {BEE2_ALG_BIGN_256,
-     "provider=bee2,input=pem,structure=pkcs8",
-     bee2_bign_256_decoder_functions,
-     "BIGN-256 private key decoder (PEM, PKCS#8)"},
-    {BEE2_ALG_BIGN_384,
-     "provider=bee2,input=der,structure=PrivateKeyInfo",
-     bee2_bign_384_decoder_functions,
-     "BIGN-384 private key decoder (DER, PKCS#8)"},
-    {BEE2_ALG_BIGN_384,
-     "provider=bee2,input=pem,structure=PrivateKeyInfo",
-     bee2_bign_384_decoder_functions,
-     "BIGN-384 private key decoder (PEM, PKCS#8)"},
-    {BEE2_ALG_BIGN_384,
-     "provider=bee2,input=der,structure=pkcs8",
-     bee2_bign_384_decoder_functions,
-     "BIGN-384 private key decoder (DER, PKCS#8)"},
-    {BEE2_ALG_BIGN_384,
-     "provider=bee2,input=pem,structure=pkcs8",
-     bee2_bign_384_decoder_functions,
-     "BIGN-384 private key decoder (PEM, PKCS#8)"},
-    {BEE2_ALG_BIGN_512,
-     "provider=bee2,input=der,structure=PrivateKeyInfo",
-     bee2_bign_512_decoder_functions,
-     "BIGN-512 private key decoder (DER, PKCS#8)"},
-    {BEE2_ALG_BIGN_512,
-     "provider=bee2,input=pem,structure=PrivateKeyInfo",
-     bee2_bign_512_decoder_functions,
-     "BIGN-512 private key decoder (PEM, PKCS#8)"},
-    {BEE2_ALG_BIGN_512,
-     "provider=bee2,input=der,structure=pkcs8",
-     bee2_bign_512_decoder_functions,
-     "BIGN-512 private key decoder (DER, PKCS#8)"},
-    {BEE2_ALG_BIGN_512,
-     "provider=bee2,input=pem,structure=pkcs8",
-     bee2_bign_512_decoder_functions,
-     "BIGN-512 private key decoder (PEM, PKCS#8)"},
+     bee2_bign_decoder_functions,
+     "BIGN private key decoder (DER, PKCS#8)"},
+    {BEE2_ALG_BIGN_KEY,
+     "provider=bee2,input=der,structure=SubjectPublicKeyInfo",
+     bee2_bign_decoder_functions,
+     "BIGN public key decoder (DER, SPKI)"},
     {NULL, NULL, NULL, NULL}};
 
 static const OSSL_ALGORITHM bee2_store_loaders[] = {

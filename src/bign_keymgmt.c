@@ -139,6 +139,11 @@ static void *bign512_new(void *provctx) {
     return bign_new_common(bee2_bign_variant_512());
 }
 
+static void *bign_new(void *provctx) {
+    (void)provctx;
+    return bign_new_common(NULL);
+}
+
 static void bign_key_free(void *vkey) {
     bee2_bign_key_t *key = vkey;
     if (!key)
@@ -664,6 +669,14 @@ static const char *bign512_query_operation_name(int operation_id) {
     return NULL;
 }
 
+static const char *bign_query_operation_name(int operation_id) {
+    if (operation_id == OSSL_OP_SIGNATURE || operation_id == OSSL_OP_KEYEXCH)
+        return "bign";
+    if (operation_id == OSSL_OP_ASYM_CIPHER)
+        return "bign-keytransport";
+    return NULL;
+}
+
 #ifdef OSSL_FUNC_KEYMGMT_IMPORT_TYPES_EX
 #define BEE2_BIGN_KEYMGMT_IMPORT_TYPES_EX_DISPATCH \
     {OSSL_FUNC_KEYMGMT_IMPORT_TYPES_EX, (void (*)(void))bign_import_types_ex},
@@ -709,3 +722,23 @@ static const char *bign512_query_operation_name(int operation_id) {
 BEE2_BIGN_KEYMGMT_DISPATCH(256, bign256_new, bign256_gen_init, bign256_query_operation_name);
 BEE2_BIGN_KEYMGMT_DISPATCH(384, bign384_new, bign384_gen_init, bign384_query_operation_name);
 BEE2_BIGN_KEYMGMT_DISPATCH(512, bign512_new, bign512_gen_init, bign512_query_operation_name);
+
+const OSSL_DISPATCH bee2_bign_keymgmt_functions[] = {
+    {OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))bign_new},
+    {OSSL_FUNC_KEYMGMT_FREE, (void (*)(void))bign_key_free},
+    {OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))bign_get_params},
+    {OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))bign_gettable_params},
+    {OSSL_FUNC_KEYMGMT_SET_PARAMS, (void (*)(void))bign_set_params},
+    {OSSL_FUNC_KEYMGMT_SETTABLE_PARAMS, (void (*)(void))bign_settable_params},
+    {OSSL_FUNC_KEYMGMT_HAS, (void (*)(void))bign_has},
+    {OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))bign_match},
+    {OSSL_FUNC_KEYMGMT_VALIDATE, (void (*)(void))bign_validate},
+    {OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))bign_load},
+    {OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))bign_import},
+    {OSSL_FUNC_KEYMGMT_IMPORT_TYPES, (void (*)(void))bign_import_types},
+    BEE2_BIGN_KEYMGMT_IMPORT_TYPES_EX_DISPATCH{OSSL_FUNC_KEYMGMT_EXPORT,
+                                               (void (*)(void))bign_export},
+    {OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))bign_export_types},
+    BEE2_BIGN_KEYMGMT_EXPORT_TYPES_EX_DISPATCH{OSSL_FUNC_KEYMGMT_DUP, (void (*)(void))bign_dup},
+    {OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME, (void (*)(void))bign_query_operation_name},
+    {0, NULL}};

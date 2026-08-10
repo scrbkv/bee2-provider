@@ -453,6 +453,12 @@ static void *bign512_sig_newctx(void *provctx, const char *propq) {
     return bign_sig_newctx_common(bee2_bign_variant_512());
 }
 
+static void *bign_sig_newctx(void *provctx, const char *propq) {
+    (void)provctx;
+    (void)propq;
+    return bign_sig_newctx_common(NULL);
+}
+
 static void bign_sig_freectx(void *vctx) {
     bee2_bign_sig_ctx_t *ctx = vctx;
     if (!ctx)
@@ -819,6 +825,7 @@ static const OSSL_PARAM *bign_sig_gettable_ctx_params(void *vctx, void *provctx)
 static const char *const bee2_bign256_key_types[] = {"bign-256", NULL};
 static const char *const bee2_bign384_key_types[] = {"bign-384", NULL};
 static const char *const bee2_bign512_key_types[] = {"bign-512", NULL};
+static const char *const bee2_bign_key_types[] = {"bign", NULL};
 
 static const char **bign_sig_query_key_types_256(void) {
     return (const char **)bee2_bign256_key_types;
@@ -830,6 +837,10 @@ static const char **bign_sig_query_key_types_384(void) {
 
 static const char **bign_sig_query_key_types_512(void) {
     return (const char **)bee2_bign512_key_types;
+}
+
+static const char **bign_sig_query_key_types(void) {
+    return (const char **)bee2_bign_key_types;
 }
 
 #ifdef OSSL_FUNC_SIGNATURE_QUERY_KEY_TYPES
@@ -865,3 +876,4 @@ static const char **bign_sig_query_key_types_512(void) {
 BEE2_BIGN_SIG_DISPATCH(256, bign256_sig_newctx, bign_sig_query_key_types_256);
 BEE2_BIGN_SIG_DISPATCH(384, bign384_sig_newctx, bign_sig_query_key_types_384);
 BEE2_BIGN_SIG_DISPATCH(512, bign512_sig_newctx, bign_sig_query_key_types_512);
+BEE2_BIGN_SIG_DISPATCH(generic, bign_sig_newctx, bign_sig_query_key_types);
