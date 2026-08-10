@@ -833,33 +833,33 @@ static const char **bign_sig_query_key_types_512(void) {
 }
 
 #ifdef OSSL_FUNC_SIGNATURE_QUERY_KEY_TYPES
-#define BEE2_BIGN_SIG_QUERY_KEY_TYPES_DISPATCH(QUERY_KEY_TYPES_FN)                                 \
+#define BEE2_BIGN_SIG_QUERY_KEY_TYPES_DISPATCH(QUERY_KEY_TYPES_FN) \
     {OSSL_FUNC_SIGNATURE_QUERY_KEY_TYPES, (void (*)(void))QUERY_KEY_TYPES_FN},
 #else
 #define BEE2_BIGN_SIG_QUERY_KEY_TYPES_DISPATCH(QUERY_KEY_TYPES_FN)
 #endif
 
-#define BEE2_BIGN_SIG_DISPATCH(SFX, NEWCTX_FN, QUERY_KEY_TYPES_FN)                                 \
-    const OSSL_DISPATCH bee2_bign_##SFX##_signature_functions[] = {                                \
-        {OSSL_FUNC_SIGNATURE_NEWCTX, (void (*)(void))NEWCTX_FN},                                   \
-        {OSSL_FUNC_SIGNATURE_FREECTX, (void (*)(void))bign_sig_freectx},                           \
-        {OSSL_FUNC_SIGNATURE_DUPCTX, (void (*)(void))bign_sig_dupctx},                             \
-        {OSSL_FUNC_SIGNATURE_SIGN_INIT, (void (*)(void))bign_sig_sign_init},                       \
-        {OSSL_FUNC_SIGNATURE_SIGN, (void (*)(void))bign_sig_sign},                                 \
-        {OSSL_FUNC_SIGNATURE_VERIFY_INIT, (void (*)(void))bign_sig_verify_init},                   \
-        {OSSL_FUNC_SIGNATURE_VERIFY, (void (*)(void))bign_sig_verify},                             \
-        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN_INIT, (void (*)(void))bign_sig_digest_sign_init},         \
-        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN_UPDATE, (void (*)(void))bign_sig_digest_sign_update},     \
-        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN_FINAL, (void (*)(void))bign_sig_digest_sign_final},       \
-        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN, (void (*)(void))bign_sig_digest_sign},                   \
-        {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY_INIT, (void (*)(void))bign_sig_digest_verify_init},     \
+#define BEE2_BIGN_SIG_DISPATCH(SFX, NEWCTX_FN, QUERY_KEY_TYPES_FN) \
+    const OSSL_DISPATCH bee2_bign_##SFX##_signature_functions[] = { \
+        {OSSL_FUNC_SIGNATURE_NEWCTX, (void (*)(void))NEWCTX_FN}, \
+        {OSSL_FUNC_SIGNATURE_FREECTX, (void (*)(void))bign_sig_freectx}, \
+        {OSSL_FUNC_SIGNATURE_DUPCTX, (void (*)(void))bign_sig_dupctx}, \
+        {OSSL_FUNC_SIGNATURE_SIGN_INIT, (void (*)(void))bign_sig_sign_init}, \
+        {OSSL_FUNC_SIGNATURE_SIGN, (void (*)(void))bign_sig_sign}, \
+        {OSSL_FUNC_SIGNATURE_VERIFY_INIT, (void (*)(void))bign_sig_verify_init}, \
+        {OSSL_FUNC_SIGNATURE_VERIFY, (void (*)(void))bign_sig_verify}, \
+        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN_INIT, (void (*)(void))bign_sig_digest_sign_init}, \
+        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN_UPDATE, (void (*)(void))bign_sig_digest_sign_update}, \
+        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN_FINAL, (void (*)(void))bign_sig_digest_sign_final}, \
+        {OSSL_FUNC_SIGNATURE_DIGEST_SIGN, (void (*)(void))bign_sig_digest_sign}, \
+        {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY_INIT, (void (*)(void))bign_sig_digest_verify_init}, \
         {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY_UPDATE, (void (*)(void))bign_sig_digest_verify_update}, \
-        {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY_FINAL, (void (*)(void))bign_sig_digest_verify_final},   \
-        {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY, (void (*)(void))bign_sig_digest_verify},               \
-        {OSSL_FUNC_SIGNATURE_GET_CTX_PARAMS, (void (*)(void))bign_sig_get_ctx_params},             \
-        {OSSL_FUNC_SIGNATURE_GETTABLE_CTX_PARAMS, (void (*)(void))bign_sig_gettable_ctx_params},   \
-        {OSSL_FUNC_SIGNATURE_SET_CTX_PARAMS, (void (*)(void))bign_sig_set_ctx_params},             \
-        {OSSL_FUNC_SIGNATURE_SETTABLE_CTX_PARAMS, (void (*)(void))bign_sig_settable_ctx_params},   \
+        {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY_FINAL, (void (*)(void))bign_sig_digest_verify_final}, \
+        {OSSL_FUNC_SIGNATURE_DIGEST_VERIFY, (void (*)(void))bign_sig_digest_verify}, \
+        {OSSL_FUNC_SIGNATURE_GET_CTX_PARAMS, (void (*)(void))bign_sig_get_ctx_params}, \
+        {OSSL_FUNC_SIGNATURE_GETTABLE_CTX_PARAMS, (void (*)(void))bign_sig_gettable_ctx_params}, \
+        {OSSL_FUNC_SIGNATURE_SET_CTX_PARAMS, (void (*)(void))bign_sig_set_ctx_params}, \
+        {OSSL_FUNC_SIGNATURE_SETTABLE_CTX_PARAMS, (void (*)(void))bign_sig_settable_ctx_params}, \
         BEE2_BIGN_SIG_QUERY_KEY_TYPES_DISPATCH(QUERY_KEY_TYPES_FN){0, NULL}}
 
 BEE2_BIGN_SIG_DISPATCH(256, bign256_sig_newctx, bign_sig_query_key_types_256);

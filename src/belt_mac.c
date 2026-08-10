@@ -186,22 +186,22 @@ static int provider_belt_mac_set_ctx_params(void *vctx, const OSSL_PARAM params[
 /*  Dispatch table                                                      */
 /* ------------------------------------------------------------------ */
 
-#define BELT_MAC_DISPATCH(NAME, NEWCTX)                                                            \
-    const OSSL_DISPATCH NAME[] = {                                                                 \
-        {OSSL_FUNC_MAC_NEWCTX, (void (*)(void))NEWCTX},                                            \
-        {OSSL_FUNC_MAC_FREECTX, (void (*)(void))provider_belt_mac_freectx},                        \
-        {OSSL_FUNC_MAC_DUPCTX, (void (*)(void))provider_belt_mac_dupctx},                          \
-        {OSSL_FUNC_MAC_INIT, (void (*)(void))provider_belt_mac_init},                              \
-        {OSSL_FUNC_MAC_UPDATE, (void (*)(void))provider_belt_mac_update},                          \
-        {OSSL_FUNC_MAC_FINAL, (void (*)(void))provider_belt_mac_final},                            \
-        {OSSL_FUNC_MAC_GET_PARAMS, (void (*)(void))provider_belt_mac_get_params},                  \
-        {OSSL_FUNC_MAC_GETTABLE_PARAMS, (void (*)(void))provider_belt_mac_gettable_params},        \
-        {OSSL_FUNC_MAC_GET_CTX_PARAMS, (void (*)(void))provider_belt_mac_get_ctx_params},          \
-        {OSSL_FUNC_MAC_GETTABLE_CTX_PARAMS,                                                        \
-         (void (*)(void))provider_belt_mac_gettable_ctx_params},                                   \
-        {OSSL_FUNC_MAC_SET_CTX_PARAMS, (void (*)(void))provider_belt_mac_set_ctx_params},          \
-        {OSSL_FUNC_MAC_SETTABLE_CTX_PARAMS,                                                        \
-         (void (*)(void))provider_belt_mac_settable_ctx_params},                                   \
+#define BELT_MAC_DISPATCH(NAME, NEWCTX) \
+    const OSSL_DISPATCH NAME[] = { \
+        {OSSL_FUNC_MAC_NEWCTX, (void (*)(void))NEWCTX}, \
+        {OSSL_FUNC_MAC_FREECTX, (void (*)(void))provider_belt_mac_freectx}, \
+        {OSSL_FUNC_MAC_DUPCTX, (void (*)(void))provider_belt_mac_dupctx}, \
+        {OSSL_FUNC_MAC_INIT, (void (*)(void))provider_belt_mac_init}, \
+        {OSSL_FUNC_MAC_UPDATE, (void (*)(void))provider_belt_mac_update}, \
+        {OSSL_FUNC_MAC_FINAL, (void (*)(void))provider_belt_mac_final}, \
+        {OSSL_FUNC_MAC_GET_PARAMS, (void (*)(void))provider_belt_mac_get_params}, \
+        {OSSL_FUNC_MAC_GETTABLE_PARAMS, (void (*)(void))provider_belt_mac_gettable_params}, \
+        {OSSL_FUNC_MAC_GET_CTX_PARAMS, (void (*)(void))provider_belt_mac_get_ctx_params}, \
+        {OSSL_FUNC_MAC_GETTABLE_CTX_PARAMS, \
+         (void (*)(void))provider_belt_mac_gettable_ctx_params}, \
+        {OSSL_FUNC_MAC_SET_CTX_PARAMS, (void (*)(void))provider_belt_mac_set_ctx_params}, \
+        {OSSL_FUNC_MAC_SETTABLE_CTX_PARAMS, \
+         (void (*)(void))provider_belt_mac_settable_ctx_params}, \
         {0, NULL}}
 
 BELT_MAC_DISPATCH(bee2_belt_mac128_functions, provider_belt_mac128_newctx);

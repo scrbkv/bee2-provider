@@ -455,10 +455,15 @@ static ASN1_STRING *encode_explicit_domain_params(const bee2_bign_key_t *key) {
         params->curve->seed = ASN1_BIT_STRING_new();
     if (!params->curve->seed)
         goto cleanup;
+#if OPENSSL_VERSION_MAJOR >= 4
+    if (!ASN1_BIT_STRING_set1(params->curve->seed, curve.seed, 8, 0))
+        goto cleanup;
+#else
     params->curve->seed->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 7);
     params->curve->seed->flags |= ASN1_STRING_FLAG_BITS_LEFT;
     if (!ASN1_BIT_STRING_set(params->curve->seed, curve.seed, 8))
         goto cleanup;
+#endif
 
     ASN1_INTEGER_free(params->order);
     params->order = asn1_integer_from_le(curve.q, bytes);
@@ -1154,18 +1159,18 @@ static int bign_decoder_decode(void *vctx,
     return ok;
 }
 
-#define BIGN_CODEC_NEWCTX(BITS)                                                                    \
-    static void *bign##BITS##_pem_encoder_newctx(void *provctx) {                                  \
-        (void)provctx;                                                                             \
-        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 1);                          \
-    }                                                                                              \
-    static void *bign##BITS##_der_encoder_newctx(void *provctx) {                                  \
-        (void)provctx;                                                                             \
-        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 0);                          \
-    }                                                                                              \
-    static void *bign##BITS##_decoder_newctx(void *provctx) {                                      \
-        (void)provctx;                                                                             \
-        return bign_decoder_newctx_common(bee2_bign_variant_##BITS());                             \
+#define BIGN_CODEC_NEWCTX(BITS) \
+    static void *bign##BITS##_pem_encoder_newctx(void *provctx) { \
+        (void)provctx; \
+        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 1); \
+    } \
+    static void *bign##BITS##_der_encoder_newctx(void *provctx) { \
+        (void)provctx; \
+        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 0); \
+    } \
+    static void *bign##BITS##_decoder_newctx(void *provctx) { \
+        (void)provctx; \
+        return bign_decoder_newctx_common(bee2_bign_variant_##BITS()); \
     }
 
 BIGN_CODEC_NEWCTX(256)
@@ -1354,22 +1359,22 @@ static int bign_store_export_object(void *vctx,
     return bign_export_key_params(key, export_cb, export_cbarg);
 }
 
-#define BIGN_ENCODER_DISPATCH(BITS, FORMAT)                                                        \
-    const OSSL_DISPATCH bee2_bign_##BITS##_##FORMAT##_encoder_functions[] = {                      \
-        {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign##BITS##_##FORMAT##_encoder_newctx},        \
-        {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},                         \
-        {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection},           \
-        {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},                           \
-        {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},             \
-        {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object},                 \
+#define BIGN_ENCODER_DISPATCH(BITS, FORMAT) \
+    const OSSL_DISPATCH bee2_bign_##BITS##_##FORMAT##_encoder_functions[] = { \
+        {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign##BITS##_##FORMAT##_encoder_newctx}, \
+        {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx}, \
+        {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection}, \
+        {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode}, \
+        {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object}, \
+        {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object}, \
         {0, NULL}};
 
-#define BIGN_DECODER_DISPATCH(BITS)                                                                \
-    const OSSL_DISPATCH bee2_bign_##BITS##_decoder_functions[] = {                                 \
-        {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign##BITS##_decoder_newctx},                   \
-        {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},                         \
-        {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_decoder_does_selection},           \
-        {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_decoder_decode},                           \
+#define BIGN_DECODER_DISPATCH(BITS) \
+    const OSSL_DISPATCH bee2_bign_##BITS##_decoder_functions[] = { \
+        {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign##BITS##_decoder_newctx}, \
+        {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx}, \
+        {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_decoder_does_selection}, \
+        {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_decoder_decode}, \
         {0, NULL}};
 
 BIGN_ENCODER_DISPATCH(256, pem)

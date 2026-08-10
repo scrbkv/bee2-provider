@@ -18,7 +18,7 @@ AllowShortLoopsOnASingleLine: false
 AlignAfterOpenBracket: Align
 AlignConsecutiveAssignments: None
 AlignConsecutiveDeclarations: None
-AlignEscapedNewlines: Right
+AlignEscapedNewlines: DontAlign
 BinPackArguments: false
 BinPackParameters: false
 BreakBeforeBinaryOperators: None

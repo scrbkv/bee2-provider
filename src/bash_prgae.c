@@ -59,27 +59,95 @@ typedef struct {
     size_t mac_size;     /* authentication tag (bytes)               */
 } bash_prgae_variant_t;
 
-/* Macro to fill a variant descriptor for a given Bee2 variant. */
-#define BASH_PRGAE_VAR(SFX, MIN_KLEN, IVLEN, MACLEN)                                               \
-    {bash_prgae_##SFX##_init,                                                                      \
-     bash_prgae_##SFX##_restart,                                                                   \
-     bash_prgae_##SFX##_set_key,                                                                   \
-     bash_prgae_##SFX##_set_iv,                                                                    \
-     bash_prgae_##SFX##_update_ad,                                                                 \
-     bash_prgae_##SFX##_encrypt,                                                                   \
-     bash_prgae_##SFX##_decrypt,                                                                   \
-     bash_prgae_##SFX##_get_mac,                                                                   \
-     bash_prgae_##SFX##_cleanup,                                                                   \
-     (MIN_KLEN),                                                                                   \
-     (IVLEN),                                                                                      \
-     (MACLEN)}
+static const bash_prgae_variant_t bash_prgae_variant_1281 = {
+    .backend_init = bash_prgae_1281_init,
+    .backend_restart = bash_prgae_1281_restart,
+    .backend_set_key = bash_prgae_1281_set_key,
+    .backend_set_iv = bash_prgae_1281_set_iv,
+    .backend_update_ad = bash_prgae_1281_update_ad,
+    .backend_encrypt = bash_prgae_1281_encrypt,
+    .backend_decrypt = bash_prgae_1281_decrypt,
+    .backend_get_mac = bash_prgae_1281_get_mac,
+    .backend_cleanup = bash_prgae_1281_cleanup,
+    .min_key_size = 16,
+    .iv_size = 16,
+    .mac_size = 16,
+};
 
-static const bash_prgae_variant_t bash_prgae_variant_1281 = BASH_PRGAE_VAR(1281, 16, 16, 16);
-static const bash_prgae_variant_t bash_prgae_variant_1282 = BASH_PRGAE_VAR(1282, 16, 16, 16);
-static const bash_prgae_variant_t bash_prgae_variant_1921 = BASH_PRGAE_VAR(1921, 24, 24, 24);
-static const bash_prgae_variant_t bash_prgae_variant_1922 = BASH_PRGAE_VAR(1922, 24, 24, 24);
-static const bash_prgae_variant_t bash_prgae_variant_2561 = BASH_PRGAE_VAR(2561, 32, 32, 32);
-static const bash_prgae_variant_t bash_prgae_variant_2562 = BASH_PRGAE_VAR(2562, 32, 32, 32);
+static const bash_prgae_variant_t bash_prgae_variant_1282 = {
+    .backend_init = bash_prgae_1282_init,
+    .backend_restart = bash_prgae_1282_restart,
+    .backend_set_key = bash_prgae_1282_set_key,
+    .backend_set_iv = bash_prgae_1282_set_iv,
+    .backend_update_ad = bash_prgae_1282_update_ad,
+    .backend_encrypt = bash_prgae_1282_encrypt,
+    .backend_decrypt = bash_prgae_1282_decrypt,
+    .backend_get_mac = bash_prgae_1282_get_mac,
+    .backend_cleanup = bash_prgae_1282_cleanup,
+    .min_key_size = 16,
+    .iv_size = 16,
+    .mac_size = 16,
+};
+
+static const bash_prgae_variant_t bash_prgae_variant_1921 = {
+    .backend_init = bash_prgae_1921_init,
+    .backend_restart = bash_prgae_1921_restart,
+    .backend_set_key = bash_prgae_1921_set_key,
+    .backend_set_iv = bash_prgae_1921_set_iv,
+    .backend_update_ad = bash_prgae_1921_update_ad,
+    .backend_encrypt = bash_prgae_1921_encrypt,
+    .backend_decrypt = bash_prgae_1921_decrypt,
+    .backend_get_mac = bash_prgae_1921_get_mac,
+    .backend_cleanup = bash_prgae_1921_cleanup,
+    .min_key_size = 24,
+    .iv_size = 24,
+    .mac_size = 24,
+};
+
+static const bash_prgae_variant_t bash_prgae_variant_1922 = {
+    .backend_init = bash_prgae_1922_init,
+    .backend_restart = bash_prgae_1922_restart,
+    .backend_set_key = bash_prgae_1922_set_key,
+    .backend_set_iv = bash_prgae_1922_set_iv,
+    .backend_update_ad = bash_prgae_1922_update_ad,
+    .backend_encrypt = bash_prgae_1922_encrypt,
+    .backend_decrypt = bash_prgae_1922_decrypt,
+    .backend_get_mac = bash_prgae_1922_get_mac,
+    .backend_cleanup = bash_prgae_1922_cleanup,
+    .min_key_size = 24,
+    .iv_size = 24,
+    .mac_size = 24,
+};
+
+static const bash_prgae_variant_t bash_prgae_variant_2561 = {
+    .backend_init = bash_prgae_2561_init,
+    .backend_restart = bash_prgae_2561_restart,
+    .backend_set_key = bash_prgae_2561_set_key,
+    .backend_set_iv = bash_prgae_2561_set_iv,
+    .backend_update_ad = bash_prgae_2561_update_ad,
+    .backend_encrypt = bash_prgae_2561_encrypt,
+    .backend_decrypt = bash_prgae_2561_decrypt,
+    .backend_get_mac = bash_prgae_2561_get_mac,
+    .backend_cleanup = bash_prgae_2561_cleanup,
+    .min_key_size = 32,
+    .iv_size = 32,
+    .mac_size = 32,
+};
+
+static const bash_prgae_variant_t bash_prgae_variant_2562 = {
+    .backend_init = bash_prgae_2562_init,
+    .backend_restart = bash_prgae_2562_restart,
+    .backend_set_key = bash_prgae_2562_set_key,
+    .backend_set_iv = bash_prgae_2562_set_iv,
+    .backend_update_ad = bash_prgae_2562_update_ad,
+    .backend_encrypt = bash_prgae_2562_encrypt,
+    .backend_decrypt = bash_prgae_2562_decrypt,
+    .backend_get_mac = bash_prgae_2562_get_mac,
+    .backend_cleanup = bash_prgae_2562_cleanup,
+    .min_key_size = 32,
+    .iv_size = 32,
+    .mac_size = 32,
+};
 
 /* ------------------------------------------------------------------ */
 /*  Context                                                             */
@@ -143,9 +211,9 @@ static void *bash_prgae_dupctx(void *vctx) {
 }
 
 /* variant-specific newctx wrappers */
-#define BASH_PRGAE_NEWCTX(SFX)                                                                     \
-    static void *bash_prgae_##SFX##_newctx(void *p) {                                              \
-        return bash_prgae_newctx_for_variant(p, &bash_prgae_variant_##SFX);                        \
+#define BASH_PRGAE_NEWCTX(SFX) \
+    static void *bash_prgae_##SFX##_newctx(void *p) { \
+        return bash_prgae_newctx_for_variant(p, &bash_prgae_variant_##SFX); \
     }
 
 BASH_PRGAE_NEWCTX(1281)
@@ -333,9 +401,9 @@ static int bash_prgae_get_params_impl(OSSL_PARAM params[], const bash_prgae_vari
     return 1;
 }
 
-#define BASH_PRGAE_GET_PARAMS_FN(SFX)                                                              \
-    static int bash_prgae_##SFX##_get_params(OSSL_PARAM p[]) {                                     \
-        return bash_prgae_get_params_impl(p, &bash_prgae_variant_##SFX);                           \
+#define BASH_PRGAE_GET_PARAMS_FN(SFX) \
+    static int bash_prgae_##SFX##_get_params(OSSL_PARAM p[]) { \
+        return bash_prgae_get_params_impl(p, &bash_prgae_variant_##SFX); \
     }
 
 BASH_PRGAE_GET_PARAMS_FN(1281)
@@ -441,22 +509,22 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
 /*  Dispatch tables                                                     */
 /* ------------------------------------------------------------------ */
 
-#define BASH_PRGAE_DISPATCH(SFX)                                                                   \
-    const OSSL_DISPATCH bee2_bash_prgae_##SFX##_functions[] = {                                    \
-        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))bash_prgae_##SFX##_newctx},                      \
-        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))bash_prgae_freectx},                            \
-        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))bash_prgae_dupctx},                              \
-        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))bash_prgae_encrypt_init},                  \
-        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))bash_prgae_decrypt_init},                  \
-        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))bash_prgae_update},                              \
-        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))bash_prgae_final},                                \
-        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))bash_prgae_cipher},                              \
-        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))bash_prgae_##SFX##_get_params},              \
-        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))bash_prgae_gettable_params},            \
-        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))bash_prgae_get_ctx_params},              \
-        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))bash_prgae_gettable_ctx_params},    \
-        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))bash_prgae_set_ctx_params},              \
-        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))bash_prgae_settable_ctx_params},    \
+#define BASH_PRGAE_DISPATCH(SFX) \
+    const OSSL_DISPATCH bee2_bash_prgae_##SFX##_functions[] = { \
+        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))bash_prgae_##SFX##_newctx}, \
+        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))bash_prgae_freectx}, \
+        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))bash_prgae_dupctx}, \
+        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))bash_prgae_encrypt_init}, \
+        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))bash_prgae_decrypt_init}, \
+        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))bash_prgae_update}, \
+        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))bash_prgae_final}, \
+        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))bash_prgae_cipher}, \
+        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))bash_prgae_##SFX##_get_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))bash_prgae_gettable_params}, \
+        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))bash_prgae_get_ctx_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))bash_prgae_gettable_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))bash_prgae_set_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))bash_prgae_settable_ctx_params}, \
         {0, NULL}}
 
 BASH_PRGAE_DISPATCH(1281);

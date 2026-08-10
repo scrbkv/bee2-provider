@@ -51,9 +51,9 @@ static void *belt_sde_newctx(void *provctx, size_t fixed_key_len) {
     return c;
 }
 
-#define BELT_SDE_NEWCTX(KEYBITS)                                                                   \
-    static void *belt_##KEYBITS##_sde_newctx(void *p) {                                            \
-        return belt_sde_newctx(p, (KEYBITS) / 8);                                                  \
+#define BELT_SDE_NEWCTX(KEYBITS) \
+    static void *belt_##KEYBITS##_sde_newctx(void *p) { \
+        return belt_sde_newctx(p, (KEYBITS) / 8); \
     }
 
 BELT_SDE_NEWCTX(128)
@@ -219,9 +219,9 @@ static int belt_sde_get_params_impl(OSSL_PARAM params[], size_t keylen) {
     return 1;
 }
 
-#define BELT_SDE_GET_PARAMS(KEYBITS)                                                               \
-    static int belt_##KEYBITS##_sde_get_params(OSSL_PARAM p[]) {                                   \
-        return belt_sde_get_params_impl(p, (KEYBITS) / 8);                                         \
+#define BELT_SDE_GET_PARAMS(KEYBITS) \
+    static int belt_##KEYBITS##_sde_get_params(OSSL_PARAM p[]) { \
+        return belt_sde_get_params_impl(p, (KEYBITS) / 8); \
     }
 
 BELT_SDE_GET_PARAMS(128)
@@ -298,22 +298,22 @@ static int belt_sde_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
 /*  Dispatch tables                                                     */
 /* ------------------------------------------------------------------ */
 
-#define BELT_SDE_DISPATCH(KEYBITS)                                                                 \
-    const OSSL_DISPATCH bee2_belt_##KEYBITS##_sde_functions[] = {                                  \
-        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))belt_##KEYBITS##_sde_newctx},                    \
-        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_sde_freectx},                              \
-        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_sde_dupctx},                                \
-        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_sde_encrypt_init},                    \
-        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_sde_decrypt_init},                    \
-        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_sde_update},                                \
-        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_sde_final},                                  \
-        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_sde_cipher},                                \
-        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_sde_get_params},            \
-        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_sde_gettable_params},              \
-        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_sde_get_ctx_params},                \
-        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_sde_gettable_ctx_params},      \
-        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_sde_set_ctx_params},                \
-        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_sde_settable_ctx_params},      \
+#define BELT_SDE_DISPATCH(KEYBITS) \
+    const OSSL_DISPATCH bee2_belt_##KEYBITS##_sde_functions[] = { \
+        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))belt_##KEYBITS##_sde_newctx}, \
+        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_sde_freectx}, \
+        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_sde_dupctx}, \
+        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_sde_encrypt_init}, \
+        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_sde_decrypt_init}, \
+        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_sde_update}, \
+        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_sde_final}, \
+        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_sde_cipher}, \
+        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_sde_get_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_sde_gettable_params}, \
+        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_sde_get_ctx_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_sde_gettable_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_sde_set_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_sde_settable_ctx_params}, \
         {0, NULL}}
 
 BELT_SDE_DISPATCH(128);

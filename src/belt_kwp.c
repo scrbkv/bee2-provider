@@ -324,22 +324,22 @@ static int belt_kwp_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
 /*  Dispatch table                                                      */
 /* ------------------------------------------------------------------ */
 
-#define BELT_KWP_DISPATCH(NAME, NEWCTX, GET_PARAMS)                                                \
-    const OSSL_DISPATCH NAME[] = {                                                                 \
-        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))NEWCTX},                                         \
-        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_kwp_freectx},                              \
-        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_kwp_dupctx},                                \
-        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_kwp_encrypt_init},                    \
-        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_kwp_decrypt_init},                    \
-        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_kwp_update},                                \
-        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_kwp_final},                                  \
-        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_kwp_cipher},                                \
-        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))GET_PARAMS},                                 \
-        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_kwp_gettable_params},              \
-        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_kwp_get_ctx_params},                \
-        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_kwp_gettable_ctx_params},      \
-        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_kwp_set_ctx_params},                \
-        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_kwp_settable_ctx_params},      \
+#define BELT_KWP_DISPATCH(NAME, NEWCTX, GET_PARAMS) \
+    const OSSL_DISPATCH NAME[] = { \
+        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))NEWCTX}, \
+        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_kwp_freectx}, \
+        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_kwp_dupctx}, \
+        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_kwp_encrypt_init}, \
+        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_kwp_decrypt_init}, \
+        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_kwp_update}, \
+        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_kwp_final}, \
+        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_kwp_cipher}, \
+        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))GET_PARAMS}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_kwp_gettable_params}, \
+        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_kwp_get_ctx_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_kwp_gettable_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_kwp_set_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_kwp_settable_ctx_params}, \
         {0, NULL}}
 
 BELT_KWP_DISPATCH(bee2_belt_kwp128_functions, belt_kwp128_newctx, belt_kwp128_get_params);

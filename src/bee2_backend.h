@@ -77,18 +77,18 @@ static inline void belt_hash_cleanup(belt_hash_ctx c) {
 
 typedef bee2_backend_state_t bash_hash_ctx_t;
 typedef bash_hash_ctx_t *bash_hash_ctx;
-#define BASH_HASH_ADAPTER(BITS, LEVEL, OUTLEN)                                                     \
-    static inline void bash_hash##BITS##_init(bash_hash_ctx c) {                                   \
-        bashHashStart(c, LEVEL);                                                                   \
-    }                                                                                              \
-    static inline void bash_hash##BITS##_update(bash_hash_ctx c, const void *p, size_t n) {        \
-        bashHashStepH(p, n, c);                                                                    \
-    }                                                                                              \
-    static inline void bash_hash##BITS##_get(bash_hash_ctx c, void *out) {                         \
-        bashHashStepG(out, OUTLEN, c);                                                             \
-    }                                                                                              \
-    static inline void bash_hash##BITS##_cleanup(bash_hash_ctx c) {                                \
-        bee2_backend_cleanup(c, sizeof(*c));                                                       \
+#define BASH_HASH_ADAPTER(BITS, LEVEL, OUTLEN) \
+    static inline void bash_hash##BITS##_init(bash_hash_ctx c) { \
+        bashHashStart(c, LEVEL); \
+    } \
+    static inline void bash_hash##BITS##_update(bash_hash_ctx c, const void *p, size_t n) { \
+        bashHashStepH(p, n, c); \
+    } \
+    static inline void bash_hash##BITS##_get(bash_hash_ctx c, void *out) { \
+        bashHashStepG(out, OUTLEN, c); \
+    } \
+    static inline void bash_hash##BITS##_cleanup(bash_hash_ctx c) { \
+        bee2_backend_cleanup(c, sizeof(*c)); \
     }
 BASH_HASH_ADAPTER(128, 128u, 32u)
 BASH_HASH_ADAPTER(192, 192u, 48u)
@@ -145,34 +145,34 @@ static inline void belt_ecb_cleanup(belt_ecb_ctx_t *c) {
     bee2_backend_cleanup(c, sizeof(*c));
 }
 
-#define BELT_IV_MODE(PFX, CAMEL, ENCSTEP, DECSTEP)                                                 \
-    static inline void PFX##_init(PFX##_ctx_t *c) {                                                \
-        memset(c, 0, sizeof(*c));                                                                  \
-    }                                                                                              \
-    static inline void PFX##_restart(PFX##_ctx_t *c) {                                             \
-        if (c->key_set && c->iv_set)                                                               \
-            CAMEL##Start(&c->state, c->key, 32, c->iv);                                            \
-    }                                                                                              \
-    static inline void PFX##_set_key(PFX##_ctx_t *c, const void *key, size_t key_len) {            \
-        bee2_belt_mode_store_key(c, key, key_len);                                                 \
-        PFX##_restart(c);                                                                          \
-    }                                                                                              \
-    static inline void PFX##_set_iv(PFX##_ctx_t *c, const void *iv, size_t iv_len) {               \
-        (void)iv_len;                                                                              \
-        memcpy(c->iv, iv, 16);                                                                     \
-        c->iv_set = 1;                                                                             \
-        PFX##_restart(c);                                                                          \
-    }                                                                                              \
-    static inline void PFX##_encrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) {   \
-        memmove(out, in, (size_t)blocks * 16u);                                                    \
-        ENCSTEP(out, (size_t)blocks * 16u, &c->state);                                             \
-    }                                                                                              \
-    static inline void PFX##_decrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) {   \
-        memmove(out, in, (size_t)blocks * 16u);                                                    \
-        DECSTEP(out, (size_t)blocks * 16u, &c->state);                                             \
-    }                                                                                              \
-    static inline void PFX##_cleanup(PFX##_ctx_t *c) {                                             \
-        bee2_backend_cleanup(c, sizeof(*c));                                                       \
+#define BELT_IV_MODE(PFX, CAMEL, ENCSTEP, DECSTEP) \
+    static inline void PFX##_init(PFX##_ctx_t *c) { \
+        memset(c, 0, sizeof(*c)); \
+    } \
+    static inline void PFX##_restart(PFX##_ctx_t *c) { \
+        if (c->key_set && c->iv_set) \
+            CAMEL##Start(&c->state, c->key, 32, c->iv); \
+    } \
+    static inline void PFX##_set_key(PFX##_ctx_t *c, const void *key, size_t key_len) { \
+        bee2_belt_mode_store_key(c, key, key_len); \
+        PFX##_restart(c); \
+    } \
+    static inline void PFX##_set_iv(PFX##_ctx_t *c, const void *iv, size_t iv_len) { \
+        (void)iv_len; \
+        memcpy(c->iv, iv, 16); \
+        c->iv_set = 1; \
+        PFX##_restart(c); \
+    } \
+    static inline void PFX##_encrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) { \
+        memmove(out, in, (size_t)blocks * 16u); \
+        ENCSTEP(out, (size_t)blocks * 16u, &c->state); \
+    } \
+    static inline void PFX##_decrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) { \
+        memmove(out, in, (size_t)blocks * 16u); \
+        DECSTEP(out, (size_t)blocks * 16u, &c->state); \
+    } \
+    static inline void PFX##_cleanup(PFX##_ctx_t *c) { \
+        bee2_backend_cleanup(c, sizeof(*c)); \
     }
 
 BELT_IV_MODE(belt_cbc, beltCBC, beltCBCStepE, beltCBCStepD)
@@ -183,42 +183,42 @@ BELT_IV_MODE(belt_bde, beltBDE, beltBDEStepE, beltBDEStepD)
 /* BELT AEAD adapters. */
 typedef bee2_belt_mode_ctx_t belt_che_ctx_t;
 typedef bee2_belt_mode_ctx_t belt_dwp_ctx_t;
-#define BELT_AEAD_ADAPTER(PFX, CAMEL)                                                              \
-    static inline void PFX##_init(PFX##_ctx_t *c) {                                                \
-        memset(c, 0, sizeof(*c));                                                                  \
-    }                                                                                              \
-    static inline void PFX##_restart(PFX##_ctx_t *c) {                                             \
-        if (c->key_set && c->iv_set)                                                               \
-            CAMEL##Start(&c->state, c->key, 32, c->iv);                                            \
-    }                                                                                              \
-    static inline void PFX##_set_key(PFX##_ctx_t *c, const void *key, size_t key_len) {            \
-        bee2_belt_mode_store_key(c, key, key_len);                                                 \
-        PFX##_restart(c);                                                                          \
-    }                                                                                              \
-    static inline void PFX##_set_iv(PFX##_ctx_t *c, const void *iv, size_t iv_len) {               \
-        (void)iv_len;                                                                              \
-        memcpy(c->iv, iv, 16);                                                                     \
-        c->iv_set = 1;                                                                             \
-        PFX##_restart(c);                                                                          \
-    }                                                                                              \
-    static inline void PFX##_update_ad(PFX##_ctx_t *c, const void *in, size_t n) {                 \
-        CAMEL##StepI(in, n, &c->state);                                                            \
-    }                                                                                              \
-    static inline void PFX##_encrypt(PFX##_ctx_t *c, const void *in, size_t n, void *out) {        \
-        memmove(out, in, n);                                                                       \
-        CAMEL##StepE(out, n, &c->state);                                                           \
-        CAMEL##StepA(out, n, &c->state);                                                           \
-    }                                                                                              \
-    static inline void PFX##_decrypt(PFX##_ctx_t *c, const void *in, size_t n, void *out) {        \
-        memmove(out, in, n);                                                                       \
-        CAMEL##StepA(out, n, &c->state);                                                           \
-        CAMEL##StepD(out, n, &c->state);                                                           \
-    }                                                                                              \
-    static inline void PFX##_get_mac(PFX##_ctx_t *c, void *out) {                                  \
-        CAMEL##StepG(out, &c->state);                                                              \
-    }                                                                                              \
-    static inline void PFX##_cleanup(PFX##_ctx_t *c) {                                             \
-        bee2_backend_cleanup(c, sizeof(*c));                                                       \
+#define BELT_AEAD_ADAPTER(PFX, CAMEL) \
+    static inline void PFX##_init(PFX##_ctx_t *c) { \
+        memset(c, 0, sizeof(*c)); \
+    } \
+    static inline void PFX##_restart(PFX##_ctx_t *c) { \
+        if (c->key_set && c->iv_set) \
+            CAMEL##Start(&c->state, c->key, 32, c->iv); \
+    } \
+    static inline void PFX##_set_key(PFX##_ctx_t *c, const void *key, size_t key_len) { \
+        bee2_belt_mode_store_key(c, key, key_len); \
+        PFX##_restart(c); \
+    } \
+    static inline void PFX##_set_iv(PFX##_ctx_t *c, const void *iv, size_t iv_len) { \
+        (void)iv_len; \
+        memcpy(c->iv, iv, 16); \
+        c->iv_set = 1; \
+        PFX##_restart(c); \
+    } \
+    static inline void PFX##_update_ad(PFX##_ctx_t *c, const void *in, size_t n) { \
+        CAMEL##StepI(in, n, &c->state); \
+    } \
+    static inline void PFX##_encrypt(PFX##_ctx_t *c, const void *in, size_t n, void *out) { \
+        memmove(out, in, n); \
+        CAMEL##StepE(out, n, &c->state); \
+        CAMEL##StepA(out, n, &c->state); \
+    } \
+    static inline void PFX##_decrypt(PFX##_ctx_t *c, const void *in, size_t n, void *out) { \
+        memmove(out, in, n); \
+        CAMEL##StepA(out, n, &c->state); \
+        CAMEL##StepD(out, n, &c->state); \
+    } \
+    static inline void PFX##_get_mac(PFX##_ctx_t *c, void *out) { \
+        CAMEL##StepG(out, &c->state); \
+    } \
+    static inline void PFX##_cleanup(PFX##_ctx_t *c) { \
+        bee2_backend_cleanup(c, sizeof(*c)); \
     }
 BELT_AEAD_ADAPTER(belt_che, beltCHE)
 BELT_AEAD_ADAPTER(belt_dwp, beltDWP)
@@ -310,44 +310,44 @@ typedef struct {
     int iv_set;
 } bash_prgae_ctx_t;
 typedef bash_prgae_ctx_t *bash_prgae_ctx;
-#define BASH_PRGAE_ADAPTER(SFX, LEVEL, D)                                                          \
-    static inline void bash_prgae_##SFX##_init(bash_prgae_ctx c) {                                 \
-        memset(c, 0, sizeof(*c));                                                                  \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_restart(bash_prgae_ctx c) {                              \
-        if (c->key_set && c->iv_set)                                                               \
-            bashPrgStart(&c->state, LEVEL, D, c->iv, c->iv_len, c->key, c->key_len);               \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_set_key(bash_prgae_ctx c, const void *p, size_t n) {     \
-        memcpy(c->key, p, n);                                                                      \
-        c->key_len = n;                                                                            \
-        c->key_set = 1;                                                                            \
-        bash_prgae_##SFX##_restart(c);                                                             \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_set_iv(bash_prgae_ctx c, const void *p, size_t n) {      \
-        memcpy(c->iv, p, n);                                                                       \
-        c->iv_len = n;                                                                             \
-        c->iv_set = 1;                                                                             \
-        bash_prgae_##SFX##_restart(c);                                                             \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_update_ad(bash_prgae_ctx c, const void *p, size_t n) {   \
-        bashPrgAbsorb(p, n, &c->state);                                                            \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_encrypt(                                                 \
-        bash_prgae_ctx c, const void *in, size_t n, void *out) {                                   \
-        memmove(out, in, n);                                                                       \
-        bashPrgEncr(out, n, &c->state);                                                            \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_decrypt(                                                 \
-        bash_prgae_ctx c, const void *in, size_t n, void *out) {                                   \
-        memmove(out, in, n);                                                                       \
-        bashPrgDecr(out, n, &c->state);                                                            \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_get_mac(bash_prgae_ctx c, void *out, size_t n) {         \
-        bashPrgSqueeze(out, n, &c->state);                                                         \
-    }                                                                                              \
-    static inline void bash_prgae_##SFX##_cleanup(bash_prgae_ctx c) {                              \
-        bee2_backend_cleanup(c, sizeof(*c));                                                       \
+#define BASH_PRGAE_ADAPTER(SFX, LEVEL, D) \
+    static inline void bash_prgae_##SFX##_init(bash_prgae_ctx c) { \
+        memset(c, 0, sizeof(*c)); \
+    } \
+    static inline void bash_prgae_##SFX##_restart(bash_prgae_ctx c) { \
+        if (c->key_set && c->iv_set) \
+            bashPrgStart(&c->state, LEVEL, D, c->iv, c->iv_len, c->key, c->key_len); \
+    } \
+    static inline void bash_prgae_##SFX##_set_key(bash_prgae_ctx c, const void *p, size_t n) { \
+        memcpy(c->key, p, n); \
+        c->key_len = n; \
+        c->key_set = 1; \
+        bash_prgae_##SFX##_restart(c); \
+    } \
+    static inline void bash_prgae_##SFX##_set_iv(bash_prgae_ctx c, const void *p, size_t n) { \
+        memcpy(c->iv, p, n); \
+        c->iv_len = n; \
+        c->iv_set = 1; \
+        bash_prgae_##SFX##_restart(c); \
+    } \
+    static inline void bash_prgae_##SFX##_update_ad(bash_prgae_ctx c, const void *p, size_t n) { \
+        bashPrgAbsorb(p, n, &c->state); \
+    } \
+    static inline void bash_prgae_##SFX##_encrypt( \
+        bash_prgae_ctx c, const void *in, size_t n, void *out) { \
+        memmove(out, in, n); \
+        bashPrgEncr(out, n, &c->state); \
+    } \
+    static inline void bash_prgae_##SFX##_decrypt( \
+        bash_prgae_ctx c, const void *in, size_t n, void *out) { \
+        memmove(out, in, n); \
+        bashPrgDecr(out, n, &c->state); \
+    } \
+    static inline void bash_prgae_##SFX##_get_mac(bash_prgae_ctx c, void *out, size_t n) { \
+        bashPrgSqueeze(out, n, &c->state); \
+    } \
+    static inline void bash_prgae_##SFX##_cleanup(bash_prgae_ctx c) { \
+        bee2_backend_cleanup(c, sizeof(*c)); \
     }
 BASH_PRGAE_ADAPTER(1281, 128u, 1u)
 BASH_PRGAE_ADAPTER(1282, 128u, 2u)

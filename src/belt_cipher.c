@@ -55,15 +55,15 @@ typedef struct {
     int accepts_partial_block;
 } belt_mode_descriptor_t;
 
-#define BELT_MODE_DESCRIPTOR(NAME, PREFIX, IV_SIZE, PARTIAL)                                       \
-    static const belt_mode_descriptor_t NAME = {PREFIX##_init,                                     \
-                                                PREFIX##_restart,                                  \
-                                                PREFIX##_set_key,                                  \
-                                                PREFIX##_set_iv,                                   \
-                                                PREFIX##_encrypt,                                  \
-                                                PREFIX##_decrypt,                                  \
-                                                PREFIX##_cleanup,                                  \
-                                                (IV_SIZE),                                         \
+#define BELT_MODE_DESCRIPTOR(NAME, PREFIX, IV_SIZE, PARTIAL) \
+    static const belt_mode_descriptor_t NAME = {PREFIX##_init, \
+                                                PREFIX##_restart, \
+                                                PREFIX##_set_key, \
+                                                PREFIX##_set_iv, \
+                                                PREFIX##_encrypt, \
+                                                PREFIX##_decrypt, \
+                                                PREFIX##_cleanup, \
+                                                (IV_SIZE), \
                                                 (PARTIAL)}
 
 static const belt_mode_descriptor_t belt_ecb_mode = {belt_ecb_init,
@@ -121,9 +121,9 @@ belt_newctx_mode(void *provctx, const belt_mode_descriptor_t *mode, size_t fixed
     return c;
 }
 
-#define BELT_NEWCTX(KEYBITS, MODE_LC, MODE_DESCRIPTOR)                                             \
-    static void *belt_##KEYBITS##_##MODE_LC##_newctx(void *pctx) {                                 \
-        return belt_newctx_mode(pctx, &(MODE_DESCRIPTOR), (KEYBITS) / 8u);                         \
+#define BELT_NEWCTX(KEYBITS, MODE_LC, MODE_DESCRIPTOR) \
+    static void *belt_##KEYBITS##_##MODE_LC##_newctx(void *pctx) { \
+        return belt_newctx_mode(pctx, &(MODE_DESCRIPTOR), (KEYBITS) / 8u); \
     }
 
 BELT_NEWCTX(128, ecb, belt_ecb_mode)
@@ -367,9 +367,9 @@ static int belt_get_params_impl(
     return 1;
 }
 
-#define BELT_GET_PARAMS(KEYBITS, MODE_LC, IVLEN, BSIZE, MODE_VAL)                                  \
-    static int belt_##KEYBITS##_##MODE_LC##_get_params(OSSL_PARAM p[]) {                           \
-        return belt_get_params_impl(p, (KEYBITS) / 8, (IVLEN), (BSIZE), (MODE_VAL));               \
+#define BELT_GET_PARAMS(KEYBITS, MODE_LC, IVLEN, BSIZE, MODE_VAL) \
+    static int belt_##KEYBITS##_##MODE_LC##_get_params(OSSL_PARAM p[]) { \
+        return belt_get_params_impl(p, (KEYBITS) / 8, (IVLEN), (BSIZE), (MODE_VAL)); \
     }
 
 BELT_GET_PARAMS(128, ecb, 0, BELT_BLOCK_SIZE, BEE2_EVP_CIPH_ECB_MODE)
@@ -462,22 +462,22 @@ static int belt_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
 /*  Dispatch tables                                                     */
 /* ------------------------------------------------------------------ */
 
-#define BELT_DISPATCH(KEYBITS, MODE_LC)                                                            \
-    const OSSL_DISPATCH bee2_belt_##KEYBITS##_##MODE_LC##_functions[] = {                          \
-        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_newctx},            \
-        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_freectx},                                  \
-        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_dupctx},                                    \
-        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_encrypt_init},                        \
-        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_decrypt_init},                        \
-        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_update},                                    \
-        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_final},                                      \
-        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_cipher},                                    \
-        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_get_params},    \
-        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_gettable_params},                  \
-        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_get_ctx_params},                    \
-        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_gettable_ctx_params},          \
-        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_set_ctx_params},                    \
-        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_settable_ctx_params},          \
+#define BELT_DISPATCH(KEYBITS, MODE_LC) \
+    const OSSL_DISPATCH bee2_belt_##KEYBITS##_##MODE_LC##_functions[] = { \
+        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_newctx}, \
+        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_freectx}, \
+        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_dupctx}, \
+        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_encrypt_init}, \
+        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_decrypt_init}, \
+        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_update}, \
+        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_final}, \
+        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_cipher}, \
+        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_get_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_gettable_params}, \
+        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_get_ctx_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_gettable_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_set_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_settable_ctx_params}, \
         {0, NULL}}
 
 BELT_DISPATCH(128, ecb);

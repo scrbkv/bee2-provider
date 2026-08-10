@@ -69,15 +69,15 @@ typedef struct {
     belt_aead_cleanup_fn cleanup;
 } belt_aead_descriptor_t;
 
-#define BELT_AEAD_DESCRIPTOR(NAME, PREFIX)                                                         \
-    static const belt_aead_descriptor_t NAME = {PREFIX##_init,                                     \
-                                                PREFIX##_restart,                                  \
-                                                PREFIX##_set_key,                                  \
-                                                PREFIX##_set_iv,                                   \
-                                                PREFIX##_update_ad,                                \
-                                                PREFIX##_encrypt,                                  \
-                                                PREFIX##_decrypt,                                  \
-                                                PREFIX##_get_mac,                                  \
+#define BELT_AEAD_DESCRIPTOR(NAME, PREFIX) \
+    static const belt_aead_descriptor_t NAME = {PREFIX##_init, \
+                                                PREFIX##_restart, \
+                                                PREFIX##_set_key, \
+                                                PREFIX##_set_iv, \
+                                                PREFIX##_update_ad, \
+                                                PREFIX##_encrypt, \
+                                                PREFIX##_decrypt, \
+                                                PREFIX##_get_mac, \
                                                 PREFIX##_cleanup}
 
 BELT_AEAD_DESCRIPTOR(belt_che_descriptor, belt_che);
@@ -123,9 +123,9 @@ static void *belt_aead_newctx_for_algorithm(void *provctx,
     return c;
 }
 
-#define BELT_AEAD_NEWCTX(KEYBITS, MODE_LC, DESCRIPTOR)                                             \
-    static void *belt_##KEYBITS##_##MODE_LC##_newctx(void *p) {                                    \
-        return belt_aead_newctx_for_algorithm(p, &(DESCRIPTOR), (KEYBITS) / 8u);                   \
+#define BELT_AEAD_NEWCTX(KEYBITS, MODE_LC, DESCRIPTOR) \
+    static void *belt_##KEYBITS##_##MODE_LC##_newctx(void *p) { \
+        return belt_aead_newctx_for_algorithm(p, &(DESCRIPTOR), (KEYBITS) / 8u); \
     }
 
 BELT_AEAD_NEWCTX(128, che, belt_che_descriptor)
@@ -428,9 +428,9 @@ static int belt_aead_get_params_impl(OSSL_PARAM params[], size_t keylen) {
     return 1;
 }
 
-#define BELT_AEAD_GET_PARAMS(KEYBITS, MODE_LC)                                                     \
-    static int belt_##KEYBITS##_##MODE_LC##_get_params(OSSL_PARAM p[]) {                           \
-        return belt_aead_get_params_impl(p, (KEYBITS) / 8);                                        \
+#define BELT_AEAD_GET_PARAMS(KEYBITS, MODE_LC) \
+    static int belt_##KEYBITS##_##MODE_LC##_get_params(OSSL_PARAM p[]) { \
+        return belt_aead_get_params_impl(p, (KEYBITS) / 8); \
     }
 
 BELT_AEAD_GET_PARAMS(128, che)
@@ -444,22 +444,22 @@ BELT_AEAD_GET_PARAMS(256, dwp)
 /*  Dispatch tables                                                      */
 /* ------------------------------------------------------------------ */
 
-#define BELT_AEAD_DISPATCH(KEYBITS, MODE_LC)                                                       \
-    const OSSL_DISPATCH bee2_belt_##KEYBITS##_##MODE_LC##_functions[] = {                          \
-        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_newctx},            \
-        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_aead_freectx},                             \
-        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_aead_dupctx},                               \
-        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_aead_encrypt_init},                   \
-        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_aead_decrypt_init},                   \
-        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_aead_update},                               \
-        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_aead_final},                                 \
-        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_aead_cipher},                               \
-        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_get_params},    \
-        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_aead_gettable_params},             \
-        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_aead_get_ctx_params},               \
-        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_aead_gettable_ctx_params},     \
-        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_aead_set_ctx_params},               \
-        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_aead_settable_ctx_params},     \
+#define BELT_AEAD_DISPATCH(KEYBITS, MODE_LC) \
+    const OSSL_DISPATCH bee2_belt_##KEYBITS##_##MODE_LC##_functions[] = { \
+        {OSSL_FUNC_CIPHER_NEWCTX, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_newctx}, \
+        {OSSL_FUNC_CIPHER_FREECTX, (void (*)(void))belt_aead_freectx}, \
+        {OSSL_FUNC_CIPHER_DUPCTX, (void (*)(void))belt_aead_dupctx}, \
+        {OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))belt_aead_encrypt_init}, \
+        {OSSL_FUNC_CIPHER_DECRYPT_INIT, (void (*)(void))belt_aead_decrypt_init}, \
+        {OSSL_FUNC_CIPHER_UPDATE, (void (*)(void))belt_aead_update}, \
+        {OSSL_FUNC_CIPHER_FINAL, (void (*)(void))belt_aead_final}, \
+        {OSSL_FUNC_CIPHER_CIPHER, (void (*)(void))belt_aead_cipher}, \
+        {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_get_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_aead_gettable_params}, \
+        {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_aead_get_ctx_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_aead_gettable_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_aead_set_ctx_params}, \
+        {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_aead_settable_ctx_params}, \
         {0, NULL}}
 
 BELT_AEAD_DISPATCH(128, che);

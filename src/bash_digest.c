@@ -153,25 +153,25 @@ static int bash_final(void *vctx, unsigned char *out, size_t *outl, size_t outsz
 }
 
 /* variant-specific one-shot helpers */
-#define BASH_DIGEST_FN(OUTBITS, NEWCTX_FN)                                                         \
-    static int bash##OUTBITS##_digest(void *provctx,                                               \
-                                      const unsigned char *in,                                     \
-                                      size_t inl,                                                  \
-                                      unsigned char *out,                                          \
-                                      size_t *outl,                                                \
-                                      size_t outsz) {                                              \
-        bee2_bash_ctx_t *tmp = NEWCTX_FN(provctx);                                                 \
-        int ok = 0;                                                                                \
-        if (!tmp)                                                                                  \
-            return 0;                                                                              \
-        if (outsz < tmp->var->output_size)                                                         \
-            goto done;                                                                             \
-        bash_update(tmp, in, inl);                                                                 \
-        bash_final(tmp, out, outl, outsz);                                                         \
-        ok = 1;                                                                                    \
-    done:                                                                                          \
-        bash_freectx(tmp);                                                                         \
-        return ok;                                                                                 \
+#define BASH_DIGEST_FN(OUTBITS, NEWCTX_FN) \
+    static int bash##OUTBITS##_digest(void *provctx, \
+                                      const unsigned char *in, \
+                                      size_t inl, \
+                                      unsigned char *out, \
+                                      size_t *outl, \
+                                      size_t outsz) { \
+        bee2_bash_ctx_t *tmp = NEWCTX_FN(provctx); \
+        int ok = 0; \
+        if (!tmp) \
+            return 0; \
+        if (outsz < tmp->var->output_size) \
+            goto done; \
+        bash_update(tmp, in, inl); \
+        bash_final(tmp, out, outl, outsz); \
+        ok = 1; \
+    done: \
+        bash_freectx(tmp); \
+        return ok; \
     }
 
 BASH_DIGEST_FN(256, bash256_newctx)
@@ -235,19 +235,19 @@ static int bash_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
 /*  Dispatch tables — named by OUTPUT size (not security level)         */
 /* ------------------------------------------------------------------ */
 
-#define BASH_DISPATCH(OUTBITS)                                                                     \
-    const OSSL_DISPATCH bee2_bash##OUTBITS##_functions[] = {                                       \
-        {OSSL_FUNC_DIGEST_NEWCTX, (void (*)(void))bash##OUTBITS##_newctx},                         \
-        {OSSL_FUNC_DIGEST_FREECTX, (void (*)(void))bash_freectx},                                  \
-        {OSSL_FUNC_DIGEST_DUPCTX, (void (*)(void))bash_dupctx},                                    \
-        {OSSL_FUNC_DIGEST_INIT, (void (*)(void))bash_init},                                        \
-        {OSSL_FUNC_DIGEST_UPDATE, (void (*)(void))bash_update},                                    \
-        {OSSL_FUNC_DIGEST_FINAL, (void (*)(void))bash_final},                                      \
-        {OSSL_FUNC_DIGEST_DIGEST, (void (*)(void))bash##OUTBITS##_digest},                         \
-        {OSSL_FUNC_DIGEST_GET_PARAMS, (void (*)(void))bash##OUTBITS##_get_params},                 \
-        {OSSL_FUNC_DIGEST_GETTABLE_PARAMS, (void (*)(void))bash_gettable_params},                  \
-        {OSSL_FUNC_DIGEST_GET_CTX_PARAMS, (void (*)(void))bash_get_ctx_params},                    \
-        {OSSL_FUNC_DIGEST_GETTABLE_CTX_PARAMS, (void (*)(void))bash_gettable_ctx_params},          \
+#define BASH_DISPATCH(OUTBITS) \
+    const OSSL_DISPATCH bee2_bash##OUTBITS##_functions[] = { \
+        {OSSL_FUNC_DIGEST_NEWCTX, (void (*)(void))bash##OUTBITS##_newctx}, \
+        {OSSL_FUNC_DIGEST_FREECTX, (void (*)(void))bash_freectx}, \
+        {OSSL_FUNC_DIGEST_DUPCTX, (void (*)(void))bash_dupctx}, \
+        {OSSL_FUNC_DIGEST_INIT, (void (*)(void))bash_init}, \
+        {OSSL_FUNC_DIGEST_UPDATE, (void (*)(void))bash_update}, \
+        {OSSL_FUNC_DIGEST_FINAL, (void (*)(void))bash_final}, \
+        {OSSL_FUNC_DIGEST_DIGEST, (void (*)(void))bash##OUTBITS##_digest}, \
+        {OSSL_FUNC_DIGEST_GET_PARAMS, (void (*)(void))bash##OUTBITS##_get_params}, \
+        {OSSL_FUNC_DIGEST_GETTABLE_PARAMS, (void (*)(void))bash_gettable_params}, \
+        {OSSL_FUNC_DIGEST_GET_CTX_PARAMS, (void (*)(void))bash_get_ctx_params}, \
+        {OSSL_FUNC_DIGEST_GETTABLE_CTX_PARAMS, (void (*)(void))bash_gettable_ctx_params}, \
         {0, NULL}}
 
 BASH_DISPATCH(256);
