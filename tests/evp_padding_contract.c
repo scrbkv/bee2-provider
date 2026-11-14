@@ -1,3 +1,4 @@
+#include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
@@ -210,6 +211,15 @@ int main(int argc, char **argv)
     cipher = EVP_CIPHER_fetch(NULL, argv[2], "provider=bee2");
     if (!def || !provider || !cipher || EVP_CIPHER_get_block_size(cipher) != BLOCK_SIZE)
         goto done;
+    {
+        const OSSL_PARAM *gettable = EVP_CIPHER_gettable_ctx_params(cipher);
+        int is_cbc = strncmp(argv[2], "belt-cbc", 8) == 0;
+
+        if (gettable == NULL ||
+            (OSSL_PARAM_locate_const(gettable, OSSL_CIPHER_PARAM_UPDATED_IV) != NULL) != is_cbc ||
+            OSSL_PARAM_locate_const(gettable, OSSL_CIPHER_PARAM_NUM) != NULL)
+            goto done;
+    }
     keylen = (size_t)EVP_CIPHER_get_key_length(cipher);
     if (keylen > sizeof(key))
         goto done;
