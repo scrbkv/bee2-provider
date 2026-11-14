@@ -18,7 +18,11 @@ if [[ "$actual_commit" != "$OPENSSL_COMMIT" ]]; then
 fi
 
 cd "$source_dir"
-./Configure --prefix="$OPENSSL_PREFIX" \
+configure=./Configure
+if [[ "$OPENSSL_TAG" == OpenSSL_1_1_* ]]; then
+    configure=./config
+fi
+"$configure" --prefix="$OPENSSL_PREFIX" \
     --openssldir="$OPENSSL_PREFIX/ssl" --libdir=lib shared no-tests
 make -j 4
 make install_sw
