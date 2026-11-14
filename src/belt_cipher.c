@@ -96,6 +96,10 @@ typedef struct {
     int enc;              /* 1 = encrypt, 0 = decrypt                  */
     size_t fixed_key_len; /* wrapper-fixed key length (16/24/32 bytes) */
 
+    octet updated_iv[BELT_IV_SIZE];
+    u32 key_words[8];
+    unsigned int num;
+
     octet buf[BELT_BLOCK_SIZE]; /* partial-block input buffer               */
     size_t buf_len;             /* bytes currently in buf                   */
     octet last[BELT_BLOCK_SIZE]; /* final ciphertext block for padded decryption */
@@ -113,10 +117,70 @@ static void belt_reinit(bee2_belt_ctx_t *c) {
     c->mode->restart(&c->backend_state);
 }
 
+/* Keep the OpenSSL-facing IV state in step with Bee2's stream modes. */
+static void belt_reset_iv_state(bee2_belt_ctx_t *c) {
+    u32 block[4];
+
+    memset(c->updated_iv, 0, sizeof(c->updated_iv));
+    c->num = 0;
+    if (c->mode->iv_size == 0 || !c->backend_state.iv_set)
+        return;
+
+    memcpy(c->updated_iv, c->backend_state.iv, sizeof(c->updated_iv));
+    if (c->mode == &belt_ctr_mode) {
+        u32From(block, c->updated_iv, sizeof(c->updated_iv));
+        beltBlockEncr2(block, c->key_words);
+        u32To(c->updated_iv, sizeof(c->updated_iv), block);
+        OPENSSL_cleanse(block, sizeof(block));
+    }
+}
+
+static void belt_update_cfb_state(bee2_belt_ctx_t *c,
+                                  const unsigned char *output,
+                                  size_t length) {
+    u32 block[4];
+    size_t i;
+
+    for (i = 0; i < length; ++i) {
+        if (c->num == 0) {
+            u32From(block, c->updated_iv, sizeof(c->updated_iv));
+            beltBlockEncr2(block, c->key_words);
+            u32To(c->updated_iv, sizeof(c->updated_iv), block);
+        }
+        if (c->enc)
+            c->updated_iv[c->num] = output[i];
+        else
+            c->updated_iv[c->num] ^= output[i];
+        c->num = (c->num + 1u) % BELT_BLOCK_SIZE;
+    }
+    OPENSSL_cleanse(block, sizeof(block));
+}
+
+static void belt_update_ctr_state(bee2_belt_ctx_t *c, size_t length) {
+    size_t i;
+
+    for (i = 0; i < length; ++i) {
+        if (c->num == 0) {
+            size_t j;
+
+            for (j = 0; j < sizeof(c->updated_iv); ++j) {
+                if (++c->updated_iv[j] != 0)
+                    break;
+            }
+        }
+        c->num = (c->num + 1u) % BELT_BLOCK_SIZE;
+    }
+}
+
 /* Process exactly one 16-byte block through the active cipher mode. */
 static void belt_process_block(bee2_belt_ctx_t *c, const octet *in, octet *out) {
     belt_mode_crypt_fn crypt = c->enc ? c->mode->encrypt : c->mode->decrypt;
+
+    if (c->mode == &belt_cbc_mode && !c->enc)
+        memcpy(c->updated_iv, in, sizeof(c->updated_iv));
     crypt(&c->backend_state, in, 1, out);
+    if (c->mode == &belt_cbc_mode && c->enc)
+        memcpy(c->updated_iv, out, sizeof(c->updated_iv));
 }
 
 /* ------------------------------------------------------------------ */
@@ -200,6 +264,7 @@ static int belt_init(void *vctx,
         if (keylen != c->fixed_key_len)
             return 0;
         c->mode->set_key(&c->backend_state, key, keylen);
+        u32From(c->key_words, c->backend_state.key, sizeof(c->key_words));
     }
 
     if (iv != NULL) {
@@ -214,8 +279,10 @@ static int belt_init(void *vctx,
         }
     }
 
-    if (c->backend_state.key_set)
+    if (c->backend_state.key_set) {
         belt_reinit(c);
+        belt_reset_iv_state(c);
+    }
 
     return 1;
 }
@@ -266,6 +333,10 @@ static int belt_update(void *vctx,
         if (inl != 0) {
             c->started = 1;
             crypt(&c->backend_state, in, inl, out);
+            if (c->mode == &belt_cfb_mode)
+                belt_update_cfb_state(c, out, inl);
+            else
+                belt_update_ctr_state(c, inl);
         }
         *outl = inl;
         return 1;
@@ -473,6 +544,8 @@ static const OSSL_PARAM bee2_cipher_ctx_gettable[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, NULL, 0),
+    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, NULL, 0),
+    OSSL_PARAM_uint(OSSL_CIPHER_PARAM_NUM, NULL),
     OSSL_PARAM_END};
 
 static const OSSL_PARAM bee2_cipher_ctx_settable[] = {
@@ -513,6 +586,23 @@ static int belt_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_IV);
     if (p && c->mode->iv_size != 0) {
         if (!OSSL_PARAM_set_octet_string(p, c->backend_state.iv, c->mode->iv_size))
+            return 0;
+    }
+
+    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_UPDATED_IV);
+    if (p) {
+        if ((c->mode != &belt_cbc_mode && c->mode != &belt_cfb_mode &&
+             c->mode != &belt_ctr_mode) ||
+            !c->backend_state.iv_set ||
+            !OSSL_PARAM_set_octet_string(p, c->updated_iv, sizeof(c->updated_iv)))
+            return 0;
+    }
+
+    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_NUM);
+    if (p) {
+        if ((c->mode != &belt_cfb_mode && c->mode != &belt_ctr_mode) ||
+            !c->backend_state.iv_set ||
+            !OSSL_PARAM_set_uint(p, c->num))
             return 0;
     }
 
