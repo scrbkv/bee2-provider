@@ -145,12 +145,4 @@ extern const OSSL_DISPATCH bee2_bign_pem_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_der_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_decoder_functions[];
 
-/* ---- CORE BIO helpers -------------------------------------------- */
-
-int bee2_core_bio_read(OSSL_CORE_BIO *bio, void *data, size_t data_len, size_t *bytes_read);
-int bee2_core_bio_write(OSSL_CORE_BIO *bio,
-                        const void *data,
-                        size_t data_len,
-                        size_t *bytes_written);
-
 #endif /* BEE2_PROVIDER_H */
