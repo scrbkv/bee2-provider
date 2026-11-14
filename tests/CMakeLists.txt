@@ -411,3 +411,75 @@ target_link_libraries(bee2_provider_isolation PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_provider_isolation
     COMMAND bee2_provider_isolation $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_provider_isolation PROPERTIES LABELS "regression;provider;libctx;bign")
+
+# Independent STB appendix checks and provider boundary regressions.
+add_test(
+    NAME bee2_stb_extended_kat
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/stb_extended_kat.py
+        --provider-path $<TARGET_FILE_DIR:bee2_provider>
+        --openssl ${BEE2_OPENSSL_EXECUTABLE}
+)
+set_tests_properties(bee2_stb_extended_kat PROPERTIES LABELS "stb;known_answer;full_coverage")
+
+add_executable(bee2_belt_aead_stb belt_aead_stb.c)
+target_link_libraries(bee2_belt_aead_stb PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_belt_aead_stb
+    COMMAND bee2_belt_aead_stb $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_belt_aead_stb PROPERTIES LABELS "stb;known_answer;belt;aead;native")
+
+add_executable(bee2_digest_oneshot digest_oneshot.c)
+target_link_libraries(bee2_digest_oneshot PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_digest_oneshot
+    COMMAND bee2_digest_oneshot $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_digest_oneshot PROPERTIES LABELS "regression;evp;digest;native")
+
+add_executable(bee2_bign_params_contract bign_params_contract.c)
+target_link_libraries(bee2_bign_params_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_params_contract
+    COMMAND bee2_bign_params_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_params_contract PROPERTIES LABELS "regression;bign;params;native")
+
+# The engine is built separately; keep these tests explicit and mandatory when
+# BEE2_PROVIDER_ENABLE_INTEROP is enabled. The matrix checks both encryption
+# directions for boundary values and deterministic pseudorandom inputs.
+if(BEE2_PROVIDER_ENABLE_INTEROP)
+    set(interop_prefix
+        "${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>"
+    )
+    foreach(mode IN ITEMS ecb cbc cfb ctr)
+        foreach(bits IN ITEMS 128 192 256)
+            math(EXPR key_len "${bits} / 8")
+            set(name "belt-${mode}${bits}")
+            set(iv_len 16)
+            if(mode STREQUAL "ecb")
+                set(iv_len 0)
+            endif()
+            set(spec "cipher|${interop_prefix}|${name}|${name}|32|${key_len}|${iv_len}|-|-")
+            set(test_name "bee2_interop_matrix_${name}")
+            string(REPLACE "-" "_" test_name "${test_name}")
+            add_test(NAME ${test_name}
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_matrix.py "${spec}")
+            set_tests_properties(${test_name} PROPERTIES LABELS "interop;bee2evp;matrix")
+        endforeach()
+    endforeach()
+    foreach(name IN ITEMS belt-hash bash256 bash384 bash512)
+        set(spec "digest|${interop_prefix}|${name}|${name}|257|0|0|-|-")
+        set(test_name "bee2_interop_matrix_${name}")
+        string(REPLACE "-" "_" test_name "${test_name}")
+        add_test(NAME ${test_name}
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_matrix.py "${spec}")
+        set_tests_properties(${test_name} PROPERTIES LABELS "interop;bee2evp;matrix")
+    endforeach()
+    foreach(name IN ITEMS belt-mac256 belt-hmac)
+        set(digest "-")
+        if(name STREQUAL "belt-hmac")
+            set(digest "belt-hash")
+        endif()
+        set(spec "mac|${interop_prefix}|${name}|${name}|257|32|0|${digest}|-")
+        set(test_name "bee2_interop_matrix_${name}")
+        string(REPLACE "-" "_" test_name "${test_name}")
+        add_test(NAME ${test_name}
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_matrix.py "${spec}")
+        set_tests_properties(${test_name} PROPERTIES LABELS "interop;bee2evp;matrix")
+    endforeach()
+endif()

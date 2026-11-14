@@ -1163,12 +1163,9 @@ static int bign_decoder_export_object(void *vctx,
     bee2_bign_decoder_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = NULL;
 
-    if (!ctx || !objref || !export_cb)
+    if (!ctx || !objref || !export_cb || objref_sz != sizeof(key))
         return 0;
-    if (objref_sz == sizeof(void *))
-        memcpy(&key, objref, sizeof(key));
-    else
-        key = (bee2_bign_key_t *)objref;
+    memcpy(&key, objref, sizeof(key));
     if (!key || (ctx->variant && key->variant != ctx->variant))
         return 0;
 

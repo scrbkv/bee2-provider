@@ -22,17 +22,53 @@ of the underlying algorithms.
 
 - The compiled provider is tested on Linux using pinned OpenSSL 3.5, 4.0 and
   4.1 releases and the pinned Bee2 submodule.
-- `tests/openssl_kat.py` contains fixed STB appendix vectors for selected
-  BELT, HMAC-HBELT and BASH operations.
+- `tests/openssl_kat.py`, `tests/stb_extended_kat.py` and
+  `tests/belt_aead_stb.c` check independent STB appendix vectors for
+  BELT block modes, BDE, SDE, DWP, CHE, KWP, MAC, Hash, PBKDF and
+  BASH-256/384/512. The fixed outputs are not produced by the provider
+  under test.
 - `tests/brng_kat.c` contains fixed BRNG-CTR and BRNG-HMAC appendix vectors.
 - Other algorithms are often checked by round trips, cross-variant coverage
   or internal consistency, which is weaker than independent known-answer tests.
-- Optional interoperability tests with `bee2evp` are not part of the default
-  GitHub Actions matrix.
+- Interoperability with a pinned `bee2evp` engine is exercised in an
+  independent GitHub Actions job. Its supported cipher, MAC and digest
+  algorithms are checked with fixed boundary sizes and deterministic
+  pseudorandom buffers, including cross-decryption. Existing BIGN
+  certificate interoperability checks are included in that job.
+  The engine is a separate implementation interface over Bee2; it is
+  not an independent cryptographic implementation.
 - The main build matrix does not cover Windows or macOS.
 - A full conformity claim requires the relevant normative edition, algorithm
   profiles and OIDs, exhaustive fixed vectors, boundary and negative tests,
   interoperability, security review, and applicable certification processes.
+
+## Test coverage by operation
+
+The terms in this table are deliberately distinct: a **standard KAT**
+compares against a fixed answer published with an STB example; an
+**interoperability** check compares against bee2evp; a **round-trip** only
+establishes internal consistency. They must not be counted as equivalent.
+
+| Operation | STB known-answer evidence | Additional validation |
+| --- | --- | --- |
+| BELT ECB/CBC/CFB/CTR | 256-bit keys, STB 34.101.31 Appendix A; 128/192-bit key-expansion equivalence to the A.27 expanded key | Round-trips for all key lengths; bee2evp fixed/boundary/random inputs |
+| BELT BDE/SDE | 256-bit keys, A.24 | Round-trips for 128/192/256; no bee2evp counterpart |
+| BELT DWP/CHE | 256-bit keys, A.19-1/2 (ciphertext and authentication tag) | Round-trips and tag-rejection for all key lengths |
+| BELT KWP | 256-bit keys, A.21 | Round-trips and tamper tests for all key lengths |
+| BELT MAC | 256-bit keys, A.17 | Round-trips/functional coverage for 128/192; bee2evp MAC comparison for 256 |
+| BELT-Hash | A.23 (multiple lengths) | Streaming/one-shot API equivalence and bee2evp comparison |
+| BELT-PBKDF | STB 34.101.45 Appendix E.5 | EVP KDF integration |
+| HMAC-HBELT | STB 34.101.47 B.1 | bee2evp comparison, plus HMAC construction tests |
+| BRNG-CTR-HBELT / BRNG-HMAC-HBELT | STB 34.101.47 B.2/B.4 | RAND contract tests |
+| BASH-256/384/512 | STB 34.101.77 A.3, multiple boundary lengths | Streaming/one-shot and bee2evp comparisons |
+| BASH-PRG-AE (six provider variants) | **Not yet covered by an independent published STB vector per variant** | Functional round-trips and authentication failures |
+| BIGN signature/key agreement/key transport | **Not yet covered by an independent STB answer for each exposed variant and operation** | Deterministic repeatability, sign/verify, DH agreement, encoding checks and selected bee2evp certificate interoperability |
+
+The missing per-algorithm standard KATs remain release blockers for a claim
+of exhaustive normative coverage. In particular, the 128/192-bit variants
+of several BELT algorithms and all six BASH-PRG-AE EVP profiles still
+require a carefully matched normative reference rather than generated
+expected values.
 
 ## BELT key expansion against the standard
 

@@ -66,11 +66,12 @@ static int bign_keyexchange_init(void *vctx, void *vkey, const OSSL_PARAM params
     bee2_bign_keyexchange_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
 
-    if (!ctx || !key || !key->variant || !key->has_priv)
+    if (!ctx || !key || !key->variant || !key->has_priv ||
+        !bign_keyexchange_set_ctx_params(ctx, params))
         return 0;
     ctx->local_key = key;
     ctx->peer_key = NULL;
-    return bign_keyexchange_set_ctx_params(ctx, params);
+    return 1;
 }
 
 static int bign_keyexchange_set_peer(void *vctx, void *vkey) {
@@ -168,42 +169,58 @@ static const OSSL_PARAM *bign_keyexchange_gettable_ctx_params(void *vctx, void *
 static int bign_keyexchange_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_bign_keyexchange_ctx_t *ctx = vctx;
     const OSSL_PARAM *param;
+    const void *ukm = NULL;
+    size_t ukm_len = 0;
+    size_t kdf_output_len;
+    uint64_t kdf_num;
+    int use_bake_kdf;
+    int set_ukm = 0;
 
-    if (!ctx || !params)
-        return ctx != NULL;
+    if (ctx == NULL)
+        return 0;
+    if (params == NULL)
+        return 1;
+
+    use_bake_kdf = ctx->use_bake_kdf;
+    kdf_output_len = ctx->kdf_output_len;
+    kdf_num = ctx->kdf_num;
 
     param = OSSL_PARAM_locate_const(params, OSSL_EXCHANGE_PARAM_KDF_TYPE);
     if (param) {
         const char *name = NULL;
+
         if (!OSSL_PARAM_get_utf8_string_ptr(param, &name))
             return 0;
         if (!name || name[0] == '\0' || OPENSSL_strcasecmp(name, "none") == 0)
-            ctx->use_bake_kdf = 0;
+            use_bake_kdf = 0;
         else if (OPENSSL_strcasecmp(name, BEE2_BAKE_KDF_NAME) == 0)
-            ctx->use_bake_kdf = 1;
+            use_bake_kdf = 1;
         else
             return 0;
     }
 
     param = OSSL_PARAM_locate_const(params, OSSL_EXCHANGE_PARAM_KDF_UKM);
     if (param) {
-        const void *ukm = NULL;
-        size_t ukm_len = 0;
         if (!OSSL_PARAM_get_octet_string_ptr(param, &ukm, &ukm_len) ||
-            !bee2_secret_replace(&ctx->ukm, &ctx->ukm_len, ukm, ukm_len))
+            (ukm == NULL && ukm_len != 0))
             return 0;
+        set_ukm = 1;
     }
 
     param = OSSL_PARAM_locate_const(params, OSSL_EXCHANGE_PARAM_KDF_OUTLEN);
-    if (param && (!OSSL_PARAM_get_size_t(param, &ctx->kdf_output_len) ||
-                  ctx->kdf_output_len == 0u || ctx->kdf_output_len > BEE2_BAKE_KDF_SIZE))
+    if (param && (!OSSL_PARAM_get_size_t(param, &kdf_output_len) ||
+                  kdf_output_len == 0u || kdf_output_len > BEE2_BAKE_KDF_SIZE))
         return 0;
 
     param = OSSL_PARAM_locate_const(params, BEE2_EXCHANGE_PARAM_KDF_NUM);
-    if (param) {
-        if (!OSSL_PARAM_get_uint64(param, &ctx->kdf_num) || ctx->kdf_num > SIZE_MAX)
-            return 0;
-    }
+    if (param && (!OSSL_PARAM_get_uint64(param, &kdf_num) || kdf_num > SIZE_MAX))
+        return 0;
+
+    if (set_ukm && !bee2_secret_replace(&ctx->ukm, &ctx->ukm_len, ukm, ukm_len))
+        return 0;
+    ctx->use_bake_kdf = use_bake_kdf;
+    ctx->kdf_output_len = kdf_output_len;
+    ctx->kdf_num = kdf_num;
     return 1;
 }
 

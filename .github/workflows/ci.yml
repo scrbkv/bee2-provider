@@ -136,7 +136,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb)' \
+            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|digest_oneshot|bign_params_contract)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
@@ -145,4 +145,62 @@ jobs:
         with:
           name: sanitizer-tests
           path: build-sanitize/sanitizer-tests.xml
+          if-no-files-found: warn
+
+  interoperability:
+    name: Linux / bee2evp interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OPENSSL_CONF: /dev/null
+    steps:
+      - name: Check out provider and pinned Bee2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build pinned bee2evp engine
+        shell: bash
+        run: |
+          git clone --recursive https://github.com/bcrypto/bee2evp.git "$RUNNER_TEMP/bee2evp"
+          git -C "$RUNNER_TEMP/bee2evp" checkout 4768a5cf34c5486716c79a3bd0c6d21375a446e3
+          git -C "$RUNNER_TEMP/bee2evp" submodule update --init --recursive
+          cmake -S "$RUNNER_TEMP/bee2evp" -B "$RUNNER_TEMP/bee2evp-build" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_DOC=OFF \
+            -DBUILD_PIC=ON
+          cmake --build "$RUNNER_TEMP/bee2evp-build" --parallel 4
+          engine_library="$(find "$RUNNER_TEMP/bee2evp-build" -name libbee2evp.so -print -quit)"
+          test -n "$engine_library"
+          engine_dir="$(dirname "$engine_library")"
+          ln -sfn libbee2evp.so "$engine_dir/bee2evp.so"
+          echo "OPENSSL_ENGINES=$engine_dir" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$engine_dir" >> "$GITHUB_ENV"
+
+      - name: Check engine availability
+        run: openssl engine -t -c bee2evp
+
+      - name: Configure and build interoperability tests
+        shell: bash
+        run: |
+          cmake -S . -B build-interop -DCMAKE_BUILD_TYPE=Release \
+            -DBEE2_PROVIDER_BUILD_TESTS=ON \
+            -DBEE2_PROVIDER_ENABLE_INTEROP=ON \
+            -DBEE2_INTEROP_BEE2EVP_ENGINE=bee2evp \
+            -DBEE2_INTEROP_BEE2EVP_OPENSSL_CONF=/dev/null \
+            -DBEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+          cmake --build build-interop --parallel 4
+
+      - name: Run fixed, boundary and random interoperability tests
+        run: |
+          ctest --test-dir build-interop --output-on-failure --timeout 240 \
+            -R '^(bee2_bee2evp_interop_|bee2_bee2evp_bign_cert_|bee2_interop_matrix_)' \
+            --output-junit interoperability-tests.xml
+
+      - name: Upload interoperability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: interoperability
+          path: build-interop/interoperability-tests.xml
           if-no-files-found: warn

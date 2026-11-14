@@ -120,31 +120,27 @@ static int bash_final(void *vctx, unsigned char *out, size_t *outl, size_t outsz
     return 1;
 }
 
-/* variant-specific one-shot helpers */
-#define BASH_DIGEST_FN(OUTBITS, NEWCTX_FN) \
+/* Use Bee2's one-shot implementation without allocating a digest context. */
+#define BASH_DIGEST_FN(OUTBITS, LEVEL) \
     static int bash##OUTBITS##_digest(void *provctx, \
                                       const unsigned char *in, \
                                       size_t inl, \
                                       unsigned char *out, \
                                       size_t *outl, \
                                       size_t outsz) { \
-        bee2_bash_ctx_t *tmp = NEWCTX_FN(provctx); \
-        int ok = 0; \
-        if (!tmp) \
+        (void)provctx; \
+        if (out == NULL || outl == NULL || (in == NULL && inl != 0) || \
+            outsz < OUTBITS / 8) \
             return 0; \
-        if (outsz < tmp->var->output_size) \
-            goto done; \
-        bash_update(tmp, in, inl); \
-        bash_final(tmp, out, outl, outsz); \
-        ok = 1; \
-    done: \
-        bash_freectx(tmp); \
-        return ok; \
+        if (bashHash(out, LEVEL, in, inl) != ERR_OK) \
+            return 0; \
+        *outl = OUTBITS / 8; \
+        return 1; \
     }
 
-BASH_DIGEST_FN(256, bash256_newctx)
-BASH_DIGEST_FN(384, bash384_newctx)
-BASH_DIGEST_FN(512, bash512_newctx)
+BASH_DIGEST_FN(256, 128)
+BASH_DIGEST_FN(384, 192)
+BASH_DIGEST_FN(512, 256)
 
 /* ------------------------------------------------------------------ */
 /*  Algorithm parameters                                                */

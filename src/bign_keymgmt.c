@@ -59,19 +59,22 @@ static int
 bign_apply_encoding_params(int *encode_explicit, int *encode_cofactor, const OSSL_PARAM params[]) {
     const OSSL_PARAM *p;
     char *value = NULL;
+    int explicit_encoding, cofactor_encoding;
     int ok = 0;
 
     if (!encode_explicit || !encode_cofactor || !params)
         return encode_explicit && encode_cofactor;
 
+    explicit_encoding = *encode_explicit;
+    cofactor_encoding = *encode_cofactor;
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_EC_ENCODING);
     if (p) {
         if (!OSSL_PARAM_get_utf8_string(p, &value, 0))
             goto cleanup;
         if (OPENSSL_strcasecmp(value, OSSL_PKEY_EC_ENCODING_EXPLICIT) == 0)
-            *encode_explicit = 1;
+            explicit_encoding = 1;
         else if (OPENSSL_strcasecmp(value, OSSL_PKEY_EC_ENCODING_GROUP) == 0)
-            *encode_explicit = 0;
+            explicit_encoding = 0;
         else
             goto cleanup;
         OPENSSL_free(value);
@@ -83,12 +86,14 @@ bign_apply_encoding_params(int *encode_explicit, int *encode_cofactor, const OSS
         if (!OSSL_PARAM_get_utf8_string(p, &value, 0))
             goto cleanup;
         if (OPENSSL_strcasecmp(value, "specified") == 0)
-            *encode_explicit = 1;
+            explicit_encoding = 1;
         else if (OPENSSL_strcasecmp(value, "cofactor") == 0)
-            *encode_cofactor = 1;
+            cofactor_encoding = 1;
         else
             goto cleanup;
     }
+    *encode_explicit = explicit_encoding;
+    *encode_cofactor = cofactor_encoding;
     ok = 1;
 
 cleanup:
@@ -446,8 +451,6 @@ static int bign_set_params(void *vkey, const OSSL_PARAM params[]) {
         return 0;
     if (!params)
         return 1;
-    if (!bign_apply_encoding_params(&key->encode_explicit, &key->encode_cofactor, params))
-        return 0;
     if (OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME))
         selection |= OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS;
     if (OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PRIV_KEY))
@@ -456,7 +459,7 @@ static int bign_set_params(void *vkey, const OSSL_PARAM params[]) {
         OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY))
         selection |= OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
     if (selection == 0)
-        return 1;
+        return bign_apply_encoding_params(&key->encode_explicit, &key->encode_cofactor, params);
     return bign_import(vkey, selection, params);
 }
 
@@ -506,13 +509,9 @@ static void *bign_dup(const void *vkey_from, int selection) {
 static void *bign_load(const void *reference, size_t reference_sz) {
     const bee2_bign_key_t *src = NULL;
 
-    if (!reference)
+    if (!reference || reference_sz != sizeof(src))
         return NULL;
-    if (reference_sz == sizeof(void *)) {
-        memcpy(&src, reference, sizeof(src));
-    } else {
-        src = (const bee2_bign_key_t *)reference;
-    }
+    memcpy(&src, reference, sizeof(src));
     if (!src || !src->variant)
         return NULL;
 

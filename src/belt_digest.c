@@ -75,7 +75,8 @@ static int provider_belt_hash_digest(void *provctx,
                                      size_t *outl,
                                      size_t outsz) {
     (void)provctx;
-    if (outsz < BELT_HASH_DIGEST_SIZE)
+    if (out == NULL || outl == NULL || (in == NULL && inl != 0) ||
+        outsz < BELT_HASH_DIGEST_SIZE)
         return 0;
     if (beltHash(out, in, inl) != ERR_OK)
         return 0;
