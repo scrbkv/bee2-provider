@@ -393,11 +393,14 @@ static const OSSL_PARAM *bign_import_types(int selection) {
     return bee2_bign_keymgmt_impexp_types;
 }
 
+#ifdef OSSL_FUNC_KEYMGMT_IMPORT_TYPES_EX
 static const OSSL_PARAM *bign_import_types_ex(void *provctx, int selection) {
     (void)provctx;
     (void)selection;
     return bee2_bign_keymgmt_impexp_types;
 }
+
+#endif
 
 static int bign_export(void *vkey, int selection, OSSL_CALLBACK *param_cb, void *cbarg) {
     bee2_bign_key_t *key = vkey;
@@ -445,11 +448,14 @@ static const OSSL_PARAM *bign_export_types(int selection) {
     return bee2_bign_keymgmt_impexp_types;
 }
 
+#ifdef OSSL_FUNC_KEYMGMT_EXPORT_TYPES_EX
 static const OSSL_PARAM *bign_export_types_ex(void *provctx, int selection) {
     (void)provctx;
     (void)selection;
     return bee2_bign_keymgmt_impexp_types;
 }
+
+#endif
 
 static int bign_set_params(void *vkey, const OSSL_PARAM params[]) {
     bee2_bign_key_t *key = vkey;

@@ -246,7 +246,7 @@ static int belt_kwp_get_params_len(OSSL_PARAM params[], size_t key_len) {
     if (p && !OSSL_PARAM_set_size_t(p, BELT_KWP_HDR_SIZE))
         return 0;
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_BLOCK_SIZE);
-    if (p && !OSSL_PARAM_set_size_t(p, 1u))
+    if (p && !OSSL_PARAM_set_size_t(p, BELT_BLOCK_SIZE))
         return 0;
     return 1;
 }
