@@ -268,6 +268,60 @@ end:
     return ok;
 }
 
+static int test_pbkdf_empty_inputs(const unsigned char *password,
+                                    size_t password_len,
+                                    const unsigned char *salt,
+                                    size_t salt_len)
+{
+    EVP_KDF *kdf = NULL;
+    EVP_KDF_CTX *ctx = NULL;
+    unsigned char actual[32], expected[32];
+    uint64_t iterations = 3;
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD,
+                                (void *)password, password_len),
+        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT,
+                                (void *)salt, salt_len),
+        OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &iterations),
+        OSSL_PARAM_END
+    };
+    int ok = 0;
+
+    if (beltPBKDF2(expected, password, password_len, (size_t)iterations,
+                   salt, salt_len) != ERR_OK)
+        goto end;
+    kdf = EVP_KDF_fetch(NULL, "belt-pbkdf", "provider=bee2");
+    ctx = EVP_KDF_CTX_new(kdf);
+    if (ctx == NULL || EVP_KDF_CTX_set_params(ctx, params) <= 0 ||
+        EVP_KDF_derive(ctx, actual, sizeof(actual), NULL) <= 0 ||
+        !same(actual, expected, sizeof(expected)))
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BELT-PBKDF empty-input interoperability failed\n");
+    EVP_KDF_CTX_free(ctx);
+    EVP_KDF_free(kdf);
+    OPENSSL_cleanse(actual, sizeof(actual));
+    OPENSSL_cleanse(expected, sizeof(expected));
+    return ok;
+}
+
+static int test_pbkdf_empty_boundaries(void)
+{
+    static const unsigned char password[] = "provider test password";
+    static const unsigned char salt[] = {
+        0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE
+    };
+
+    return test_pbkdf_empty_inputs(NULL, 0, NULL, 0) &&
+           test_pbkdf_empty_inputs(NULL, 0, salt, sizeof(salt)) &&
+           test_pbkdf_empty_inputs(password, sizeof(password) - 1, NULL, 0) &&
+           test_pbkdf_empty_inputs(password, sizeof(password) - 1,
+                                   salt, sizeof(salt));
+}
+
 int main(int argc, char **argv)
 {
     static const size_t block_lengths[] = {16, 32, 48, 64, 256, 1024};
@@ -339,6 +393,8 @@ int main(int argc, char **argv)
                 if (!test_mac(16 + 8 * i, n, profile))
                     goto end;
         }
+    if (!test_pbkdf_empty_boundaries())
+        goto end;
     ok = 1;
 end:
     if (!ok)
