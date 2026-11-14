@@ -3,7 +3,7 @@
 OpenSSL CLI KAT tests for bee2_provider.
 
 Vectors are taken from:
-  - STB 34.101.31-2011, Appendix A (tables A.6/A.10/A.14/A.16/A.18/A.25/A.27/A.28)
+  - STB 34.101.31-2020, Appendix A (tables A.9/A.11/A.13/A.15/A.17/A.23/A.27)
   - STB 34.101.47-2012, Appendix B (tables B.1)
   - STB 34.101.77-2020, Appendix A (table A.3)
 """
@@ -58,7 +58,7 @@ BELT_CTR_384 = (
 BELT_MAC_384 = "2DAB59771B4B16D0"
 BELT_HASH_256 = "749E4C3653AECE5E48DB4761227742EB6DBE13F4A80F7BEFF1A9CF8D10EE7786"
 
-# STB 34.101.31, table A.27 (n=4) and A.28 (n=6)
+# STB 34.101.31-2020, table A.27 (n=4 and n=6)
 BELT_KEY_128 = "E9DEE72C8F0C0FA62DDB49F46F739647"
 BELT_KEY_192 = "E9DEE72C8F0C0FA62DDB49F46F73964706075316ED247A37"
 BELT_KEY_128_EXPANDED = (
@@ -237,22 +237,22 @@ def assert_hex_eq(label: str, actual: bytes, expected_hex: str) -> None:
 def run_belt_block_vectors(runner: OpenSSLRunner) -> None:
     pt384 = to_bytes(BELT_PT_384)
     assert_hex_eq(
-        "STB 34.101.31 A.6 belt-ecb256",
+        "STB 34.101.31 A.9 belt-ecb256",
         runner.enc("belt-ecb256", BELT_KEY_256, None, pt384),
         BELT_ECB_384,
     )
     assert_hex_eq(
-        "STB 34.101.31 A.10 belt-cbc256",
+        "STB 34.101.31 A.11 belt-cbc256",
         runner.enc("belt-cbc256", BELT_KEY_256, BELT_IV, pt384),
         BELT_CBC_384,
     )
     assert_hex_eq(
-        "STB 34.101.31 A.14 belt-cfb256",
+        "STB 34.101.31 A.13 belt-cfb256",
         runner.enc("belt-cfb256", BELT_KEY_256, BELT_IV, pt384),
         BELT_CFB_384,
     )
     assert_hex_eq(
-        "STB 34.101.31 A.16 belt-ctr256",
+        "STB 34.101.31 A.15 belt-ctr256",
         runner.enc("belt-ctr256", BELT_KEY_256, BELT_IV, pt384),
         BELT_CTR_384,
     )
@@ -261,7 +261,7 @@ def run_belt_block_vectors(runner: OpenSSLRunner) -> None:
 def run_belt_mac_vector(runner: OpenSSLRunner) -> None:
     pt384 = to_bytes(BELT_PT_384)
     assert_hex_eq(
-        "STB 34.101.31 A.18 belt-mac256",
+        "STB 34.101.31 A.17 belt-mac256",
         runner.mac_belt(BELT_KEY_256, pt384),
         BELT_MAC_384,
     )
@@ -270,7 +270,7 @@ def run_belt_mac_vector(runner: OpenSSLRunner) -> None:
 def run_belt_hash_vector(runner: OpenSSLRunner) -> None:
     pt256 = to_bytes(BELT_PT_256)
     assert_hex_eq(
-        "STB 34.101.31 A.25 belt-hash",
+        "STB 34.101.31 A.23 belt-hash",
         runner.dgst("belt-hash", pt256),
         BELT_HASH_256,
     )
@@ -296,14 +296,23 @@ def run_hmac_hbelt_vectors(runner: OpenSSLRunner) -> None:
 
 
 def run_belt_keyexpand_vectors(runner: OpenSSLRunner) -> None:
+    # STB 34.101.31-2020 8.1.2 / A.27 defines the expanded keys.
+    # CBC/ECB/CFB/CTR should use the identical 256-bit key schedule.
+    # This checks the EVP integration; direct normative expansion is tested
+    # independently in belt_keyexpand_stb.c.
     pt384 = to_bytes(BELT_PT_384)
-    cbc_128 = runner.enc("belt-cbc128", BELT_KEY_128, BELT_IV, pt384)
-    cbc_128_exp = runner.enc("belt-cbc256", BELT_KEY_128_EXPANDED, BELT_IV, pt384)
-    assert_hex_eq("STB 34.101.31 A.27 keyexpand -> belt-cbc128", cbc_128, to_hex(cbc_128_exp))
-
-    cbc_192 = runner.enc("belt-cbc192", BELT_KEY_192, BELT_IV, pt384)
-    cbc_192_exp = runner.enc("belt-cbc256", BELT_KEY_192_EXPANDED, BELT_IV, pt384)
-    assert_hex_eq("STB 34.101.31 A.28 keyexpand -> belt-cbc192", cbc_192, to_hex(cbc_192_exp))
+    for mode in ("ecb", "cbc", "cfb", "ctr"):
+        iv = None if mode == "ecb" else BELT_IV
+        for bits, original, expanded in (
+            (128, BELT_KEY_128, BELT_KEY_128_EXPANDED),
+            (192, BELT_KEY_192, BELT_KEY_192_EXPANDED),
+        ):
+            actual = runner.enc(f"belt-{mode}{bits}", original, iv, pt384)
+            expected = runner.enc(f"belt-{mode}256", expanded, iv, pt384)
+            assert_hex_eq(
+                f"STB 34.101.31-2020 A.27 keyexpand -> belt-{mode}{bits}",
+                actual, to_hex(expected),
+            )
 
 
 def run_bash_hash_vectors(runner: OpenSSLRunner) -> None:

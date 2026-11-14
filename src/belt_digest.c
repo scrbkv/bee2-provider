@@ -19,7 +19,7 @@ static void *provider_belt_hash_newctx(void *provctx) {
     belt_hash_ctx_t *state = OPENSSL_malloc(sizeof(*state));
     if (!state)
         return NULL;
-    belt_hash_init(state);
+    beltHashStart(state);
     return state;
 }
 
@@ -27,7 +27,6 @@ static void provider_belt_hash_freectx(void *vctx) {
     belt_hash_ctx_t *state = vctx;
     if (!state)
         return;
-    belt_hash_cleanup(state);
     OPENSSL_clear_free(state, sizeof(*state));
 }
 
@@ -47,7 +46,7 @@ static void *provider_belt_hash_dupctx(void *vctx) {
 static int provider_belt_hash_init(void *vctx, const OSSL_PARAM params[]) {
     belt_hash_ctx_t *state = vctx;
     (void)params;
-    belt_hash_init(state);
+    beltHashStart(state);
     return 1;
 }
 
@@ -55,7 +54,7 @@ static int provider_belt_hash_update(void *vctx, const unsigned char *in, size_t
     belt_hash_ctx_t *state = vctx;
     if (inl == 0)
         return 1;
-    belt_hash_update(state, in, inl);
+    beltHashStepH(in, inl, state);
     return 1;
 }
 
@@ -63,7 +62,7 @@ static int provider_belt_hash_final(void *vctx, unsigned char *out, size_t *outl
     belt_hash_ctx_t *state = vctx;
     if (outsz < BELT_HASH_DIGEST_SIZE)
         return 0;
-    belt_hash_get(state, out);
+    beltHashStepG(out, state);
     *outl = BELT_HASH_DIGEST_SIZE;
     return 1;
 }
@@ -118,20 +117,6 @@ static int provider_belt_hash_get_params(OSSL_PARAM params[]) {
     return 1;
 }
 
-static const OSSL_PARAM bee2_belt_hash_ctx_gettable[] = {OSSL_PARAM_END};
-
-static const OSSL_PARAM *provider_belt_hash_gettable_ctx_params(void *dctx, void *pctx) {
-    (void)dctx;
-    (void)pctx;
-    return bee2_belt_hash_ctx_gettable;
-}
-
-static int provider_belt_hash_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
-    (void)vctx;
-    (void)params;
-    return 1;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Dispatch table                                                      */
 /* ------------------------------------------------------------------ */
@@ -146,6 +131,4 @@ const OSSL_DISPATCH bee2_belt_hash_functions[] = {
     {OSSL_FUNC_DIGEST_DIGEST, (void (*)(void))provider_belt_hash_digest},
     {OSSL_FUNC_DIGEST_GET_PARAMS, (void (*)(void))provider_belt_hash_get_params},
     {OSSL_FUNC_DIGEST_GETTABLE_PARAMS, (void (*)(void))provider_belt_hash_gettable_params},
-    {OSSL_FUNC_DIGEST_GET_CTX_PARAMS, (void (*)(void))provider_belt_hash_get_ctx_params},
-    {OSSL_FUNC_DIGEST_GETTABLE_CTX_PARAMS, (void (*)(void))provider_belt_hash_gettable_ctx_params},
     {0, NULL}};

@@ -26,39 +26,11 @@
 /*  Variant descriptors                                                 */
 /* ------------------------------------------------------------------ */
 
-typedef void (*bash_init_fn)(bash_hash_ctx);
-typedef void (*bash_update_fn)(bash_hash_ctx, const void *, size_t);
-typedef void (*bash_get_fn)(bash_hash_ctx, void *);
-typedef void (*bash_cleanup_fn)(bash_hash_ctx);
-
 typedef struct {
     size_t output_size; /* digest length in bytes */
     size_t block_size;  /* sponge rate in bytes   */
-    bash_init_fn backend_init;
-    bash_update_fn backend_update;
-    bash_get_fn backend_get;
-    bash_cleanup_fn backend_cleanup;
+    size_t level;
 } bash_variant_t;
-
-/* Thin wrappers to convert function-pointer variables to plain functions. */
-static void bash128_update_w(bash_hash_ctx c, const void *d, size_t l) {
-    bash_hash128_update(c, d, l);
-}
-static void bash128_get_w(bash_hash_ctx c, void *h) {
-    bash_hash128_get(c, h);
-}
-static void bash192_update_w(bash_hash_ctx c, const void *d, size_t l) {
-    bash_hash192_update(c, d, l);
-}
-static void bash192_get_w(bash_hash_ctx c, void *h) {
-    bash_hash192_get(c, h);
-}
-static void bash256_update_w(bash_hash_ctx c, const void *d, size_t l) {
-    bash_hash256_update(c, d, l);
-}
-static void bash256_get_w(bash_hash_ctx c, void *h) {
-    bash_hash256_get(c, h);
-}
 
 /*
  * Variants named by security level (l), exposed as output-size based names.
@@ -66,12 +38,9 @@ static void bash256_get_w(bash_hash_ctx c, void *h) {
  * bash_sec192 → BASH-384 (48-byte output)
  * bash_sec256 → BASH-512 (64-byte output)
  */
-static const bash_variant_t bash_sec128 = {
-    32, 160, bash_hash128_init, bash128_update_w, bash128_get_w, bash_hash128_cleanup};
-static const bash_variant_t bash_sec192 = {
-    48, 144, bash_hash192_init, bash192_update_w, bash192_get_w, bash_hash192_cleanup};
-static const bash_variant_t bash_sec256 = {
-    64, 128, bash_hash256_init, bash256_update_w, bash256_get_w, bash_hash256_cleanup};
+static const bash_variant_t bash_sec128 = {32, 160, 128};
+static const bash_variant_t bash_sec192 = {48, 144, 192};
+static const bash_variant_t bash_sec256 = {64, 128, 256};
 
 /* ------------------------------------------------------------------ */
 /*  Context                                                             */
@@ -92,7 +61,7 @@ static void *bash_newctx(void *provctx, const bash_variant_t *var) {
     if (!c)
         return NULL;
     c->var = var;
-    var->backend_init(&c->backend_state);
+    bashHashStart(&c->backend_state, var->level);
     return c;
 }
 
@@ -100,7 +69,6 @@ static void bash_freectx(void *vctx) {
     bee2_bash_ctx_t *c = vctx;
     if (!c)
         return;
-    c->var->backend_cleanup(&c->backend_state);
     OPENSSL_clear_free(c, sizeof(*c));
 }
 
@@ -131,7 +99,7 @@ static void *bash512_newctx(void *p) {
 static int bash_init(void *vctx, const OSSL_PARAM params[]) {
     bee2_bash_ctx_t *c = vctx;
     (void)params;
-    c->var->backend_init(&c->backend_state);
+    bashHashStart(&c->backend_state, c->var->level);
     return 1;
 }
 
@@ -139,7 +107,7 @@ static int bash_update(void *vctx, const unsigned char *in, size_t inl) {
     bee2_bash_ctx_t *c = vctx;
     if (inl == 0)
         return 1;
-    c->var->backend_update(&c->backend_state, in, inl);
+    bashHashStepH(in, inl, &c->backend_state);
     return 1;
 }
 
@@ -147,7 +115,7 @@ static int bash_final(void *vctx, unsigned char *out, size_t *outl, size_t outsz
     bee2_bash_ctx_t *c = vctx;
     if (outsz < c->var->output_size)
         return 0;
-    c->var->backend_get(&c->backend_state, out);
+    bashHashStepG(out, c->var->output_size, &c->backend_state);
     *outl = c->var->output_size;
     return 1;
 }
@@ -217,20 +185,6 @@ static int bash512_get_params(OSSL_PARAM p[]) {
     return bash_get_params_impl(p, 64, 128);
 }
 
-static const OSSL_PARAM bee2_bash_ctx_gettable[] = {OSSL_PARAM_END};
-
-static const OSSL_PARAM *bash_gettable_ctx_params(void *dctx, void *pctx) {
-    (void)dctx;
-    (void)pctx;
-    return bee2_bash_ctx_gettable;
-}
-
-static int bash_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
-    (void)vctx;
-    (void)params;
-    return 1;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Dispatch tables — named by OUTPUT size (not security level)         */
 /* ------------------------------------------------------------------ */
@@ -246,8 +200,6 @@ static int bash_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
         {OSSL_FUNC_DIGEST_DIGEST, (void (*)(void))bash##OUTBITS##_digest}, \
         {OSSL_FUNC_DIGEST_GET_PARAMS, (void (*)(void))bash##OUTBITS##_get_params}, \
         {OSSL_FUNC_DIGEST_GETTABLE_PARAMS, (void (*)(void))bash_gettable_params}, \
-        {OSSL_FUNC_DIGEST_GET_CTX_PARAMS, (void (*)(void))bash_get_ctx_params}, \
-        {OSSL_FUNC_DIGEST_GETTABLE_CTX_PARAMS, (void (*)(void))bash_gettable_ctx_params}, \
         {0, NULL}}
 
 BASH_DISPATCH(256);

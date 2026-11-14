@@ -65,37 +65,8 @@ static inline void bee2_belt_expand_key(const void *key, size_t key_len, octet e
 /* Hash adapters. */
 typedef bee2_backend_state_t belt_hash_ctx_t;
 typedef belt_hash_ctx_t *belt_hash_ctx;
-static inline void belt_hash_init(belt_hash_ctx c) {
-    beltHashStart(c);
-}
-static inline void belt_hash_update(belt_hash_ctx c, const void *p, size_t n) {
-    beltHashStepH(p, n, c);
-}
-static inline void belt_hash_get(belt_hash_ctx c, void *out) {
-    beltHashStepG(out, c);
-}
-static inline void belt_hash_cleanup(belt_hash_ctx c) {
-    bee2_backend_cleanup(c, sizeof(*c));
-}
 
 typedef bee2_backend_state_t bash_hash_ctx_t;
-typedef bash_hash_ctx_t *bash_hash_ctx;
-#define BASH_HASH_ADAPTER(BITS, LEVEL, OUTLEN) \
-    static inline void bash_hash##BITS##_init(bash_hash_ctx c) { \
-        bashHashStart(c, LEVEL); \
-    } \
-    static inline void bash_hash##BITS##_update(bash_hash_ctx c, const void *p, size_t n) { \
-        bashHashStepH(p, n, c); \
-    } \
-    static inline void bash_hash##BITS##_get(bash_hash_ctx c, void *out) { \
-        bashHashStepG(out, OUTLEN, c); \
-    } \
-    static inline void bash_hash##BITS##_cleanup(bash_hash_ctx c) { \
-        bee2_backend_cleanup(c, sizeof(*c)); \
-    }
-BASH_HASH_ADAPTER(128, 128u, 32u)
-BASH_HASH_ADAPTER(192, 192u, 48u)
-BASH_HASH_ADAPTER(256, 256u, 64u)
 
 /* BELT block-mode adapters. */
 typedef struct {
@@ -276,18 +247,6 @@ static inline void belt_mac_cleanup(belt_mac_ctx_t *c) {
 
 /* HMAC-HBELT. */
 typedef bee2_backend_state_t belt_hmac_ctx_t;
-static inline void belt_hmac_init(belt_hmac_ctx_t *c, const void *key, size_t key_len) {
-    beltHMACStart(c, key, key_len);
-}
-static inline void belt_hmac_update(belt_hmac_ctx_t *c, const void *in, size_t n) {
-    beltHMACStepA(in, n, c);
-}
-static inline void belt_hmac_get(belt_hmac_ctx_t *c, void *out) {
-    beltHMACStepG(out, c);
-}
-static inline void belt_hmac_cleanup(belt_hmac_ctx_t *c) {
-    bee2_backend_cleanup(c, sizeof(*c));
-}
 
 /* BELT SDE. */
 typedef bee2_belt_mode_ctx_t belt_sde_ctx_t;
@@ -329,51 +288,5 @@ typedef struct {
     int key_set;
     int iv_set;
 } bash_prgae_ctx_t;
-typedef bash_prgae_ctx_t *bash_prgae_ctx;
-#define BASH_PRGAE_ADAPTER(SFX, LEVEL, D) \
-    static inline void bash_prgae_##SFX##_init(bash_prgae_ctx c) { \
-        memset(c, 0, sizeof(*c)); \
-    } \
-    static inline void bash_prgae_##SFX##_restart(bash_prgae_ctx c) { \
-        if (c->key_set && c->iv_set) \
-            bashPrgStart(&c->state, LEVEL, D, c->iv, c->iv_len, c->key, c->key_len); \
-    } \
-    static inline void bash_prgae_##SFX##_set_key(bash_prgae_ctx c, const void *p, size_t n) { \
-        memcpy(c->key, p, n); \
-        c->key_len = n; \
-        c->key_set = 1; \
-        bash_prgae_##SFX##_restart(c); \
-    } \
-    static inline void bash_prgae_##SFX##_set_iv(bash_prgae_ctx c, const void *p, size_t n) { \
-        memcpy(c->iv, p, n); \
-        c->iv_len = n; \
-        c->iv_set = 1; \
-        bash_prgae_##SFX##_restart(c); \
-    } \
-    static inline void bash_prgae_##SFX##_update_ad(bash_prgae_ctx c, const void *p, size_t n) { \
-        bashPrgAbsorb(p, n, &c->state); \
-    } \
-    static inline void bash_prgae_##SFX##_encrypt( \
-        bash_prgae_ctx c, const void *in, size_t n, void *out) { \
-        memmove(out, in, n); \
-        bashPrgEncr(out, n, &c->state); \
-    } \
-    static inline void bash_prgae_##SFX##_decrypt( \
-        bash_prgae_ctx c, const void *in, size_t n, void *out) { \
-        memmove(out, in, n); \
-        bashPrgDecr(out, n, &c->state); \
-    } \
-    static inline void bash_prgae_##SFX##_get_mac(bash_prgae_ctx c, void *out, size_t n) { \
-        bashPrgSqueeze(out, n, &c->state); \
-    } \
-    static inline void bash_prgae_##SFX##_cleanup(bash_prgae_ctx c) { \
-        bee2_backend_cleanup(c, sizeof(*c)); \
-    }
-BASH_PRGAE_ADAPTER(1281, 128u, 1u)
-BASH_PRGAE_ADAPTER(1282, 128u, 2u)
-BASH_PRGAE_ADAPTER(1921, 192u, 1u)
-BASH_PRGAE_ADAPTER(1922, 192u, 2u)
-BASH_PRGAE_ADAPTER(2561, 256u, 1u)
-BASH_PRGAE_ADAPTER(2562, 256u, 2u)
 
 #endif /* BEE2_PROVIDER_BACKEND_H */

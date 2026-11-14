@@ -144,7 +144,6 @@ extern const OSSL_DISPATCH bee2_bign_512_der_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_pem_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_der_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_decoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_store_functions[];
 
 /* ---- CORE BIO helpers -------------------------------------------- */
 

@@ -34,6 +34,15 @@ of the underlying algorithms.
   profiles and OIDs, exhaustive fixed vectors, boundary and negative tests,
   interoperability, security review, and applicable certification processes.
 
+## BELT key expansion against the standard
+
+The key expansion reference is **STB 34.101.31-2020**, section 8.1.2
+and Table A.27. The provider uses Bee2 `beltKeyExpand2()` followed by
+`u32To()`. `tests/belt_keyexpand_stb.c` checks the provider path for
+128-, 192- and 256-bit keys against the normative example and additional
+inputs. The `belt-keyexpand` OpenSSL KAT group verifies ECB, CBC, CFB and CTR
+results against normatively expanded 256-bit keys.
+
 ## API distinctions
 
 OpenSSL EVP represents a generic application interface, not an STB protocol

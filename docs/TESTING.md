@@ -81,3 +81,22 @@ The suite does not yet establish complete fuzz coverage of ASN.1, all BIGN
 validation paths, multithreaded calls, every size boundary, or memory safety
 under malicious input. Fuzzing and additional property-based tests are release
 blockers, not optional polish.
+
+The mandatory `bee2_bign_codec_roundtrip` test covers PKCS#8 and SPKI PEM/DER
+round trips, explicit/cofactor domain parameters, and the OpenSSL standard
+`file:` STORE loader for all three BIGN curves (private and public keys).
+It checks encoded key equality and successful store loading, not ASN.1
+conformance beyond the dedicated negative tests.
+
+## STB 34.101.31-2020 key expansion
+
+`bee2_belt_keyexpand_stb` checks the provider's BELT key expansion using
+normative section 8.1.2 and Table A.27 for 128- and 192-bit keys, plus the
+256-bit identity. It also checks in-place expansion and independently
+computed, varied inputs. The OpenSSL `belt-keyexpand` KAT group checks that
+ECB, CBC, CFB and CTR with 128/192-bit keys give the same ciphertext as the
+corresponding, *normatively expanded* 256-bit keys. The existing block-mode
+KATs check the standard's 256-bit ciphertext examples.
+
+The provider uses Bee2 `beltKeyExpand2()` with `u32To()` to expand
+keys; tests verify its output against the normative STB values.

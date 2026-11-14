@@ -12,99 +12,19 @@
 #define BEE2_HMAC_MAX_BLOCK_SIZE 160u
 #define BEE2_HMAC_MAX_DIGEST_SIZE 64u
 
-typedef void (*bee2_hash_init_fn)(bee2_backend_state_t *state);
-typedef void (*bee2_hash_update_fn)(bee2_backend_state_t *state,
-                                    const unsigned char *input,
-                                    size_t input_len);
-typedef void (*bee2_hash_final_fn)(bee2_backend_state_t *state, unsigned char *output);
-typedef void (*bee2_hash_cleanup_fn)(bee2_backend_state_t *state);
-
 typedef struct {
     const char *name;
     const char *oid;
     size_t digest_size;
     size_t block_size;
-    bee2_hash_init_fn init;
-    bee2_hash_update_fn update;
-    bee2_hash_final_fn final;
-    bee2_hash_cleanup_fn cleanup;
+    size_t level;
 } bee2_hmac_digest_t;
 
-static void bash256_init(bee2_backend_state_t *state) {
-    bash_hash128_init((bash_hash_ctx_t *)state);
-}
-
-static void
-bash256_update(bee2_backend_state_t *state, const unsigned char *input, size_t input_len) {
-    bash_hash128_update((bash_hash_ctx_t *)state, input, input_len);
-}
-
-static void bash256_final(bee2_backend_state_t *state, unsigned char *output) {
-    bash_hash128_get((bash_hash_ctx_t *)state, output);
-}
-
-static void bash256_cleanup(bee2_backend_state_t *state) {
-    bash_hash128_cleanup((bash_hash_ctx_t *)state);
-}
-
-static void bash384_init(bee2_backend_state_t *state) {
-    bash_hash192_init((bash_hash_ctx_t *)state);
-}
-
-static void
-bash384_update(bee2_backend_state_t *state, const unsigned char *input, size_t input_len) {
-    bash_hash192_update((bash_hash_ctx_t *)state, input, input_len);
-}
-
-static void bash384_final(bee2_backend_state_t *state, unsigned char *output) {
-    bash_hash192_get((bash_hash_ctx_t *)state, output);
-}
-
-static void bash384_cleanup(bee2_backend_state_t *state) {
-    bash_hash192_cleanup((bash_hash_ctx_t *)state);
-}
-
-static void bash512_init(bee2_backend_state_t *state) {
-    bash_hash256_init((bash_hash_ctx_t *)state);
-}
-
-static void
-bash512_update(bee2_backend_state_t *state, const unsigned char *input, size_t input_len) {
-    bash_hash256_update((bash_hash_ctx_t *)state, input, input_len);
-}
-
-static void bash512_final(bee2_backend_state_t *state, unsigned char *output) {
-    bash_hash256_get((bash_hash_ctx_t *)state, output);
-}
-
-static void bash512_cleanup(bee2_backend_state_t *state) {
-    bash_hash256_cleanup((bash_hash_ctx_t *)state);
-}
-
-static const bee2_hmac_digest_t bee2_bash_hmac_digests[] = {{"bash256",
-                                                             BEE2_OID_BASH256,
-                                                             32u,
-                                                             160u,
-                                                             bash256_init,
-                                                             bash256_update,
-                                                             bash256_final,
-                                                             bash256_cleanup},
-                                                            {"bash384",
-                                                             BEE2_OID_BASH384,
-                                                             48u,
-                                                             144u,
-                                                             bash384_init,
-                                                             bash384_update,
-                                                             bash384_final,
-                                                             bash384_cleanup},
-                                                            {"bash512",
-                                                             BEE2_OID_BASH512,
-                                                             64u,
-                                                             128u,
-                                                             bash512_init,
-                                                             bash512_update,
-                                                             bash512_final,
-                                                             bash512_cleanup}};
+static const bee2_hmac_digest_t bee2_bash_hmac_digests[] = {
+    {"bash256", BEE2_OID_BASH256, 32u, 160u, 128u},
+    {"bash384", BEE2_OID_BASH384, 48u, 144u, 192u},
+    {"bash512", BEE2_OID_BASH512, 64u, 128u, 256u},
+};
 
 static const bee2_hmac_digest_t *bash_hmac_find_digest(const char *name) {
     size_t i;
@@ -146,8 +66,6 @@ static void hmac_freectx(void *vctx) {
 
     if (!ctx)
         return;
-    belt_hmac_cleanup(&ctx->backend_state);
-    bee2_backend_cleanup(&ctx->outer_state, sizeof(ctx->outer_state));
     OPENSSL_clear_free(ctx->key, ctx->key_len);
     OPENSSL_clear_free(ctx, sizeof(*ctx));
 }
@@ -296,7 +214,7 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     if (!ctx || !ctx->key_set)
         return 0;
     if (!ctx->bash_digest) {
-        belt_hmac_init(&ctx->backend_state, ctx->key, ctx->key_len);
+        beltHMACStart(&ctx->backend_state, ctx->key, ctx->key_len);
         ctx->initialized = 1;
         return 1;
     }
@@ -307,10 +225,9 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     OPENSSL_cleanse(&temporary_state, sizeof(temporary_state));
 
     if (ctx->key_len > ctx->bash_digest->block_size) {
-        ctx->bash_digest->init(&temporary_state);
-        ctx->bash_digest->update(&temporary_state, ctx->key, ctx->key_len);
-        ctx->bash_digest->final(&temporary_state, digest);
-        ctx->bash_digest->cleanup(&temporary_state);
+        bashHashStart(&temporary_state, ctx->bash_digest->level);
+        bashHashStepH(ctx->key, ctx->key_len, &temporary_state);
+        bashHashStepG(digest, ctx->bash_digest->digest_size, &temporary_state);
         memcpy(key_block, digest, ctx->bash_digest->digest_size);
     } else {
         memcpy(key_block, ctx->key, ctx->key_len);
@@ -318,13 +235,13 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
 
     for (i = 0; i < ctx->bash_digest->block_size; ++i)
         pad[i] = key_block[i] ^ 0x36u;
-    ctx->bash_digest->init(&ctx->backend_state);
-    ctx->bash_digest->update(&ctx->backend_state, pad, ctx->bash_digest->block_size);
+    bashHashStart(&ctx->backend_state, ctx->bash_digest->level);
+    bashHashStepH(pad, ctx->bash_digest->block_size, &ctx->backend_state);
 
     for (i = 0; i < ctx->bash_digest->block_size; ++i)
         pad[i] = key_block[i] ^ 0x5cu;
-    ctx->bash_digest->init(&ctx->outer_state);
-    ctx->bash_digest->update(&ctx->outer_state, pad, ctx->bash_digest->block_size);
+    bashHashStart(&ctx->outer_state, ctx->bash_digest->level);
+    bashHashStepH(pad, ctx->bash_digest->block_size, &ctx->outer_state);
 
     OPENSSL_cleanse(&temporary_state, sizeof(temporary_state));
     OPENSSL_cleanse(pad, sizeof(pad));
@@ -357,9 +274,9 @@ static int hmac_update(void *vctx, const unsigned char *input, size_t input_len)
         return 0;
     if (input_len > 0u) {
         if (ctx->bash_digest)
-            ctx->bash_digest->update(&ctx->backend_state, input, input_len);
+            bashHashStepH(input, input_len, &ctx->backend_state);
         else
-            belt_hmac_update(&ctx->backend_state, input, input_len);
+            beltHMACStepA(input, input_len, &ctx->backend_state);
     }
     return 1;
 }
@@ -385,13 +302,12 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
     OPENSSL_cleanse(full_mac, sizeof(full_mac));
     OPENSSL_cleanse(&outer_state, sizeof(outer_state));
     if (ctx->bash_digest) {
-        ctx->bash_digest->final(&ctx->backend_state, inner_digest);
+        bashHashStepG(inner_digest, digest_size, &ctx->backend_state);
         memcpy(&outer_state, &ctx->outer_state, sizeof(outer_state));
-        ctx->bash_digest->update(&outer_state, inner_digest, digest_size);
-        ctx->bash_digest->final(&outer_state, full_mac);
-        ctx->bash_digest->cleanup(&outer_state);
+        bashHashStepH(inner_digest, digest_size, &outer_state);
+        bashHashStepG(full_mac, digest_size, &outer_state);
     } else {
-        belt_hmac_get(&ctx->backend_state, full_mac);
+        beltHMACStepG(full_mac, &ctx->backend_state);
     }
     memcpy(output, full_mac, ctx->output_size);
     *output_len = ctx->output_size;

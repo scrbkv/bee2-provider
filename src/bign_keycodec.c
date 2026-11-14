@@ -13,7 +13,6 @@
 #include <openssl/pem.h>
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -117,18 +116,13 @@ ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT)
 
                                         typedef struct {
     const bee2_bign_variant_t *variant;
+    OSSL_LIB_CTX *libctx;
     int output_pem;
 } bee2_bign_encoder_ctx_t;
 
 typedef struct {
     const bee2_bign_variant_t *variant;
 } bee2_bign_decoder_ctx_t;
-
-typedef struct {
-    unsigned char *data;
-    size_t len;
-    int done;
-} bee2_bign_store_ctx_t;
 
 static int write_all_core(OSSL_CORE_BIO *bio, const void *data, size_t len) {
     const unsigned char *p = data;
@@ -179,37 +173,6 @@ static int append_bytes(unsigned char **buffer,
     return 1;
 }
 
-static int
-write_pem_payload(OSSL_CORE_BIO *bio, const unsigned char *data, size_t len, const char *label) {
-    char header[64];
-    char footer[64];
-    int hdr_len = snprintf(header, sizeof(header), "-----BEGIN %s-----\n", label);
-    int ftr_len = snprintf(footer, sizeof(footer), "-----END %s-----\n", label);
-    unsigned char b64[80];
-
-    if (hdr_len <= 0 || ftr_len <= 0)
-        return 0;
-    if (!write_all_core(bio, header, (size_t)hdr_len))
-        return 0;
-
-    for (size_t offset = 0; offset < len; offset += 48) {
-        size_t chunk_len = len - offset;
-        if (chunk_len > 48)
-            chunk_len = 48;
-        int outlen = EVP_EncodeBlock(b64, data + offset, (int)chunk_len);
-        if (outlen <= 0)
-            return 0;
-        if (!write_all_core(bio, b64, (size_t)outlen))
-            return 0;
-        if (!write_all_core(bio, "\n", 1))
-            return 0;
-    }
-
-    if (!write_all_core(bio, footer, (size_t)ftr_len))
-        return 0;
-    return 1;
-}
-
 static int oid_equals(const ASN1_OBJECT *obj, const char *oid) {
     char buf[80];
     int n;
@@ -237,23 +200,9 @@ static const bee2_bign_variant_t *variant_from_curve_obj(const ASN1_OBJECT *obj)
 }
 
 static int bn_to_fixed_le(const BIGNUM *bn, unsigned char *out, size_t len) {
-    unsigned char tmp[BEE2_BIGN_MAX_WORDS * 8];
-    size_t i;
-
-    if (!bn || !out)
+    if (!bn || !out || BN_is_negative(bn) || len > BEE2_BIGN_MAX_WORDS * 8u)
         return 0;
-    if (BN_is_negative(bn))
-        return 0;
-    if (len > sizeof(tmp))
-        return 0;
-    if (BN_num_bytes(bn) > (int)len)
-        return 0;
-    if (BN_bn2binpad(bn, tmp, (int)len) != (int)len)
-        return 0;
-
-    for (i = 0; i < len; ++i)
-        out[i] = tmp[len - 1 - i];
-    return 1;
+    return BN_bn2lebinpad(bn, out, (int)len) == (int)len;
 }
 
 static int variant_matches_params(const bee2_bign_variant_t *variant,
@@ -899,11 +848,14 @@ cleanup:
     return ok;
 }
 
-static void *bign_encoder_newctx_common(const bee2_bign_variant_t *variant, int output_pem) {
+static void *bign_encoder_newctx_common(const bee2_bign_variant_t *variant,
+                                        int output_pem,
+                                        void *provctx) {
     bee2_bign_encoder_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
         return NULL;
     ctx->variant = variant;
+    ctx->libctx = bee2_provider_libctx(provctx);
     ctx->output_pem = output_pem;
     return ctx;
 }
@@ -982,7 +934,12 @@ static int bign_encoder_encode(void *vctx,
 
     int ok = 0;
     if (ctx->output_pem) {
-        ok = write_pem_payload(out, der, der_len, label);
+        BIO *bio = BIO_new_from_core_bio(ctx->libctx, out);
+        if (bio) {
+            if (der_len <= LONG_MAX)
+                ok = PEM_write_bio(bio, label, NULL, der, (long)der_len);
+            BIO_free(bio);
+        }
     } else {
         ok = write_all_core(out, der, der_len);
     }
@@ -1172,7 +1129,7 @@ static int bign_decoder_decode(void *vctx,
     if (!decoded) {
         bee2_bign_key_free(key);
         if (der != buf)
-            OPENSSL_free(der);
+            OPENSSL_clear_free(der, der_len);
         OPENSSL_clear_free(buf, len);
         OPENSSL_free(pem_name);
         return 1;
@@ -1192,7 +1149,7 @@ static int bign_decoder_decode(void *vctx,
 
     bee2_bign_key_free(key);
     if (der != buf)
-        OPENSSL_free(der);
+        OPENSSL_clear_free(der, der_len);
     OPENSSL_clear_free(buf, len);
     OPENSSL_free(pem_name);
     return ok;
@@ -1220,12 +1177,10 @@ static int bign_decoder_export_object(void *vctx,
 
 #define BIGN_CODEC_NEWCTX(BITS) \
     static void *bign##BITS##_pem_encoder_newctx(void *provctx) { \
-        (void)provctx; \
-        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 1); \
+        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 1, provctx); \
     } \
     static void *bign##BITS##_der_encoder_newctx(void *provctx) { \
-        (void)provctx; \
-        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 0); \
+        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 0, provctx); \
     }
 
 BIGN_CODEC_NEWCTX(256)
@@ -1238,198 +1193,11 @@ static void *bign_decoder_newctx(void *provctx) {
 }
 
 static void *bign_pem_encoder_newctx(void *provctx) {
-    (void)provctx;
-    return bign_encoder_newctx_common(NULL, 1);
+    return bign_encoder_newctx_common(NULL, 1, provctx);
 }
 
 static void *bign_der_encoder_newctx(void *provctx) {
-    (void)provctx;
-    return bign_encoder_newctx_common(NULL, 0);
-}
-
-static void *bign_store_open_ex(void *provctx,
-                                const char *uri,
-                                const OSSL_PARAM params[],
-                                OSSL_PASSPHRASE_CALLBACK *pw_cb,
-                                void *pw_cbarg) {
-    (void)provctx;
-    (void)params;
-    (void)pw_cb;
-    (void)pw_cbarg;
-
-    if (!uri)
-        return NULL;
-
-    const char *path = uri;
-    if (strncmp(uri, "bign:", 5) == 0) {
-        path = uri + 5;
-    } else if (strncmp(uri, "file:", 5) == 0) {
-        path = uri + 5;
-        if (path[0] == '/' && path[1] == '/')
-            path += 2;
-    }
-
-    FILE *fp = fopen(path, "rb");
-    if (!fp)
-        return NULL;
-
-    unsigned char *buf = NULL;
-    size_t cap = 0;
-    size_t len = 0;
-    unsigned char tmp[4096];
-    while (!feof(fp)) {
-        size_t n = fread(tmp, 1, sizeof(tmp), fp);
-        if (n == 0)
-            break;
-        if (n > BIGN_MAX_KEY_INPUT - len ||
-            !append_bytes(&buf, &len, &cap, tmp, n)) {
-            OPENSSL_clear_free(buf, cap);
-            fclose(fp);
-            return NULL;
-        }
-    }
-    if (ferror(fp)) {
-        OPENSSL_clear_free(buf, cap);
-        fclose(fp);
-        return NULL;
-    }
-    fclose(fp);
-
-    if (!buf || len == 0) {
-        OPENSSL_clear_free(buf, cap);
-        return NULL;
-    }
-
-    bee2_bign_store_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
-    if (!ctx) {
-        OPENSSL_clear_free(buf, cap);
-        return NULL;
-    }
-    ctx->data = buf;
-    ctx->len = len;
-    ctx->done = 0;
-    return ctx;
-}
-
-static void *bign_store_open(void *provctx, const char *uri) {
-    return bign_store_open_ex(provctx, uri, NULL, NULL, NULL);
-}
-
-static int bign_store_load(void *vctx,
-                           OSSL_CALLBACK *object_cb,
-                           void *object_cbarg,
-                           OSSL_PASSPHRASE_CALLBACK *pw_cb,
-                           void *pw_cbarg) {
-    (void)pw_cb;
-    (void)pw_cbarg;
-
-    bee2_bign_store_ctx_t *ctx = vctx;
-    if (!ctx || ctx->done || !object_cb)
-        return 0;
-    ctx->done = 1;
-
-    unsigned char *der = NULL;
-    size_t der_len = 0;
-    char *name = NULL;
-    char *header = NULL;
-    unsigned char *pdata = NULL;
-    long pdata_len = 0;
-
-    if (ctx->len > INT_MAX)
-        return 0;
-    BIO *bio = BIO_new_mem_buf(ctx->data, (int)ctx->len);
-    if (bio && PEM_read_bio(bio, &name, &header, &pdata, &pdata_len)) {
-        if (name && strcmp(name, BIGN_PEM_LABEL) == 0) {
-            der = pdata;
-            der_len = (size_t)pdata_len;
-            pdata = NULL;
-        }
-    }
-    BIO_free(bio);
-    OPENSSL_free(name);
-    OPENSSL_free(header);
-
-    if (!der) {
-        der = ctx->data;
-        der_len = ctx->len;
-    }
-
-    bee2_bign_key_t *tmp_key = bee2_bign_key_new(NULL);
-    if (!tmp_key) {
-        OPENSSL_free(pdata);
-        return 0;
-    }
-    if (!decode_pkcs8_der(der, der_len, NULL, tmp_key)) {
-        bee2_bign_key_free(tmp_key);
-        OPENSSL_free(pdata);
-        return 0;
-    }
-
-    int obj_type = OSSL_OBJECT_PKEY;
-    const char *data_type = "bign";
-    const char *data_structure = "PrivateKeyInfo";
-    const char *input_type = "der";
-
-    OSSL_PARAM params[6];
-    size_t n = 0;
-    params[n++] = OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &obj_type);
-    params[n++] =
-        OSSL_PARAM_construct_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, (char *)data_type, 0);
-    params[n++] = OSSL_PARAM_construct_utf8_string(
-        OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)data_structure, 0);
-#ifdef OSSL_OBJECT_PARAM_INPUT_TYPE
-    params[n++] =
-        OSSL_PARAM_construct_utf8_string(OSSL_OBJECT_PARAM_INPUT_TYPE, (char *)input_type, 0);
-#else
-    (void)input_type;
-#endif
-    params[n++] = OSSL_PARAM_construct_octet_string(OSSL_OBJECT_PARAM_DATA, der, der_len);
-    params[n] = OSSL_PARAM_construct_end();
-
-    int ok = object_cb(params, object_cbarg);
-
-    OPENSSL_free(pdata);
-    OPENSSL_clear_free(ctx->data, ctx->len);
-    ctx->data = NULL;
-    ctx->len = 0;
-    bee2_bign_key_free(tmp_key);
-    return ok;
-}
-
-static int bign_store_eof(void *vctx) {
-    bee2_bign_store_ctx_t *ctx = vctx;
-    return ctx ? ctx->done : 1;
-}
-
-static int bign_store_close(void *vctx) {
-    bee2_bign_store_ctx_t *ctx = vctx;
-    if (!ctx)
-        return 1;
-    if (ctx->data)
-        OPENSSL_clear_free(ctx->data, ctx->len);
-    OPENSSL_free(ctx);
-    return 1;
-}
-
-static int bign_store_export_object(void *vctx,
-                                    const void *objref,
-                                    size_t objref_sz,
-                                    OSSL_CALLBACK *export_cb,
-                                    void *export_cbarg) {
-    (void)vctx;
-    if (!export_cb)
-        return 0;
-
-    bee2_bign_key_t *key = NULL;
-    if (objref_sz == sizeof(void *)) {
-        memcpy(&key, objref, sizeof(key));
-    } else {
-        key = (bee2_bign_key_t *)objref;
-    }
-    if (!key || !key->variant || !key->has_priv)
-        return 0;
-
-    return bign_export_key_params(key, export_cb, export_cbarg);
+    return bign_encoder_newctx_common(NULL, 0, provctx);
 }
 
 #define BIGN_ENCODER_DISPATCH(BITS, FORMAT) \
@@ -1473,15 +1241,4 @@ const OSSL_DISPATCH bee2_bign_decoder_functions[] = {
     {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_decoder_does_selection},
     {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_decoder_decode},
     {OSSL_FUNC_DECODER_EXPORT_OBJECT, (void (*)(void))bign_decoder_export_object},
-    {0, NULL}};
-
-const OSSL_DISPATCH bee2_bign_store_functions[] = {
-    {OSSL_FUNC_STORE_OPEN, (void (*)(void))bign_store_open},
-#ifdef OSSL_FUNC_STORE_OPEN_EX
-    {OSSL_FUNC_STORE_OPEN_EX, (void (*)(void))bign_store_open_ex},
-#endif
-    {OSSL_FUNC_STORE_LOAD, (void (*)(void))bign_store_load},
-    {OSSL_FUNC_STORE_EOF, (void (*)(void))bign_store_eof},
-    {OSSL_FUNC_STORE_CLOSE, (void (*)(void))bign_store_close},
-    {OSSL_FUNC_STORE_EXPORT_OBJECT, (void (*)(void))bign_store_export_object},
     {0, NULL}};

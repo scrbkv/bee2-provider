@@ -217,6 +217,14 @@ set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_512_explicit APPEND P
 
 endif()
 
+# Independent key-expansion KAT from STB 34.101.31-2020, 8.1.2 / A.27.
+add_executable(bee2_belt_keyexpand_stb belt_keyexpand_stb.c)
+target_include_directories(bee2_belt_keyexpand_stb PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(bee2_belt_keyexpand_stb SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_belt_keyexpand_stb PRIVATE bee2_static OpenSSL::Crypto)
+add_test(NAME bee2_belt_keyexpand_stb COMMAND bee2_belt_keyexpand_stb)
+set_tests_properties(bee2_belt_keyexpand_stb PROPERTIES LABELS "regression;stb;belt;native")
+
 add_executable(bee2_brng_kat brng_kat.c)
 target_link_libraries(bee2_brng_kat PRIVATE OpenSSL::Crypto)
 
@@ -362,6 +370,12 @@ add_test(NAME bee2_bign_asn1_negative
         --provider-path $<TARGET_FILE_DIR:bee2_provider>
         --openssl ${BEE2_OPENSSL_EXECUTABLE})
 set_tests_properties(bee2_bign_asn1_negative PROPERTIES LABELS "regression;bign;asn1")
+
+add_test(NAME bee2_bign_codec_roundtrip
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bign_codec_roundtrip.py
+        --provider-path $<TARGET_FILE_DIR:bee2_provider>
+        --openssl ${BEE2_OPENSSL_EXECUTABLE})
+set_tests_properties(bee2_bign_codec_roundtrip PROPERTIES LABELS "regression;bign;codec")
 
 add_executable(bee2_bign_der_framing bign_der_framing.c)
 target_link_libraries(bee2_bign_der_framing PRIVATE OpenSSL::Crypto)

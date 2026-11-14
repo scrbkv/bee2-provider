@@ -426,10 +426,6 @@ static const OSSL_ALGORITHM bee2_decoders[] = {
      "BIGN public key decoder (DER, SPKI)"},
     {NULL, NULL, NULL, NULL}};
 
-static const OSSL_ALGORITHM bee2_store_loaders[] = {
-    {"bign", "provider=bee2", bee2_bign_store_functions, "BIGN key store loader"},
-    {NULL, NULL, NULL, NULL}};
-
 /* ------------------------------------------------------------------ */
 /*  Provider callbacks                                                  */
 /* ------------------------------------------------------------------ */
@@ -460,8 +456,6 @@ static const OSSL_ALGORITHM *bee2_query(void *provctx, int operation_id, int *no
         return bee2_encoders;
     case OSSL_OP_DECODER:
         return bee2_decoders;
-    case OSSL_OP_STORE:
-        return bee2_store_loaders;
     default:
         return NULL;
     }

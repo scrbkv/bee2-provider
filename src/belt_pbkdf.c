@@ -38,10 +38,6 @@ static void belt_pbkdf_reset(void *vctx) {
     belt_pbkdf_clear(vctx);
 }
 
-static int belt_pbkdf_set_octets(unsigned char **dst, size_t *dst_len, const OSSL_PARAM *p) {
-    return bee2_secret_replace(dst, dst_len, p->data, p->data_size);
-}
-
 static int belt_pbkdf_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_belt_pbkdf_ctx_t *ctx = vctx;
     const OSSL_PARAM *p;
@@ -49,10 +45,10 @@ static int belt_pbkdf_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     if (!params)
         return 1;
     p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_PASSWORD);
-    if (p && !belt_pbkdf_set_octets(&ctx->password, &ctx->password_len, p))
+    if (p && !bee2_secret_replace(&ctx->password, &ctx->password_len, p->data, p->data_size))
         return 0;
     p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_SALT);
-    if (p && !belt_pbkdf_set_octets(&ctx->salt, &ctx->salt_len, p))
+    if (p && !bee2_secret_replace(&ctx->salt, &ctx->salt_len, p->data, p->data_size))
         return 0;
     p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_ITER);
     if (p) {

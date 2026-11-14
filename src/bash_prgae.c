@@ -34,120 +34,20 @@
 /*  Variant descriptor                                                  */
 /* ------------------------------------------------------------------ */
 
-typedef void (*bash_prgae_init_fn)(bash_prgae_ctx);
-typedef void (*bash_prgae_restart_fn)(bash_prgae_ctx);
-typedef void (*bash_prgae_set_key_fn)(bash_prgae_ctx, const void *, size_t);
-typedef void (*bash_prgae_set_iv_fn)(bash_prgae_ctx, const void *, size_t);
-typedef void (*bash_prgae_update_ad_fn)(bash_prgae_ctx, const void *, size_t);
-typedef void (*bash_prgae_encrypt_fn)(bash_prgae_ctx, const void *, size_t, void *);
-typedef void (*bash_prgae_decrypt_fn)(bash_prgae_ctx, const void *, size_t, void *);
-typedef void (*bash_prgae_get_mac_fn)(bash_prgae_ctx, void *, size_t);
-typedef void (*bash_prgae_cleanup_fn)(bash_prgae_ctx);
-
 typedef struct {
-    bash_prgae_init_fn backend_init;
-    bash_prgae_restart_fn backend_restart;
-    bash_prgae_set_key_fn backend_set_key;
-    bash_prgae_set_iv_fn backend_set_iv;
-    bash_prgae_update_ad_fn backend_update_ad;
-    bash_prgae_encrypt_fn backend_encrypt;
-    bash_prgae_decrypt_fn backend_decrypt;
-    bash_prgae_get_mac_fn backend_get_mac;
-    bash_prgae_cleanup_fn backend_cleanup;
-    size_t min_key_size; /* minimum key length (bytes), equal to l/8 */
-    size_t iv_size;      /* default IV length (bytes)                */
-    size_t mac_size;     /* authentication tag (bytes)               */
+    size_t level;        /* BASH security level */
+    size_t d;            /* PRG mode parameter */
+    size_t min_key_size;
+    size_t iv_size;
+    size_t mac_size;
 } bash_prgae_variant_t;
 
-static const bash_prgae_variant_t bash_prgae_variant_1281 = {
-    .backend_init = bash_prgae_1281_init,
-    .backend_restart = bash_prgae_1281_restart,
-    .backend_set_key = bash_prgae_1281_set_key,
-    .backend_set_iv = bash_prgae_1281_set_iv,
-    .backend_update_ad = bash_prgae_1281_update_ad,
-    .backend_encrypt = bash_prgae_1281_encrypt,
-    .backend_decrypt = bash_prgae_1281_decrypt,
-    .backend_get_mac = bash_prgae_1281_get_mac,
-    .backend_cleanup = bash_prgae_1281_cleanup,
-    .min_key_size = 16,
-    .iv_size = 16,
-    .mac_size = 16,
-};
-
-static const bash_prgae_variant_t bash_prgae_variant_1282 = {
-    .backend_init = bash_prgae_1282_init,
-    .backend_restart = bash_prgae_1282_restart,
-    .backend_set_key = bash_prgae_1282_set_key,
-    .backend_set_iv = bash_prgae_1282_set_iv,
-    .backend_update_ad = bash_prgae_1282_update_ad,
-    .backend_encrypt = bash_prgae_1282_encrypt,
-    .backend_decrypt = bash_prgae_1282_decrypt,
-    .backend_get_mac = bash_prgae_1282_get_mac,
-    .backend_cleanup = bash_prgae_1282_cleanup,
-    .min_key_size = 16,
-    .iv_size = 16,
-    .mac_size = 16,
-};
-
-static const bash_prgae_variant_t bash_prgae_variant_1921 = {
-    .backend_init = bash_prgae_1921_init,
-    .backend_restart = bash_prgae_1921_restart,
-    .backend_set_key = bash_prgae_1921_set_key,
-    .backend_set_iv = bash_prgae_1921_set_iv,
-    .backend_update_ad = bash_prgae_1921_update_ad,
-    .backend_encrypt = bash_prgae_1921_encrypt,
-    .backend_decrypt = bash_prgae_1921_decrypt,
-    .backend_get_mac = bash_prgae_1921_get_mac,
-    .backend_cleanup = bash_prgae_1921_cleanup,
-    .min_key_size = 24,
-    .iv_size = 24,
-    .mac_size = 24,
-};
-
-static const bash_prgae_variant_t bash_prgae_variant_1922 = {
-    .backend_init = bash_prgae_1922_init,
-    .backend_restart = bash_prgae_1922_restart,
-    .backend_set_key = bash_prgae_1922_set_key,
-    .backend_set_iv = bash_prgae_1922_set_iv,
-    .backend_update_ad = bash_prgae_1922_update_ad,
-    .backend_encrypt = bash_prgae_1922_encrypt,
-    .backend_decrypt = bash_prgae_1922_decrypt,
-    .backend_get_mac = bash_prgae_1922_get_mac,
-    .backend_cleanup = bash_prgae_1922_cleanup,
-    .min_key_size = 24,
-    .iv_size = 24,
-    .mac_size = 24,
-};
-
-static const bash_prgae_variant_t bash_prgae_variant_2561 = {
-    .backend_init = bash_prgae_2561_init,
-    .backend_restart = bash_prgae_2561_restart,
-    .backend_set_key = bash_prgae_2561_set_key,
-    .backend_set_iv = bash_prgae_2561_set_iv,
-    .backend_update_ad = bash_prgae_2561_update_ad,
-    .backend_encrypt = bash_prgae_2561_encrypt,
-    .backend_decrypt = bash_prgae_2561_decrypt,
-    .backend_get_mac = bash_prgae_2561_get_mac,
-    .backend_cleanup = bash_prgae_2561_cleanup,
-    .min_key_size = 32,
-    .iv_size = 32,
-    .mac_size = 32,
-};
-
-static const bash_prgae_variant_t bash_prgae_variant_2562 = {
-    .backend_init = bash_prgae_2562_init,
-    .backend_restart = bash_prgae_2562_restart,
-    .backend_set_key = bash_prgae_2562_set_key,
-    .backend_set_iv = bash_prgae_2562_set_iv,
-    .backend_update_ad = bash_prgae_2562_update_ad,
-    .backend_encrypt = bash_prgae_2562_encrypt,
-    .backend_decrypt = bash_prgae_2562_decrypt,
-    .backend_get_mac = bash_prgae_2562_get_mac,
-    .backend_cleanup = bash_prgae_2562_cleanup,
-    .min_key_size = 32,
-    .iv_size = 32,
-    .mac_size = 32,
-};
+static const bash_prgae_variant_t bash_prgae_variant_1281 = {128, 1, 16, 16, 16};
+static const bash_prgae_variant_t bash_prgae_variant_1282 = {128, 2, 16, 16, 16};
+static const bash_prgae_variant_t bash_prgae_variant_1921 = {192, 1, 24, 24, 24};
+static const bash_prgae_variant_t bash_prgae_variant_1922 = {192, 2, 24, 24, 24};
+static const bash_prgae_variant_t bash_prgae_variant_2561 = {256, 1, 32, 32, 32};
+static const bash_prgae_variant_t bash_prgae_variant_2562 = {256, 2, 32, 32, 32};
 
 /* ------------------------------------------------------------------ */
 /*  Context                                                             */
@@ -175,7 +75,10 @@ static void bash_prgae_reinit(bee2_bash_prgae_ctx_t *c) {
     c->tag_set = 0;
     memset(c->tag, 0, sizeof(c->tag));
 
-    c->variant->backend_restart(&c->backend_state);
+    if (c->backend_state.key_set && c->backend_state.iv_set)
+        bashPrgStart(&c->backend_state.state, c->variant->level, c->variant->d,
+                     c->backend_state.iv, c->backend_state.iv_len,
+                     c->backend_state.key, c->backend_state.key_len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,7 +92,6 @@ static void *bash_prgae_newctx_for_variant(void *provctx, const bash_prgae_varia
         return NULL;
     c->variant = variant;
     c->key_len = variant->min_key_size;
-    c->variant->backend_init(&c->backend_state);
     return c;
 }
 
@@ -197,7 +99,6 @@ static void bash_prgae_freectx(void *vctx) {
     bee2_bash_prgae_ctx_t *c = vctx;
     if (!c)
         return;
-    c->variant->backend_cleanup(&c->backend_state);
     OPENSSL_clear_free(c, sizeof(*c));
 }
 
@@ -247,14 +148,18 @@ static int bash_prgae_init(void *vctx,
     if (key != NULL) {
         if (keylen < c->variant->min_key_size || keylen > BASH_PRGAE_MAX_KEY_SIZE)
             return 0;
-        c->variant->backend_set_key(&c->backend_state, key, keylen);
+        memcpy(c->backend_state.key, key, keylen);
+        c->backend_state.key_len = keylen;
+        c->backend_state.key_set = 1;
         c->key_len = keylen;
     }
 
     if (iv != NULL) {
         if (ivlen > BASH_PRGAE_MAX_IV_SIZE)
             return 0;
-        c->variant->backend_set_iv(&c->backend_state, iv, ivlen);
+        memcpy(c->backend_state.iv, iv, ivlen);
+        c->backend_state.iv_len = ivlen;
+        c->backend_state.iv_set = 1;
     }
 
     if (c->backend_state.key_set && c->backend_state.iv_set)
@@ -304,16 +209,17 @@ static int bash_prgae_update(void *vctx,
         /* AAD */
         if (c->data_started)
             return 0;
-        c->variant->backend_update_ad(&c->backend_state, in, inl);
+        bashPrgAbsorb(in, inl, &c->backend_state.state);
     } else {
         /* plaintext / ciphertext */
         if (outsize < inl)
             return 0;
         c->data_started = 1;
+        memmove(out, in, inl);
         if (c->enc)
-            c->variant->backend_encrypt(&c->backend_state, in, inl, out);
+            bashPrgEncr(out, inl, &c->backend_state.state);
         else
-            c->variant->backend_decrypt(&c->backend_state, in, inl, out);
+            bashPrgDecr(out, inl, &c->backend_state.state);
         *outl = inl;
     }
     return 1;
@@ -330,7 +236,7 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
     *outl = 0;
 
     if (c->enc) {
-        c->variant->backend_get_mac(&c->backend_state, c->tag, c->variant->mac_size);
+        bashPrgSqueeze(c->tag, c->variant->mac_size, &c->backend_state.state);
         c->tag_set = 1;
     } else {
         octet computed[32]; /* big enough for any variant */
@@ -338,7 +244,7 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
 
         if (!c->tag_set)
             return 0;
-        c->variant->backend_get_mac(&c->backend_state, computed, c->variant->mac_size);
+        bashPrgSqueeze(computed, c->variant->mac_size, &c->backend_state.state);
 
         valid = bee2_constant_time_equal(computed, c->tag, c->variant->mac_size);
         OPENSSL_cleanse(computed, sizeof(computed));
