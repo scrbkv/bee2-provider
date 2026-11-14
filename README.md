@@ -33,6 +33,14 @@ and `bee2_provider` providers when using `openssl storeutl`. The separate
 BELT-ECB and BELT-CBC use PKCS#7 padding by default. Applications can disable
 it with `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad`. BELT-CFB
 and BELT-CTR accept arbitrary input lengths and emit bytes on each EVP update.
+BELT-CBC exposes its current chaining value through
+`EVP_CIPHER_CTX_get_updated_iv()`; BELT-CFB and BELT-CTR also expose the
+current byte offset through `OSSL_CIPHER_PARAM_NUM`.
+
+BIGN key transport accepts a provider-specific `header` octet-string parameter
+of exactly 16 bytes through `EVP_PKEY_CTX_set_params()`. Its default is an
+all-zero header, preserving the original behavior. `belt-pbkdf` accepts
+explicitly set zero-length passwords and salts.
 
 ## Requirements
 
@@ -137,11 +145,13 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-GitHub Actions verifies Linux builds against pinned OpenSSL 3.5, 4.0 and 4.1
-releases. Optional `bee2evp` interoperability tests need a separately built
-engine. EVP streaming and BIGN public-key validation regressions are part of
-the standard CTest suite. See [STB coverage](docs/STB_COVERAGE.md), [Testing](docs/TESTING.md), [CI](docs/CI.md)
-and [Contributing](CONTRIBUTING.md) for details.
+GitHub Actions verifies Linux builds against pinned OpenSSL 3.0, 3.5, 4.0
+and 4.1 releases, runs ASan/UBSan checks, and builds a separate `bee2evp`
+engine for fixed, boundary and deterministic pseudorandom interoperability
+tests. EVP streaming and BIGN public-key validation regressions are part of
+the standard CTest suite. See [STB coverage](docs/STB_COVERAGE.md),
+[Testing](docs/TESTING.md), [CI](docs/CI.md) and
+[Contributing](CONTRIBUTING.md) for details.
 
 **Security note:** successful functional tests are not a security audit. The
 provider has not been independently audited or FIPS validated.
