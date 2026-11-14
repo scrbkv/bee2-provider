@@ -544,6 +544,21 @@ static const OSSL_PARAM bee2_cipher_ctx_gettable[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, NULL, 0),
+    OSSL_PARAM_END};
+
+static const OSSL_PARAM bee2_cipher_iv_ctx_gettable[] = {
+    OSSL_PARAM_uint(OSSL_CIPHER_PARAM_PADDING, NULL),
+    OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
+    OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
+    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, NULL, 0),
+    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, NULL, 0),
+    OSSL_PARAM_END};
+
+static const OSSL_PARAM bee2_cipher_stream_ctx_gettable[] = {
+    OSSL_PARAM_uint(OSSL_CIPHER_PARAM_PADDING, NULL),
+    OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
+    OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
+    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, NULL, 0),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, NULL, 0),
     OSSL_PARAM_uint(OSSL_CIPHER_PARAM_NUM, NULL),
     OSSL_PARAM_END};
@@ -554,8 +569,15 @@ static const OSSL_PARAM bee2_cipher_ctx_settable[] = {
     OSSL_PARAM_END};
 
 static const OSSL_PARAM *belt_gettable_ctx_params(void *cctx, void *provctx) {
-    (void)cctx;
+    const bee2_belt_ctx_t *c = cctx;
+
     (void)provctx;
+    if (c == NULL)
+        return bee2_cipher_ctx_gettable;
+    if (c->mode == &belt_cbc_mode)
+        return bee2_cipher_iv_ctx_gettable;
+    if (c->mode == &belt_cfb_mode || c->mode == &belt_ctr_mode)
+        return bee2_cipher_stream_ctx_gettable;
     return bee2_cipher_ctx_gettable;
 }
 
