@@ -44,6 +44,14 @@ static int test_cipher(const char *name, size_t keylen)
     ctx = EVP_CIPHER_CTX_new();
     if (cipher == NULL || ctx == NULL)
         goto end;
+    {
+        const OSSL_PARAM *gettable = EVP_CIPHER_gettable_ctx_params(cipher);
+
+        if (gettable == NULL ||
+            OSSL_PARAM_locate_const(gettable, OSSL_CIPHER_PARAM_UPDATED_IV) == NULL ||
+            OSSL_PARAM_locate_const(gettable, OSSL_CIPHER_PARAM_NUM) == NULL)
+            goto end;
+    }
 
     /* EVP's block_size describes Update() granularity, not BELT's block. */
     if (EVP_CIPHER_get_block_size(cipher) != 1) {
