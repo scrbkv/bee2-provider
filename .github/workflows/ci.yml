@@ -136,7 +136,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|digest_oneshot|bign_params_contract)' \
+            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|digest_oneshot|bign_params_contract)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
@@ -150,15 +150,27 @@ jobs:
   interoperability:
     name: Linux / bee2evp interoperability
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       OPENSSL_CONF: /dev/null
+      CC: gcc
+      OPENSSL_TAG: openssl-3.5.9
+      OPENSSL_COMMIT: 45e844fa2a14ec92d146bd8f5778ac130b6625fb
     steps:
       - name: Check out provider and pinned Bee2
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
           persist-credentials: false
+
+      - name: Build pinned OpenSSL
+        shell: bash
+        run: |
+          prefix="${RUNNER_TEMP}/openssl"
+          echo "OPENSSL_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          OPENSSL_PREFIX="$prefix" bash scripts/ci-build-openssl.sh
 
       - name: Build pinned bee2evp engine
         shell: bash
@@ -168,14 +180,16 @@ jobs:
           git -C "$RUNNER_TEMP/bee2evp" submodule update --init --recursive
           cmake -S "$RUNNER_TEMP/bee2evp" -B "$RUNNER_TEMP/bee2evp-build" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_DOC=OFF \
-            -DBUILD_PIC=ON
+            -DBUILD_PIC=ON \
+            -DOPENSSL_INCLUDE_DIRS="$OPENSSL_PREFIX/include" \
+            -DOPENSSL_LIBRARY_DIRS="$OPENSSL_PREFIX/lib"
           cmake --build "$RUNNER_TEMP/bee2evp-build" --parallel 4
           engine_library="$(find "$RUNNER_TEMP/bee2evp-build" -name libbee2evp.so -print -quit)"
           test -n "$engine_library"
           engine_dir="$(dirname "$engine_library")"
           ln -sfn libbee2evp.so "$engine_dir/bee2evp.so"
           echo "OPENSSL_ENGINES=$engine_dir" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$engine_dir" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$engine_dir:$OPENSSL_PREFIX/lib" >> "$GITHUB_ENV"
 
       - name: Check engine availability
         run: openssl engine -t -c bee2evp
@@ -187,6 +201,13 @@ jobs:
             -DBEE2_PROVIDER_BUILD_TESTS=ON \
             -DBEE2_PROVIDER_ENABLE_INTEROP=ON \
             -DBEE2_INTEROP_BEE2EVP_ENGINE=bee2evp \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
+            -DOPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OPENSSL_PREFIX/lib/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$OPENSSL_PREFIX/lib/libssl.so" \
+            -DBEE2_OPENSSL_EXECUTABLE="$OPENSSL_PREFIX/bin/openssl" \
+            -DBEE2_INTEROP_PROVIDER_OPENSSL="$OPENSSL_PREFIX/bin/openssl" \
+            -DBEE2_INTEROP_BEE2EVP_OPENSSL="$OPENSSL_PREFIX/bin/openssl" \
             -DBEE2_INTEROP_BEE2EVP_OPENSSL_CONF=/dev/null \
             -DBEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
           cmake --build build-interop --parallel 4

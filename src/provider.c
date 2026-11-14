@@ -432,7 +432,8 @@ static const OSSL_ALGORITHM bee2_decoders[] = {
 
 static const OSSL_ALGORITHM *bee2_query(void *provctx, int operation_id, int *no_cache) {
     (void)provctx;
-    *no_cache = 0;
+    if (no_cache != NULL)
+        *no_cache = 0;
     switch (operation_id) {
     case OSSL_OP_CIPHER:
         return bee2_ciphers;

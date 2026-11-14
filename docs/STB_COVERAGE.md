@@ -62,7 +62,7 @@ establishes internal consistency. They must not be counted as equivalent.
 | BRNG-CTR-HBELT / BRNG-HMAC-HBELT | STB 34.101.47 B.2/B.4 | RAND contract tests |
 | BASH-256/384/512 | STB 34.101.77 A.3, multiple boundary lengths | Streaming/one-shot and bee2evp comparisons |
 | BASH-PRG-AE (six provider variants) | **Not yet covered by an independent published STB vector per variant** | Functional round-trips and authentication failures |
-| BIGN signature/key agreement/key transport | **Not yet covered by an independent STB answer for each exposed variant and operation** | Deterministic repeatability, sign/verify, DH agreement, encoding checks and selected bee2evp certificate interoperability |
+| BIGN signature/key agreement/key transport | Published BIGN-256 public key and signature verification examples G.1-G.3; **not yet covered by an independent STB answer for every variant and operation** | Deterministic repeatability, sign/verify, DH agreement, encoding checks and selected bee2evp certificate interoperability |
 
 The missing per-algorithm standard KATs remain release blockers for a claim
 of exhaustive normative coverage. In particular, the 128/192-bit variants

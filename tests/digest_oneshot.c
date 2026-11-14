@@ -126,6 +126,7 @@ int main(int argc, char **argv)
     const OSSL_ALGORITHM *algs = NULL;
     size_t i;
     int ok = 0;
+    int no_cache = 0;
 
     if (argc != 2)
         return 2;
@@ -135,7 +136,7 @@ int main(int argc, char **argv)
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
     if (def == NULL || bee2 == NULL)
         goto end;
-    algs = OSSL_PROVIDER_query_operation(bee2, OSSL_OP_DIGEST, NULL);
+    algs = OSSL_PROVIDER_query_operation(bee2, OSSL_OP_DIGEST, &no_cache);
     if (algs == NULL)
         goto end;
     for (i = 0; i < sizeof(variants) / sizeof(variants[0]); ++i) {
