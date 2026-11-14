@@ -538,6 +538,7 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
                        const OSSL_DISPATCH **out,
                        void **provctx) {
     bee2_provider_ctx_t *ctx;
+    const OSSL_DISPATCH *core_dispatch = in;
 
     if (in == NULL || out == NULL || provctx == NULL || !bee2_backend_is_compatible())
         return 0;
@@ -558,7 +559,9 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
         return 0;
-    ctx->libctx = OSSL_LIB_CTX_new_child(handle, in);
+    /* The iteration above advances in to the terminator.  The child
+     * context needs the original core dispatch table. */
+    ctx->libctx = OSSL_LIB_CTX_new_child(handle, core_dispatch);
     if (!ctx->libctx || !bee2_register_bign_oids()) {
         bee2_teardown(ctx);
         return 0;
