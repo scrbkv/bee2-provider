@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Reject malformed BIGN PKCS#8 and SPKI without accepting trailing DER."""
+"""Test malformed BIGN PKCS#8 and SPKI through the OpenSSL pkey CLI.
+
+The CLI reads one ASN.1 object and can ignore following bytes even for RSA.
+Root framing and trailing-byte rejection are tested by bign_der_framing.c.
+"""
 
 import argparse
 import base64
@@ -77,20 +81,16 @@ def main() -> int:
             zero_scalar = priv[:-privsize] + bytes(privsize)
             cases = [
                 ("pub-truncated", pub[:-1], True),
-                ("pub-trailing", pub + b"\x00", True),
                 ("pub-invalid-point", zero_point, True),
                 ("pub-unused-bits", bytes(invalid_bit), True),
                 ("priv-truncated", priv[:-1], False),
-                ("priv-trailing", priv + b"\x00", False),
                 ("priv-zero-scalar", zero_scalar, False),
             ]
-            if bits == 256:
-                cases.append(("oversized", pub + bytes(1024 * 1024), True))
             for suffix, data, is_public in cases:
                 check_der(arguments.openssl, providers, env, directory,
                           f"{name}-{suffix}", data, is_public, False)
 
-    print("BIGN malformed PKCS#8/SPKI rejected for all fixed curves")
+    print("BIGN malformed PKCS#8/SPKI rejected by OpenSSL pkey for all fixed curves")
     return 0
 
 

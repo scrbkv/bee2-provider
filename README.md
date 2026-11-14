@@ -133,7 +133,7 @@ ctest --test-dir build --output-on-failure
 GitHub Actions verifies Linux builds against pinned OpenSSL 3.5, 4.0 and 4.1
 releases. Optional `bee2evp` interoperability tests need a separately built
 engine. EVP streaming and BIGN public-key validation regressions are part of
-the standard CTest suite. See [Testing](docs/TESTING.md), [CI](docs/CI.md)
+the standard CTest suite. See [STB coverage](docs/STB_COVERAGE.md), [Testing](docs/TESTING.md), [CI](docs/CI.md)
 and [Contributing](CONTRIBUTING.md) for details.
 
 **Security note:** successful functional tests are not a security audit. The

@@ -10,7 +10,7 @@
  * Parameters:
  *   Key    : 16/24/32 bytes (128/192/256-bit)
  *   IV     : 16 bytes (sector tweak)
- *   Input  : n × 16 bytes  (n ≥ 1, no upper limit)
+ *   Input  : n × 16 bytes  (n ≥ 2, at least 32 bytes)
  *   Output : n × 16 bytes  (same size as input)
  *
  * Because belt-wblock is a one-shot wide-block cipher, one non-empty update
@@ -146,7 +146,7 @@ static int belt_sde_update(void *vctx,
     if (inl == 0)
         return 1;
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->processed || !out ||
-        inl % BELT_BLOCK_SIZE != 0 || outsize < inl)
+        inl < 2u * BELT_BLOCK_SIZE || inl % BELT_BLOCK_SIZE != 0 || outsize < inl)
         return 0;
 
     if (c->enc)

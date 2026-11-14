@@ -339,6 +339,12 @@ add_test(NAME bee2_evp_streaming_contract
     COMMAND bee2_evp_streaming_contract $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_evp_streaming_contract PROPERTIES LABELS "regression;evp")
 
+add_executable(bee2_sde_min_sector sde_min_sector.c)
+target_link_libraries(bee2_sde_min_sector PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_sde_min_sector
+    COMMAND bee2_sde_min_sector $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_sde_min_sector PROPERTIES LABELS "regression;evp;belt;sde")
+
 add_executable(bee2_evp_padding_contract evp_padding_contract.c)
 target_link_libraries(bee2_evp_padding_contract PRIVATE OpenSSL::Crypto)
 foreach(mode IN ITEMS ecb cbc)
@@ -356,6 +362,11 @@ add_test(NAME bee2_bign_asn1_negative
         --provider-path $<TARGET_FILE_DIR:bee2_provider>
         --openssl ${BEE2_OPENSSL_EXECUTABLE})
 set_tests_properties(bee2_bign_asn1_negative PROPERTIES LABELS "regression;bign;asn1")
+
+add_executable(bee2_bign_der_framing bign_der_framing.c)
+target_link_libraries(bee2_bign_der_framing PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_der_framing COMMAND bee2_bign_der_framing)
+set_tests_properties(bee2_bign_der_framing PROPERTIES LABELS "regression;bign;asn1")
 
 add_executable(bee2_bign_public_check bign_public_check.c)
 target_link_libraries(bee2_bign_public_check PRIVATE OpenSSL::Crypto)

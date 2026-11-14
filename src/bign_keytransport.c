@@ -81,7 +81,10 @@ static int bign_keytransport_encrypt(void *vctx,
     static const unsigned char header[16];
     if (!ctx || !ctx->encrypt || !ctx->key || !outlen || !in || inlen < 16)
         return 0;
-    need = inlen + bee2_bign_priv_len(ctx->key->variant) + 16u;
+    need = bee2_bign_priv_len(ctx->key->variant) + 16u;
+    if (inlen > SIZE_MAX - need)
+        return 0;
+    need += inlen;
     if (!out) {
         *outlen = need;
         return 1;

@@ -1,5 +1,6 @@
 #include "bee2_oids.h"
 #include "bign_common.h"
+#include "bign_der_frame.h"
 
 #include <limits.h>
 #include <openssl/asn1t.h>
@@ -18,7 +19,6 @@
 
 #define BIGN_PEM_LABEL "PRIVATE KEY"
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
-#define BIGN_MAX_KEY_INPUT (1024u * 1024u)
 
 static int bign_asn1_string_length(const ASN1_STRING *str) {
 #if OPENSSL_VERSION_NUMBER >= 0x40100000L
@@ -627,9 +627,10 @@ static int decode_pkcs8_der(const unsigned char *buf,
     const bee2_bign_variant_t *variant = NULL;
     size_t need = 0;
 
-    if (!buf || len == 0 || len > LONG_MAX || !key)
+    if (!key || !bign_der_sequence_body(buf, len, &p))
         return 0;
 
+    p = buf;
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
     if (!p8)
         return 0;
@@ -837,10 +838,7 @@ static int decode_spki_der(const unsigned char *buf,
                            const bee2_bign_variant_t *expected,
                            bee2_bign_key_t *key) {
     const unsigned char *p = buf;
-    long seqlen = 0;
-    int tag = 0;
-    int xclass = 0;
-    int ret;
+
     X509_ALGOR *alg = NULL;
     ASN1_BIT_STRING *bit = NULL;
     const ASN1_OBJECT *aobj = NULL;
@@ -851,17 +849,10 @@ static int decode_spki_der(const unsigned char *buf,
     int pub_len = 0;
     int ok = 0;
 
-    if (!buf || len == 0 || len > LONG_MAX || !key)
+    if (!key || !bign_der_sequence_body(buf, len, &p))
         return 0;
 
-    ret = ASN1_get_object(&p, &seqlen, &tag, &xclass, (long)len);
-    if ((ret & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
-        xclass != V_ASN1_UNIVERSAL || seqlen < 0)
-        return 0;
-    if ((size_t)seqlen != (size_t)(buf + len - p))
-        return 0;
-
-    const unsigned char *seq_end = p + seqlen;
+    const unsigned char *seq_end = buf + len;
 
     alg = d2i_X509_ALGOR(NULL, &p, (long)(seq_end - p));
     if (!alg)
