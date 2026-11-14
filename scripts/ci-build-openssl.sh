@@ -22,4 +22,5 @@ cd "$source_dir"
     --openssldir="$OPENSSL_PREFIX/ssl" --libdir=lib shared no-tests
 make -j 4
 make install_sw
+export LD_LIBRARY_PATH="$OPENSSL_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$OPENSSL_PREFIX/bin/openssl" version

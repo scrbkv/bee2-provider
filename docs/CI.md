@@ -26,7 +26,7 @@ revisions should be reviewed periodically for updates.
 
 1. Obtain approval for the workflow and test-source changes.
 2. Run the first CI builds and inspect compiler errors, test failures and
-   sanitizer output. The workflow has not been executed on GitHub yet.
+   sanitizer output.
 3. Fix confirmed failures without hiding tests or silently ignoring error
    codes. Regression tests described in `TESTING.md` must eventually be
    enabled by default.
