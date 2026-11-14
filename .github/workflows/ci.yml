@@ -204,7 +204,8 @@ jobs:
           echo "LD_LIBRARY_PATH=$engine_dir:$BEE2EVP_OPENSSL_PREFIX/lib:$OPENSSL_PREFIX/lib" >> "$GITHUB_ENV"
 
       - name: Check engine availability
-        run: "$BEE2EVP_OPENSSL_PREFIX/bin/openssl" engine -t -c bee2evp
+        run: |
+          "$BEE2EVP_OPENSSL_PREFIX/bin/openssl" engine -t -c bee2evp
 
       - name: Configure and build interoperability tests
         shell: bash
