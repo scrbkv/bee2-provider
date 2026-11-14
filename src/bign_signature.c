@@ -4,6 +4,10 @@
 
 #include <limits.h>
 #include <openssl/core_names.h>
+
+#ifndef OSSL_SIGNATURE_PARAM_DETERMINISTIC
+#define OSSL_SIGNATURE_PARAM_DETERMINISTIC "deterministic"
+#endif
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
@@ -195,28 +199,35 @@ static void bign_sig_reset_md(bee2_bign_sig_ctx_t *ctx, int keep_algorithm) {
 }
 
 static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const char *mdprops) {
-    EVP_MD *md = NULL;
+    EVP_MD *md;
+    bee2_bign_sig_ctx_t candidate;
 
-    if (!ctx)
+    if (ctx == NULL)
         return 0;
-
-    if (!mdname || mdname[0] == '\0') {
+    if (mdname == NULL || mdname[0] == '\0') {
         bign_sig_reset_md(ctx, 0);
         return 1;
     }
-
     md = EVP_MD_fetch(ctx->libctx, mdname, (mdprops && mdprops[0] != '\0') ? mdprops : NULL);
-    if (!md)
+    if (md == NULL)
         return 0;
+
+    candidate = *ctx;
+    candidate.md = md;
+    if (!bign_str_copy(candidate.mdname, sizeof(candidate.mdname), mdname) ||
+        !bign_str_copy(candidate.mdprops, sizeof(candidate.mdprops),
+                       mdprops != NULL ? mdprops : "") ||
+        !bign_sig_update_algid(&candidate)) {
+        EVP_MD_free(md);
+        return 0;
+    }
 
     EVP_MD_free(ctx->md);
     ctx->md = md;
-    if (!bign_str_copy(ctx->mdname, sizeof(ctx->mdname), mdname))
-        return 0;
-    if (!bign_str_copy(ctx->mdprops, sizeof(ctx->mdprops), mdprops ? mdprops : ""))
-        return 0;
-    if (!bign_sig_update_algid(ctx))
-        return 0;
+    memcpy(ctx->mdname, candidate.mdname, sizeof(ctx->mdname));
+    memcpy(ctx->mdprops, candidate.mdprops, sizeof(ctx->mdprops));
+    ctx->aid_len = candidate.aid_len;
+    memcpy(ctx->aid_buf, candidate.aid_buf, candidate.aid_len);
     return 1;
 }
 
@@ -711,12 +722,14 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     char *mdprops = NULL;
     char *sig_mode = NULL;
     unsigned int deterministic;
+    unsigned int new_deterministic;
     int ok = 1;
 
     if (!ctx)
         return 0;
     if (!params)
         return 1;
+    new_deterministic = ctx->deterministic;
 
     p = OSSL_PARAM_locate_const(params, OSSL_SIGNATURE_PARAM_DETERMINISTIC);
     if (p) {
@@ -724,7 +737,7 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             ok = 0;
             goto cleanup;
         }
-        ctx->deterministic = deterministic != 0;
+        new_deterministic = deterministic != 0;
     }
 
     p = OSSL_PARAM_locate_const(params, BEE2_SIGNATURE_PARAM_SIG);
@@ -734,7 +747,7 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             ok = 0;
             goto cleanup;
         }
-        ctx->deterministic = 1;
+        new_deterministic = 1;
     }
 
     p = OSSL_PARAM_locate_const(params, OSSL_SIGNATURE_PARAM_PROPERTIES);
@@ -764,6 +777,7 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             goto cleanup;
         }
     }
+    ctx->deterministic = new_deterministic;
 
 cleanup:
     OPENSSL_free(mdname);

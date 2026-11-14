@@ -64,6 +64,7 @@ typedef struct {
 
     octet tag[32]; /* max mac_size across all variants = 32 bytes */
     int tag_set;
+    int finalized;
 } bee2_bash_prgae_ctx_t;
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +73,7 @@ typedef struct {
 
 static void bash_prgae_reinit(bee2_bash_prgae_ctx_t *c) {
     c->data_started = 0;
+    c->finalized = 0;
     c->tag_set = 0;
     memset(c->tag, 0, sizeof(c->tag));
 
@@ -146,7 +148,8 @@ static int bash_prgae_init(void *vctx,
     c->enc = enc;
 
     if (key != NULL) {
-        if (keylen < c->variant->min_key_size || keylen > BASH_PRGAE_MAX_KEY_SIZE)
+        if (keylen < c->variant->min_key_size || keylen > BASH_PRGAE_MAX_KEY_SIZE ||
+            keylen % 4u != 0u)
             return 0;
         memcpy(c->backend_state.key, key, keylen);
         c->backend_state.key_len = keylen;
@@ -155,7 +158,7 @@ static int bash_prgae_init(void *vctx,
     }
 
     if (iv != NULL) {
-        if (ivlen > BASH_PRGAE_MAX_IV_SIZE)
+        if (ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u)
             return 0;
         memcpy(c->backend_state.iv, iv, ivlen);
         c->backend_state.iv_len = ivlen;
@@ -197,9 +200,12 @@ static int bash_prgae_update(void *vctx,
                              const unsigned char *in,
                              size_t inl) {
     bee2_bash_prgae_ctx_t *c = vctx;
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
 
-    if (!c->backend_state.key_set || !c->backend_state.iv_set)
+    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized ||
+        (inl != 0 && in == NULL))
         return 0;
 
     if (inl == 0)
@@ -233,7 +239,12 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
     bee2_bash_prgae_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
+    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized)
+        return 0;
+    c->finalized = 1;
 
     if (c->enc) {
         bashPrgSqueeze(c->tag, c->variant->mac_size, &c->backend_state.state);
@@ -262,9 +273,11 @@ static int bash_prgae_cipher(void *vctx,
                              const unsigned char *in,
                              size_t inl) {
     size_t upd = 0, fin = 0;
-    if (!bash_prgae_update(vctx, out, &upd, outsize, in, inl))
+    if (outl == NULL || (inl != 0 && out == NULL) ||
+        !bash_prgae_update(vctx, out, &upd, outsize, in, inl))
         return 0;
-    if (!bash_prgae_final(vctx, out + upd, &fin, outsize - upd))
+    if (!bash_prgae_final(vctx, out != NULL ? out + upd : NULL,
+                          &fin, outsize - upd))
         return 0;
     *outl = upd + fin;
     return 1;

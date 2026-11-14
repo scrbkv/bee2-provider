@@ -125,17 +125,16 @@ static inline void belt_ecb_cleanup(belt_ecb_ctx_t *c) {
     } \
     static inline void PFX##_restart(PFX##_ctx_t *c) { \
         if (c->key_set && c->iv_set) \
-            CAMEL##Start(&c->state, c->key, 32, c->iv); \
+            CAMEL##Refresh(&c->state, c->iv); \
     } \
     static inline void PFX##_set_key(PFX##_ctx_t *c, const void *key, size_t key_len) { \
         bee2_belt_mode_store_key(c, key, key_len); \
-        PFX##_restart(c); \
+        CAMEL##Start(&c->state, c->key, 32, NULL); \
     } \
     static inline void PFX##_set_iv(PFX##_ctx_t *c, const void *iv, size_t iv_len) { \
         (void)iv_len; \
         memcpy(c->iv, iv, 16); \
         c->iv_set = 1; \
-        PFX##_restart(c); \
     } \
     static inline void PFX##_encrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) { \
         memmove(out, in, (size_t)blocks * 16u); \
@@ -180,17 +179,16 @@ typedef bee2_belt_mode_ctx_t belt_dwp_ctx_t;
     } \
     static inline void PFX##_restart(PFX##_ctx_t *c) { \
         if (c->key_set && c->iv_set) \
-            CAMEL##Start(&c->state, c->key, 32, c->iv); \
+            CAMEL##Refresh(&c->state, c->iv); \
     } \
     static inline void PFX##_set_key(PFX##_ctx_t *c, const void *key, size_t key_len) { \
         bee2_belt_mode_store_key(c, key, key_len); \
-        PFX##_restart(c); \
+        CAMEL##Start(&c->state, c->key, 32, NULL); \
     } \
     static inline void PFX##_set_iv(PFX##_ctx_t *c, const void *iv, size_t iv_len) { \
         (void)iv_len; \
         memcpy(c->iv, iv, 16); \
         c->iv_set = 1; \
-        PFX##_restart(c); \
     } \
     static inline void PFX##_update_ad(PFX##_ctx_t *c, const void *in, size_t n) { \
         CAMEL##StepI(in, n, &c->state); \

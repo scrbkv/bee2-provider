@@ -473,7 +473,6 @@ static const OSSL_PARAM bee2_cipher_ctx_gettable[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, NULL, 0),
-    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, NULL, 0),
     OSSL_PARAM_END};
 
 static const OSSL_PARAM bee2_cipher_ctx_settable[] = {
@@ -512,12 +511,6 @@ static int belt_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     }
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_IV);
-    if (p && c->mode->iv_size != 0) {
-        if (!OSSL_PARAM_set_octet_string(p, c->backend_state.iv, c->mode->iv_size))
-            return 0;
-    }
-
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_UPDATED_IV);
     if (p && c->mode->iv_size != 0) {
         if (!OSSL_PARAM_set_octet_string(p, c->backend_state.iv, c->mode->iv_size))
             return 0;

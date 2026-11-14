@@ -165,32 +165,47 @@ static int brng_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_brng_ctx_t *c = vctx;
     const OSSL_PARAM *key_param, *iv_param;
     const void *key_data = NULL, *iv_data = NULL;
+    unsigned char *new_key = NULL, *new_iv = NULL;
     size_t key_len = 0, iv_len = 0;
 
+    if (!c)
+        return 0;
     if (!params)
         return 1;
     key_param = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_KEY);
     iv_param = OSSL_PARAM_locate_const(params, BRNG_IV_PARAM);
     if (key_param &&
         (!OSSL_PARAM_get_octet_string_ptr(key_param, &key_data, &key_len) ||
+         (key_data == NULL && key_len != 0) ||
          (c->mode == BRNG_MODE_CTR_HBELT && key_len != BRNG_BLOCK_SIZE) ||
          (c->mode == BRNG_MODE_HMAC_HBELT && key_len == 0)))
         return 0;
     if (iv_param &&
         (!OSSL_PARAM_get_octet_string_ptr(iv_param, &iv_data, &iv_len) ||
+         (iv_data == NULL && iv_len != 0) ||
          (c->mode == BRNG_MODE_CTR_HBELT && iv_len != BRNG_BLOCK_SIZE)))
         return 0;
 
+    if (key_param && key_len != 0 &&
+        (new_key = OPENSSL_memdup(key_data, key_len)) == NULL)
+        return 0;
+    if (iv_param && iv_len != 0 &&
+        (new_iv = OPENSSL_memdup(iv_data, iv_len)) == NULL) {
+        OPENSSL_clear_free(new_key, key_len);
+        return 0;
+    }
     if (key_param || iv_param)
         brng_clear_backend(c);
     if (key_param) {
-        if (!bee2_secret_replace(&c->key, &c->key_len, key_data, key_len))
-            return 0;
+        OPENSSL_clear_free(c->key, c->key_len);
+        c->key = new_key;
+        c->key_len = key_len;
         c->have_key = 1;
     }
     if (iv_param) {
-        if (!bee2_secret_replace(&c->iv, &c->iv_len, iv_data, iv_len))
-            return 0;
+        OPENSSL_clear_free(c->iv, c->iv_len);
+        c->iv = new_iv;
+        c->iv_len = iv_len;
         c->have_iv = 1;
     }
     return 1;

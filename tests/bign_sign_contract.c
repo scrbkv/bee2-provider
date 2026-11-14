@@ -1,4 +1,8 @@
 #include <openssl/core_names.h>
+
+#ifndef OSSL_SIGNATURE_PARAM_DETERMINISTIC
+#define OSSL_SIGNATURE_PARAM_DETERMINISTIC "deterministic"
+#endif
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>

@@ -150,57 +150,70 @@ static const OSSL_PARAM *hmac_settable_ctx_params(void *vctx, void *provctx) {
 
 static int hmac_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_hmac_ctx_t *ctx = vctx;
+    const bee2_hmac_digest_t *new_digest;
     const OSSL_PARAM *param;
-    const char *digest = NULL;
+    const char *digest_name = NULL;
     const void *key = NULL;
-    size_t key_len = 0;
-    size_t output_size = 0;
+    unsigned char *new_key = NULL;
+    size_t key_len = 0, new_output_size, digest_size;
+    int new_output_size_set, change_digest = 0;
+    int change_key = 0;
 
+    if (!ctx)
+        return 0;
     if (!params)
         return 1;
+    new_digest = ctx->bash_digest;
+    new_output_size = ctx->output_size;
+    new_output_size_set = ctx->output_size_set;
 
     param = OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_DIGEST);
     if (param) {
-        const bee2_hmac_digest_t *bash_digest;
-
-        if (!OSSL_PARAM_get_utf8_string_ptr(param, &digest))
+        if (!OSSL_PARAM_get_utf8_string_ptr(param, &digest_name) ||
+            digest_name == NULL)
             return 0;
-        if (OPENSSL_strcasecmp(digest, "belt-hash") == 0 ||
-            OPENSSL_strcasecmp(digest, BEE2_OID_BELT_HASH) == 0) {
-            ctx->bash_digest = NULL;
-        } else {
-            bash_digest = bash_hmac_find_digest(digest);
-            if (!bash_digest)
-                return 0;
-            ctx->bash_digest = bash_digest;
-        }
-        if (!ctx->output_size_set)
-            ctx->output_size = ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE;
-        else if (ctx->output_size >
-                 (ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE))
+        if (OPENSSL_strcasecmp(digest_name, "belt-hash") == 0 ||
+            OPENSSL_strcasecmp(digest_name, BEE2_OID_BELT_HASH) == 0)
+            new_digest = NULL;
+        else if ((new_digest = bash_hmac_find_digest(digest_name)) == NULL)
             return 0;
-        ctx->initialized = 0;
+        change_digest = new_digest != ctx->bash_digest;
     }
+    digest_size = new_digest ? new_digest->digest_size : BELT_HMAC_SIZE;
+    if (change_digest && !new_output_size_set)
+        new_output_size = digest_size;
 
     param = OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_SIZE);
     if (param) {
-        size_t digest_size = ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE;
-        if (!OSSL_PARAM_get_size_t(param, &output_size) || output_size == 0u ||
-            output_size > digest_size)
+        if (!OSSL_PARAM_get_size_t(param, &new_output_size))
             return 0;
-        ctx->output_size = output_size;
-        ctx->output_size_set = 1;
+        new_output_size_set = 1;
     }
+    if (new_output_size == 0 || new_output_size > digest_size)
+        return 0;
 
     param = OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_KEY);
     if (param) {
-        if (!OSSL_PARAM_get_octet_string_ptr(param, &key, &key_len) || key_len == 0u)
+        if (!OSSL_PARAM_get_octet_string_ptr(param, &key, &key_len) ||
+            key == NULL || key_len == 0)
             return 0;
-        if (!bee2_secret_replace(&ctx->key, &ctx->key_len, key, key_len))
+        new_key = OPENSSL_memdup(key, key_len);
+        if (!new_key)
             return 0;
-        ctx->key_set = 1;
-        ctx->initialized = 0;
+        change_key = 1;
     }
+
+    if (change_key) {
+        OPENSSL_clear_free(ctx->key, ctx->key_len);
+        ctx->key = new_key;
+        ctx->key_len = key_len;
+        ctx->key_set = 1;
+    }
+    ctx->bash_digest = new_digest;
+    ctx->output_size = new_output_size;
+    ctx->output_size_set = new_output_size_set;
+    if (change_digest || change_key)
+        ctx->initialized = 0;
     return 1;
 }
 
@@ -270,7 +283,7 @@ hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM
 static int hmac_update(void *vctx, const unsigned char *input, size_t input_len) {
     bee2_hmac_ctx_t *ctx = vctx;
 
-    if (!ctx || !ctx->initialized)
+    if (!ctx || !ctx->initialized || (input_len != 0u && input == NULL))
         return 0;
     if (input_len > 0u) {
         if (ctx->bash_digest)

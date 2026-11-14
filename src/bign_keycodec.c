@@ -1009,6 +1009,14 @@ static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PA
         goto err;
     if (key->has_priv && key->has_pub && !bee2_bign_key_validate_pair(key))
         goto err;
+    if (key->has_priv && !key->has_pub) {
+        unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
+        int valid = bee2_bign_derive_pubkey(key->variant, derived, key->priv);
+
+        bee2_bign_cleanse(derived, sizeof(derived));
+        if (!valid)
+            goto err;
+    }
 
     return key;
 

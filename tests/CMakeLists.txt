@@ -15,7 +15,7 @@ add_test(
         --provider-path $<TARGET_FILE_DIR:bee2_provider>
         --openssl ${BEE2_OPENSSL_EXECUTABLE}
 )
-set_property(TEST bee2_bee2evp_export_parity APPEND PROPERTY LABELS parity full_coverage)
+set_property(TEST bee2_bee2evp_export_parity APPEND PROPERTY LABELS parity regression)
 
 set(BEE2_OPENSSL_KAT_GROUPS
     belt-block
@@ -24,10 +24,6 @@ set(BEE2_OPENSSL_KAT_GROUPS
     hmac-hbelt
     belt-keyexpand
     bash-hash
-    hmac-compat-belt-hash
-    hmac-compat-bash-256
-    hmac-compat-bash-384
-    hmac-compat-bash-512
 )
 
 foreach(group IN LISTS BEE2_OPENSSL_KAT_GROUPS)
@@ -42,7 +38,7 @@ foreach(group IN LISTS BEE2_OPENSSL_KAT_GROUPS)
             --group ${group}
             --openssl ${BEE2_OPENSSL_EXECUTABLE}
     )
-    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage openssl_kat ${group_id})
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS regression openssl_kat ${group_id})
 endforeach()
 
 if(BEE2_PROVIDER_ENABLE_INTEROP)
@@ -242,14 +238,14 @@ foreach(alg IN LISTS BEE2_BRNG_ALGS)
             $<TARGET_FILE_DIR:bee2_provider>
             ${alg}
     )
-    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage brng ${alg_id})
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS regression brng ${alg_id})
 endforeach()
 
-add_executable(bee2_bign_sign_kat bign_sign_kat.c)
-target_link_libraries(bee2_bign_sign_kat PRIVATE OpenSSL::Crypto)
+add_executable(bee2_bign_sign_contract bign_sign_contract.c)
+target_link_libraries(bee2_bign_sign_contract PRIVATE OpenSSL::Crypto)
 
-add_executable(bee2_bign_keyexchange_kat bign_keyexchange_kat.c)
-target_link_libraries(bee2_bign_keyexchange_kat PRIVATE OpenSSL::Crypto)
+add_executable(bee2_bign_keyexchange_contract bign_keyexchange_contract.c)
+target_link_libraries(bee2_bign_keyexchange_contract PRIVATE OpenSSL::Crypto)
 
 add_test(
     NAME bee2_bign_options
@@ -259,7 +255,7 @@ add_test(
         --provider-path $<TARGET_FILE_DIR:bee2_provider>
         --openssl ${BEE2_OPENSSL_EXECUTABLE}
 )
-set_property(TEST bee2_bign_options APPEND PROPERTY LABELS full_coverage bign)
+set_property(TEST bee2_bign_options APPEND PROPERTY LABELS regression bign)
 
 set(BEE2_BIGN_ALGS
     bign-256
@@ -268,30 +264,30 @@ set(BEE2_BIGN_ALGS
 )
 foreach(alg IN LISTS BEE2_BIGN_ALGS)
     string(REPLACE "-" "_" alg_id "${alg}")
-    set(test_name "bee2_bign_sign_kat_${alg_id}")
+    set(test_name "bee2_bign_sign_contract_${alg_id}")
     add_test(
         NAME ${test_name}
         COMMAND
-            bee2_bign_sign_kat
+            bee2_bign_sign_contract
             $<TARGET_FILE_DIR:bee2_provider>
             ${alg}
     )
-    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage bign ${alg_id})
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS regression bign ${alg_id})
 
-    set(keyexchange_test_name "bee2_bign_keyexchange_kat_${alg_id}")
+    set(keyexchange_test_name "bee2_bign_keyexchange_contract_${alg_id}")
     add_test(
         NAME ${keyexchange_test_name}
         COMMAND
-            bee2_bign_keyexchange_kat
+            bee2_bign_keyexchange_contract
             $<TARGET_FILE_DIR:bee2_provider>
             ${alg}
     )
     set_property(TEST ${keyexchange_test_name} APPEND PROPERTY
-        LABELS full_coverage bign keyexchange ${alg_id})
+        LABELS regression bign keyexchange ${alg_id})
 endforeach()
 
-add_executable(bee2_cipher_coverage_kat cipher_coverage_kat.c)
-target_link_libraries(bee2_cipher_coverage_kat PRIVATE OpenSSL::Crypto)
+add_executable(bee2_cipher_roundtrip cipher_roundtrip.c)
+target_link_libraries(bee2_cipher_roundtrip PRIVATE OpenSSL::Crypto)
 
 set(BEE2_CIPHER_COVERAGE_ALGS
     belt-ecb128
@@ -330,16 +326,45 @@ set(BEE2_CIPHER_COVERAGE_ALGS
 )
 foreach(alg IN LISTS BEE2_CIPHER_COVERAGE_ALGS)
     string(REPLACE "-" "_" alg_id "${alg}")
-    set(test_name "bee2_cipher_coverage_kat_${alg_id}")
+    set(test_name "bee2_cipher_roundtrip_${alg_id}")
     add_test(
         NAME ${test_name}
         COMMAND
-            bee2_cipher_coverage_kat
+            bee2_cipher_roundtrip
             $<TARGET_FILE_DIR:bee2_provider>
             ${alg}
     )
-    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage cipher ${alg_id})
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS regression cipher ${alg_id})
 endforeach()
+
+# No STB example exists for every variant: compare the provider against
+# the pinned Bee2 high-level API, including deterministic random data.
+add_executable(bee2_direct_interop bee2_direct_interop.c)
+target_include_directories(bee2_direct_interop SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_direct_interop PRIVATE bee2_static OpenSSL::Crypto)
+add_test(NAME bee2_direct_interop
+    COMMAND bee2_direct_interop $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_direct_interop PROPERTIES LABELS "interop;bee2;all_variants")
+
+add_executable(bee2_bign_direct_interop bee2_bign_direct_interop.c)
+target_include_directories(bee2_bign_direct_interop SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_bign_direct_interop PRIVATE bee2_static OpenSSL::Crypto)
+add_test(NAME bee2_bign_direct_interop
+    COMMAND bee2_bign_direct_interop $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_direct_interop PROPERTIES LABELS "interop;bee2;bign")
+
+add_executable(bee2_params_atomicity params_atomicity.c)
+target_link_libraries(bee2_params_atomicity PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_params_atomicity
+    COMMAND bee2_params_atomicity $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_params_atomicity PROPERTIES LABELS "regression;params;native")
+
+add_executable(bee2_provider_negative_contract provider_negative_contract.c)
+target_link_libraries(bee2_provider_negative_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_negative_contract
+    COMMAND bee2_provider_negative_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_negative_contract
+    PROPERTIES LABELS "regression;negative;native")
 
 add_executable(bee2_evp_streaming_contract evp_streaming_contract.c)
 target_link_libraries(bee2_evp_streaming_contract PRIVATE OpenSSL::Crypto)
@@ -392,7 +417,7 @@ add_executable(bee2_provider_contexts provider_contexts.c)
 target_link_libraries(bee2_provider_contexts PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_provider_contexts
     COMMAND bee2_provider_contexts $<TARGET_FILE_DIR:bee2_provider>)
-set_tests_properties(bee2_provider_contexts PROPERTIES LABELS "full_coverage;provider")
+set_tests_properties(bee2_provider_contexts PROPERTIES LABELS "regression;provider")
 
 add_executable(bee2_bde_mode_metadata bde_mode_metadata.c)
 target_link_libraries(bee2_bde_mode_metadata PRIVATE OpenSSL::Crypto)
@@ -419,7 +444,7 @@ add_test(
         --provider-path $<TARGET_FILE_DIR:bee2_provider>
         --openssl ${BEE2_OPENSSL_EXECUTABLE}
 )
-set_tests_properties(bee2_stb_extended_kat PROPERTIES LABELS "stb;known_answer;full_coverage")
+set_tests_properties(bee2_stb_extended_kat PROPERTIES LABELS "stb;known_answer;regression")
 
 add_executable(bee2_belt_aead_stb belt_aead_stb.c)
 target_link_libraries(bee2_belt_aead_stb PRIVATE OpenSSL::Crypto)

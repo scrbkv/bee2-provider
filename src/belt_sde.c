@@ -145,8 +145,9 @@ static int belt_sde_update(void *vctx,
     *outl = 0;
     if (inl == 0)
         return 1;
-    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->processed || !out ||
-        inl < 2u * BELT_BLOCK_SIZE || inl % BELT_BLOCK_SIZE != 0 || outsize < inl)
+    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->processed ||
+        !in || !out || inl < 2u * BELT_BLOCK_SIZE ||
+        inl % BELT_BLOCK_SIZE != 0 || outsize < inl)
         return 0;
 
     if (c->enc)
@@ -184,7 +185,8 @@ static int belt_sde_cipher(void *vctx,
     size_t upd = 0, fin = 0;
     if (!belt_sde_update(vctx, out, &upd, outsize, in, inl))
         return 0;
-    if (!belt_sde_final(vctx, out + upd, &fin, outsize - upd))
+    if (!belt_sde_final(vctx, out != NULL ? out + upd : NULL,
+                         &fin, outsize - upd))
         return 0;
     *outl = upd + fin;
     return 1;

@@ -40,22 +40,45 @@ static void belt_pbkdf_reset(void *vctx) {
 
 static int belt_pbkdf_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_belt_pbkdf_ctx_t *ctx = vctx;
-    const OSSL_PARAM *p;
+    const OSSL_PARAM *pwd, *salt, *iter_param;
+    unsigned char *new_pwd = NULL, *new_salt = NULL;
     uint64_t iter;
+
+    if (!ctx)
+        return 0;
     if (!params)
         return 1;
-    p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_PASSWORD);
-    if (p && !bee2_secret_replace(&ctx->password, &ctx->password_len, p->data, p->data_size))
+    pwd = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_PASSWORD);
+    salt = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_SALT);
+    iter_param = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_ITER);
+    iter = ctx->iter;
+    if (iter_param && (!OSSL_PARAM_get_uint64(iter_param, &iter) ||
+                       iter == 0 || iter > SIZE_MAX))
         return 0;
-    p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_SALT);
-    if (p && !bee2_secret_replace(&ctx->salt, &ctx->salt_len, p->data, p->data_size))
+    if ((pwd && (pwd->data_type != OSSL_PARAM_OCTET_STRING ||
+                 (pwd->data == NULL && pwd->data_size != 0))) ||
+        (salt && (salt->data_type != OSSL_PARAM_OCTET_STRING ||
+                  (salt->data == NULL && salt->data_size != 0))))
         return 0;
-    p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_ITER);
-    if (p) {
-        if (!OSSL_PARAM_get_uint64(p, &iter) || iter == 0 || iter > SIZE_MAX)
-            return 0;
-        ctx->iter = (size_t)iter;
+    if (pwd && pwd->data_size != 0 &&
+        (new_pwd = OPENSSL_memdup(pwd->data, pwd->data_size)) == NULL)
+        return 0;
+    if (salt && salt->data_size != 0 &&
+        (new_salt = OPENSSL_memdup(salt->data, salt->data_size)) == NULL) {
+        OPENSSL_clear_free(new_pwd, pwd ? pwd->data_size : 0);
+        return 0;
     }
+    if (pwd) {
+        OPENSSL_clear_free(ctx->password, ctx->password_len);
+        ctx->password = new_pwd;
+        ctx->password_len = pwd->data_size;
+    }
+    if (salt) {
+        OPENSSL_clear_free(ctx->salt, ctx->salt_len);
+        ctx->salt = new_salt;
+        ctx->salt_len = salt->data_size;
+    }
+    ctx->iter = (size_t)iter;
     return 1;
 }
 
@@ -64,7 +87,8 @@ belt_pbkdf_derive(void *vctx, unsigned char *key, size_t keylen, const OSSL_PARA
     bee2_belt_pbkdf_ctx_t *ctx = vctx;
     if (!belt_pbkdf_set_ctx_params(ctx, params))
         return 0;
-    if (keylen != 32 || !ctx->password || !ctx->salt || ctx->iter == 0)
+    if (ctx == NULL || key == NULL || keylen != 32 ||
+        !ctx->password || !ctx->salt || ctx->iter == 0)
         return 0;
     return beltPBKDF2(key, ctx->password, ctx->password_len, ctx->iter, ctx->salt, ctx->salt_len) ==
            ERR_OK;

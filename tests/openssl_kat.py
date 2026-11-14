@@ -113,18 +113,6 @@ def to_hex(data: bytes) -> str:
     return data.hex().upper()
 
 
-def hmac_manual(runner: "OpenSSLRunner", digest_name: str,
-                key: bytes, data: bytes, block_size: int) -> bytes:
-    if len(key) > block_size:
-        key = runner.dgst(digest_name, key)
-    if len(key) < block_size:
-        key = key + b"\x00" * (block_size - len(key))
-    ipad = bytes(b ^ 0x36 for b in key)
-    opad = bytes(b ^ 0x5C for b in key)
-    inner = runner.dgst(digest_name, ipad + data)
-    return runner.dgst(digest_name, opad + inner)
-
-
 def run_checked(cmd: list[str]) -> subprocess.CompletedProcess:
     p = subprocess.run(cmd, capture_output=True, text=False)
     if p.returncode != 0:
@@ -349,40 +337,6 @@ def run_bash_hash_vectors(runner: OpenSSLRunner) -> None:
     )
 
 
-def run_hmac_compat_case(runner: OpenSSLRunner, digest_name: str, block_size: int) -> None:
-    hmac_data = to_bytes(BELT_PT_384)
-    hmac_key = to_bytes(BELT_KEY_256)
-    expected = hmac_manual(runner, digest_name, hmac_key, hmac_data, block_size)
-    assert_hex_eq(
-        f"HMAC compatibility {digest_name}",
-        runner.mac_hmac(digest_name, BELT_KEY_256, hmac_data),
-        to_hex(expected),
-    )
-    long_key = bytes((17 * i + 3) & 0xFF for i in range(block_size + 17))
-    long_key_expected = hmac_manual(runner, digest_name, long_key, hmac_data, block_size)
-    assert_hex_eq(
-        f"HMAC compatibility {digest_name}, long key",
-        runner.mac_hmac(digest_name, to_hex(long_key), hmac_data),
-        to_hex(long_key_expected),
-    )
-
-
-def run_hmac_compat_belt_hash(runner: OpenSSLRunner) -> None:
-    run_hmac_compat_case(runner, "belt-hash", 32)
-
-
-def run_hmac_compat_bash_256(runner: OpenSSLRunner) -> None:
-    run_hmac_compat_case(runner, "bash256", 160)
-
-
-def run_hmac_compat_bash_384(runner: OpenSSLRunner) -> None:
-    run_hmac_compat_case(runner, "bash384", 144)
-
-
-def run_hmac_compat_bash_512(runner: OpenSSLRunner) -> None:
-    run_hmac_compat_case(runner, "bash512", 128)
-
-
 GROUPS: tuple[tuple[str, Callable[[OpenSSLRunner], None]], ...] = (
     ("belt-block", run_belt_block_vectors),
     ("belt-mac", run_belt_mac_vector),
@@ -390,10 +344,6 @@ GROUPS: tuple[tuple[str, Callable[[OpenSSLRunner], None]], ...] = (
     ("hmac-hbelt", run_hmac_hbelt_vectors),
     ("belt-keyexpand", run_belt_keyexpand_vectors),
     ("bash-hash", run_bash_hash_vectors),
-    ("hmac-compat-belt-hash", run_hmac_compat_belt_hash),
-    ("hmac-compat-bash-256", run_hmac_compat_bash_256),
-    ("hmac-compat-bash-384", run_hmac_compat_bash_384),
-    ("hmac-compat-bash-512", run_hmac_compat_bash_512),
 )
 
 

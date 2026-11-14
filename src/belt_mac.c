@@ -26,6 +26,7 @@
 typedef struct {
     belt_mac_ctx_t backend_state;
     size_t fixed_key_len;
+    int initialized;
 } bee2_belt_mac_ctx_t;
 
 /* ------------------------------------------------------------------ */
@@ -85,6 +86,9 @@ static int provider_belt_mac_init(void *vctx,
                                   const OSSL_PARAM params[]) {
     bee2_belt_mac_ctx_t *c = vctx;
 
+    if (c == NULL)
+        return 0;
+    c->initialized = 0;
     if (key != NULL) {
         if (keylen != c->fixed_key_len)
             return 0;
@@ -99,11 +103,14 @@ static int provider_belt_mac_init(void *vctx,
     }
 
     belt_mac_restart(&c->backend_state);
+    c->initialized = 1;
     return 1;
 }
 
 static int provider_belt_mac_update(void *vctx, const unsigned char *in, size_t inl) {
     bee2_belt_mac_ctx_t *c = vctx;
+    if (c == NULL || !c->initialized || (inl != 0 && in == NULL))
+        return 0;
     if (inl == 0)
         return 1;
     belt_mac_update(&c->backend_state, in, inl);
@@ -112,9 +119,16 @@ static int provider_belt_mac_update(void *vctx, const unsigned char *in, size_t 
 
 static int provider_belt_mac_final(void *vctx, unsigned char *out, size_t *outl, size_t outsize) {
     bee2_belt_mac_ctx_t *c = vctx;
+    if (c == NULL || !c->initialized || outl == NULL)
+        return 0;
+    if (out == NULL) {
+        *outl = BELT_MAC_OUTPUT_SIZE;
+        return 1;
+    }
     if (outsize < BELT_MAC_OUTPUT_SIZE)
         return 0;
     belt_mac_get(&c->backend_state, out);
+    c->initialized = 0;
     *outl = BELT_MAC_OUTPUT_SIZE;
     return 1;
 }
@@ -175,9 +189,10 @@ static int provider_belt_mac_set_ctx_params(void *vctx, const OSSL_PARAM params[
         size_t key_len = 0;
         if (!OSSL_PARAM_get_octet_string_ptr(p, &key, &key_len))
             return 0;
-        if (key_len != c->fixed_key_len)
+        if (key == NULL || key_len != c->fixed_key_len)
             return 0;
         belt_mac_set_key(&c->backend_state, key, key_len);
+        c->initialized = 0;
     }
     return 1;
 }

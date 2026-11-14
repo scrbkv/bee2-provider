@@ -45,9 +45,12 @@ of the underlying algorithms.
 ## Test coverage by operation
 
 The terms in this table are deliberately distinct: a **standard KAT**
-compares against a fixed answer published with an STB example; an
-**interoperability** check compares against bee2evp; a **round-trip** only
-establishes internal consistency. They must not be counted as equivalent.
+compares against a fixed answer published with an STB example; a
+**Bee2 interoperability** test checks the provider against upstream Bee2
+high-level functions; **bee2evp interoperability** compares a separately
+compiled OpenSSL engine; a **round-trip** only establishes internal
+consistency. These checks must not be counted as equivalent, and Bee2 and
+bee2evp share cryptographic implementation code.
 
 | Operation | STB known-answer evidence | Additional validation |
 | --- | --- | --- |

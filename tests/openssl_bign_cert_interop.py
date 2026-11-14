@@ -158,12 +158,12 @@ def main() -> int:
                  bee2evp_key, provider_openssl, provider_backend, None),
             ):
             signature = root / f"{label}.sig"
-            run_checked([signer, "pkeyutl", *signer_backend, "-sign", "-inkey",
-                         str(key), "-rawin", "-digest", digest, "-in", str(message),
-                         "-out", str(signature)], signer_env)
-            run_checked([verifier, "pkeyutl", *verifier_backend, "-verify", "-inkey",
-                         str(key), "-rawin", "-digest", digest, "-sigfile",
-                         str(signature), "-in", str(message)], verifier_env)
+            run_checked([signer, "dgst", *signer_backend, f"-{digest}",
+                         "-sign", str(key), "-out", str(signature), str(message)],
+                        signer_env)
+            run_checked([verifier, "dgst", *verifier_backend, f"-{digest}",
+                         "-prverify", str(key), "-signature", str(signature),
+                         str(message)], verifier_env)
     return 0
 
 

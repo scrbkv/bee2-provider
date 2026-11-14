@@ -371,6 +371,14 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
         goto cleanup;
     if (candidate.has_priv && candidate.has_pub && !bee2_bign_key_validate_pair(&candidate))
         goto cleanup;
+    if (candidate.has_priv && !candidate.has_pub) {
+        unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
+        int valid = bee2_bign_derive_pubkey(candidate.variant, derived, candidate.priv);
+
+        bee2_bign_cleanse(derived, sizeof(derived));
+        if (!valid)
+            goto cleanup;
+    }
 
     *key = candidate;
     ok = 1;
@@ -496,11 +504,12 @@ static void *bign_dup(const void *vkey_from, int selection) {
         dst->has_pub = 1;
     }
 
-    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !dst->has_pub && dst->has_priv) {
-        if (!bee2_bign_key_ensure_public(dst)) {
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !dst->has_pub && src->has_priv) {
+        if (!bee2_bign_derive_pubkey(src->variant, dst->pub, src->priv)) {
             bign_key_free(dst);
             return NULL;
         }
+        dst->has_pub = 1;
     }
 
     return dst;

@@ -92,6 +92,7 @@ typedef struct {
 
     octet tag[BELT_AEAD_TAG_SIZE]; /* computed (enc) or expected (dec) */
     int tag_set;                   /* tag ready for get / compare      */
+    int finalized;
 } bee2_belt_aead_ctx_t;
 
 /* ------------------------------------------------------------------ */
@@ -100,6 +101,7 @@ typedef struct {
 
 static void belt_aead_reinitialize(bee2_belt_aead_ctx_t *c) {
     c->data_started = 0;
+    c->finalized = 0;
     c->tag_set = 0;
     memset(c->tag, 0, BELT_AEAD_TAG_SIZE);
 
@@ -218,9 +220,12 @@ static int belt_aead_update(void *vctx,
                             const unsigned char *in,
                             size_t inl) {
     bee2_belt_aead_ctx_t *c = vctx;
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
 
-    if (!c->backend_state.key_set || !c->backend_state.iv_set)
+    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized ||
+        (inl != 0 && in == NULL))
         return 0;
 
     if (inl == 0)
@@ -253,7 +258,12 @@ static int belt_aead_final(void *vctx, unsigned char *out, size_t *outl, size_t 
     bee2_belt_aead_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
+    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized)
+        return 0;
+    c->finalized = 1;
 
     if (c->enc) {
         /* Compute and store tag — caller retrieves via get_ctx_params. */
@@ -288,9 +298,11 @@ static int belt_aead_cipher(void *vctx,
                             const unsigned char *in,
                             size_t inl) {
     size_t upd = 0, fin = 0;
-    if (!belt_aead_update(vctx, out, &upd, outsize, in, inl))
+    if (outl == NULL || (inl != 0 && out == NULL) ||
+        !belt_aead_update(vctx, out, &upd, outsize, in, inl))
         return 0;
-    if (!belt_aead_final(vctx, out + upd, &fin, outsize - upd))
+    if (!belt_aead_final(vctx, out != NULL ? out + upd : NULL,
+                         &fin, outsize - upd))
         return 0;
     *outl = upd + fin;
     return 1;

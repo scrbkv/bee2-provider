@@ -32,9 +32,6 @@
 /* KWP header size equals one BELT block (16 bytes). */
 #define BELT_KWP_HDR_SIZE BELT_IV_SIZE
 
-/* Maximum plaintext blocks (library tmp buffer = 33 blocks). */
-#define BELT_KWP_MAX_BLOCKS 32u
-
 /* Default initial authentication header (H₀) — all-zeros. */
 static const octet belt_kwp_default_header[BELT_KWP_HDR_SIZE];
 
@@ -158,24 +155,26 @@ static int belt_kwp_update(void *vctx,
                            const unsigned char *in,
                            size_t inl) {
     bee2_belt_kwp_ctx_t *c = vctx;
-    size_t blocks;
     size_t result_len;
 
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
     if (inl == 0)
         return 1;
-    if (!c->key_set || c->processed || !out || inl % BELT_BLOCK_SIZE != 0)
+    if (!c->key_set || c->processed || in == NULL || out == NULL)
         return 0;
 
-    blocks = inl / BELT_BLOCK_SIZE;
     if (c->enc) {
+        if (inl < BELT_BLOCK_SIZE || inl > SIZE_MAX - BELT_KWP_HDR_SIZE)
+            return 0;
         result_len = inl + BELT_KWP_HDR_SIZE;
-        if (blocks > BELT_KWP_MAX_BLOCKS || outsize < result_len)
+        if (outsize < result_len)
             return 0;
         if (beltKWPWrap(out, in, inl, c->hdr, c->key, BELT_KEY_SIZE) != ERR_OK)
             return 0;
     } else {
-        if (blocks < 2 || blocks > BELT_KWP_MAX_BLOCKS + 1)
+        if (inl < 2u * BELT_BLOCK_SIZE)
             return 0;
         result_len = inl - BELT_KWP_HDR_SIZE;
         if (outsize < result_len)
@@ -216,7 +215,8 @@ static int belt_kwp_cipher(void *vctx,
     size_t upd = 0, fin = 0;
     if (!belt_kwp_update(vctx, out, &upd, outsize, in, inl))
         return 0;
-    if (!belt_kwp_final(vctx, out + upd, &fin, outsize - upd))
+    if (!belt_kwp_final(vctx, out != NULL ? out + upd : NULL,
+                         &fin, outsize - upd))
         return 0;
     *outl = upd + fin;
     return 1;
@@ -246,7 +246,7 @@ static int belt_kwp_get_params_len(OSSL_PARAM params[], size_t key_len) {
     if (p && !OSSL_PARAM_set_size_t(p, BELT_KWP_HDR_SIZE))
         return 0;
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_BLOCK_SIZE);
-    if (p && !OSSL_PARAM_set_size_t(p, BELT_BLOCK_SIZE))
+    if (p && !OSSL_PARAM_set_size_t(p, 1u))
         return 0;
     return 1;
 }

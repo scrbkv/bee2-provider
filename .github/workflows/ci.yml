@@ -21,6 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - openssl_tag: openssl-3.0.21
+            openssl_commit: 51ea949dc1436e865935b47874b21a3bb31a102e
+            compiler: gcc
           - openssl_tag: openssl-3.5.9
             openssl_commit: 45e844fa2a14ec92d146bd8f5778ac130b6625fb
             compiler: gcc
@@ -136,7 +139,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|bash_prgae_stb|bign_transport_contract|digest_oneshot|bign_params_contract)' \
+            -R '^bee2_(cipher_roundtrip|brng_kat|bign_sign_contract|bign_keyexchange_contract|direct_interop|bign_direct_interop|params_atomicity|provider_negative_contract|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|bash_prgae_stb|bign_transport_contract|digest_oneshot|bign_params_contract)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
