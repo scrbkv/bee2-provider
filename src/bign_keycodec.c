@@ -19,6 +19,25 @@
 #define BIGN_PEM_LABEL "PRIVATE KEY"
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
 
+static int bign_asn1_string_length(const ASN1_STRING *str) {
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    size_t len = ASN1_STRING_get_length(str);
+    return len > INT_MAX ? -1 : (int)len;
+#else
+    return ASN1_STRING_length(str);
+#endif
+}
+
+static int bign_asn1_string_set(ASN1_STRING *str, const unsigned char *data, int len) {
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    if (len < 0)
+        return 0;
+    return ASN1_STRING_set1_data(str, data, (size_t)len);
+#else
+    return ASN1_STRING_set(str, data, len);
+#endif
+}
+
 typedef struct {
     ASN1_OBJECT *fieldType;
     ASN1_INTEGER *prime;
@@ -311,13 +330,13 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
     b_data = ASN1_STRING_get0_data(ecp->curve->b);
     if (!a_data || !b_data)
         goto cleanup;
-    if (ASN1_STRING_length(ecp->curve->a) != (int)bytes ||
-        ASN1_STRING_length(ecp->curve->b) != (int)bytes)
+    if (bign_asn1_string_length(ecp->curve->a) != (int)bytes ||
+        bign_asn1_string_length(ecp->curve->b) != (int)bytes)
         goto cleanup;
     memcpy(a_le, a_data, bytes);
     memcpy(b_le, b_data, bytes);
 
-    if (!ecp->base || ASN1_STRING_length(ecp->base) != (int)bytes)
+    if (!ecp->base || bign_asn1_string_length(ecp->base) != (int)bytes)
         goto cleanup;
     base_data = ASN1_STRING_get0_data(ecp->base);
     if (!base_data)
@@ -368,7 +387,7 @@ static const bee2_bign_variant_t *variant_from_domain_params(const ASN1_STRING *
     if (!params)
         return NULL;
     p = ASN1_STRING_get0_data(params);
-    len = ASN1_STRING_length(params);
+    len = bign_asn1_string_length(params);
     if (!p || len <= 0)
         return NULL;
 
@@ -482,7 +501,7 @@ static ASN1_STRING *encode_explicit_domain_params(const bee2_bign_key_t *key) {
     if (der_len <= 0)
         goto cleanup;
     sequence = ASN1_STRING_type_new(V_ASN1_SEQUENCE);
-    if (!sequence || !ASN1_STRING_set(sequence, der, der_len)) {
+    if (!sequence || !bign_asn1_string_set(sequence, der, der_len)) {
         ASN1_STRING_free(sequence);
         sequence = NULL;
     }
@@ -849,7 +868,7 @@ static int decode_spki_der(const unsigned char *buf,
         goto cleanup;
 
     pub = ASN1_STRING_get0_data((const ASN1_STRING *)bit);
-    pub_len = ASN1_STRING_length((const ASN1_STRING *)bit);
+    pub_len = bign_asn1_string_length((const ASN1_STRING *)bit);
     if (!pub || pub_len != (int)bee2_bign_pub_len(variant))
         goto cleanup;
 
