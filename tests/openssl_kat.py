@@ -185,7 +185,8 @@ class OpenSSLRunner:
         run_checked(self._cmd("dgst", args))
         return out_file.read_bytes()
 
-    def mac_belt(self, key_hex: str, data: bytes) -> bytes:
+    def mac_belt(self, key_hex: str, data: bytes,
+                 algorithm: str = "belt-mac256") -> bytes:
         in_file = self.tmp / "mac_in.bin"
         out_file = self.tmp / "mac_out.bin"
         in_file.write_bytes(data)
@@ -197,7 +198,7 @@ class OpenSSLRunner:
             f"hexkey:{key_hex}",
             "-in",
             str(in_file),
-            "belt-mac256",
+            algorithm,
         ]
         run_checked(self._cmd("mac", args))
         return out_file.read_bytes()
@@ -313,6 +314,20 @@ def run_belt_keyexpand_vectors(runner: OpenSSLRunner) -> None:
                 f"STB 34.101.31-2020 A.27 keyexpand -> belt-{mode}{bits}",
                 actual, to_hex(expected),
             )
+
+
+    # STB 34.101.31 A.27 reduced BELT keys are equivalent to
+    # their defined 32-byte expansions for BELT-MAC as well.
+    for bits, original, expanded in (
+        (128, BELT_KEY_128, BELT_KEY_128_EXPANDED),
+        (192, BELT_KEY_192, BELT_KEY_192_EXPANDED),
+    ):
+        expected = runner.mac_belt(expanded, pt384)
+        actual = runner.mac_belt(original, pt384, f"belt-mac{bits}")
+        assert_hex_eq(
+            f"STB 34.101.31 A.27 BELT-MAC-{bits} expansion",
+            actual, to_hex(expected),
+        )
 
 
 def run_bash_hash_vectors(runner: OpenSSLRunner) -> None:

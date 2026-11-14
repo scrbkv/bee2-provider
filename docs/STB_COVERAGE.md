@@ -55,14 +55,14 @@ establishes internal consistency. They must not be counted as equivalent.
 | BELT BDE/SDE | 256-bit keys, A.24 | Round-trips for 128/192/256; no bee2evp counterpart |
 | BELT DWP/CHE | 256-bit keys, A.19-1/2 (ciphertext and authentication tag) | Round-trips and tag-rejection for all key lengths |
 | BELT KWP | 256-bit keys, A.21 | Round-trips and tamper tests for all key lengths |
-| BELT MAC | 256-bit keys, A.17 | Round-trips/functional coverage for 128/192; bee2evp MAC comparison for 256 |
+| BELT MAC | 256-bit keys, A.17 | STB A.27 expanded-key equivalence for 128/192; bee2evp MAC comparison for 256 |
 | BELT-Hash | A.23 (multiple lengths) | Streaming/one-shot API equivalence and bee2evp comparison |
 | BELT-PBKDF | STB 34.101.45 Appendix E.5 | EVP KDF integration |
 | HMAC-HBELT | STB 34.101.47 B.1 | bee2evp comparison, plus HMAC construction tests |
 | BRNG-CTR-HBELT / BRNG-HMAC-HBELT | STB 34.101.47 B.2/B.4 | RAND contract tests |
 | BASH-256/384/512 | STB 34.101.77 A.3, multiple boundary lengths | Streaming/one-shot and bee2evp comparisons |
 | BASH-PRG-AE (six provider variants) | STB 34.101.77 A.4 ciphertext for l=128, d=1 and A.6 ciphertext/tag for l=256, d=1 (the latter uses a 16-byte IV via direct provider dispatch); **no independent published KAT for the four other variants** | Functional round-trips and authentication failures |
-| BIGN signature/key agreement/key transport | Published BIGN-256 public key and signature verification examples G.1-G.3; **not yet covered by an independent STB answer for every variant and operation** | Deterministic repeatability, sign/verify, DH agreement, encoding checks and selected bee2evp certificate interoperability |
+| BIGN signature/key agreement/key transport | Published BIGN-256 public key and signature verification examples G.1-G.3; **not yet covered by an independent STB answer for every variant and operation** | Deterministic repeatability, sign/verify, DH agreement, key transport round-trips/tampering, encoding checks and selected bee2evp certificate interoperability |
 
 The missing per-algorithm standard KATs remain release blockers for a claim
 of exhaustive normative coverage. In particular, the 128/192-bit variants

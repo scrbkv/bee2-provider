@@ -445,6 +445,12 @@ add_test(NAME bee2_bign_stb_verify
     COMMAND bee2_bign_stb_verify $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_stb_verify PROPERTIES LABELS "stb;known_answer;bign;native")
 
+add_executable(bee2_bign_transport_contract bign_transport_contract.c)
+target_link_libraries(bee2_bign_transport_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_transport_contract
+    COMMAND bee2_bign_transport_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_transport_contract PROPERTIES LABELS "regression;bign;transport;native")
+
 add_executable(bee2_bign_params_contract bign_params_contract.c)
 target_link_libraries(bee2_bign_params_contract PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bign_params_contract

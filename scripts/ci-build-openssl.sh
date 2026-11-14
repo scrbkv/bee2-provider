@@ -6,7 +6,7 @@ set -euo pipefail
 : "${OPENSSL_COMMIT:?Expected OpenSSL commit is required}"
 : "${OPENSSL_PREFIX:?Installation prefix is required}"
 
-source_dir="${RUNNER_TEMP:-/tmp}/openssl-src"
+source_dir="${OPENSSL_SOURCE_DIR:-${RUNNER_TEMP:-/tmp}/openssl-src}"
 mkdir -p "$(dirname "$source_dir")" "$OPENSSL_PREFIX"
 git clone --depth 1 --branch "$OPENSSL_TAG" \
     https://github.com/openssl/openssl.git "$source_dir"
