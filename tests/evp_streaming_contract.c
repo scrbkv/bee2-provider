@@ -1,4 +1,5 @@
 /* CFB and CTR are stream-like EVP ciphers, even for one-byte updates. */
+#include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
@@ -6,6 +7,16 @@
 #include <string.h>
 
 #define MESSAGE_SIZE 83
+
+static int get_num(EVP_CIPHER_CTX *ctx, unsigned int *num)
+{
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_uint(OSSL_CIPHER_PARAM_NUM, num),
+        OSSL_PARAM_END
+    };
+
+    return EVP_CIPHER_CTX_get_params(ctx, params) > 0;
+}
 
 static int test_cipher(const char *name, size_t keylen)
 {
@@ -16,6 +27,8 @@ static int test_cipher(const char *name, size_t keylen)
     unsigned char whole[MESSAGE_SIZE + 16];
     unsigned char chunks[MESSAGE_SIZE + 16];
     unsigned char recovered[MESSAGE_SIZE + 16];
+    unsigned char updated_whole[16], updated_chunks[16], updated_decrypt[16];
+    unsigned int whole_num = 0, chunks_num = 0, decrypt_num = 0;
     EVP_CIPHER_CTX *clone = NULL;
     EVP_CIPHER *cipher = NULL;
     EVP_CIPHER_CTX *ctx = NULL;
@@ -41,7 +54,10 @@ static int test_cipher(const char *name, size_t keylen)
             || !EVP_EncryptUpdate(ctx, whole, &outlen, input, MESSAGE_SIZE)
             || outlen != MESSAGE_SIZE
             || !EVP_EncryptFinal_ex(ctx, whole + outlen, &finlen)
-            || finlen != 0)
+            || finlen != 0
+            || !EVP_CIPHER_CTX_get_updated_iv(ctx, updated_whole, sizeof(updated_whole))
+            || !get_num(ctx, &whole_num)
+            || whole_num != MESSAGE_SIZE % 16u)
         goto end;
 
     if (!EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL))
@@ -64,6 +80,10 @@ static int test_cipher(const char *name, size_t keylen)
     if (offset != MESSAGE_SIZE
             || !EVP_EncryptFinal_ex(ctx, chunks + written, &finlen)
             || finlen != 0
+            || !EVP_CIPHER_CTX_get_updated_iv(ctx, updated_chunks, sizeof(updated_chunks))
+            || !get_num(ctx, &chunks_num)
+            || chunks_num != whole_num
+            || CRYPTO_memcmp(updated_whole, updated_chunks, sizeof(updated_whole)) != 0
             || CRYPTO_memcmp(whole, chunks, MESSAGE_SIZE) != 0) {
         fprintf(stderr, "%s: split/whole encryption mismatch\n", name);
         goto end;
@@ -85,6 +105,10 @@ static int test_cipher(const char *name, size_t keylen)
     }
     if (!EVP_DecryptFinal_ex(ctx, recovered + written, &finlen)
             || finlen != 0 || written != MESSAGE_SIZE
+            || !EVP_CIPHER_CTX_get_updated_iv(ctx, updated_decrypt, sizeof(updated_decrypt))
+            || !get_num(ctx, &decrypt_num)
+            || decrypt_num != whole_num
+            || CRYPTO_memcmp(updated_whole, updated_decrypt, sizeof(updated_whole)) != 0
             || CRYPTO_memcmp(recovered, input, MESSAGE_SIZE) != 0) {
         fprintf(stderr, "%s: split decryption mismatch\n", name);
         goto end;
@@ -121,7 +145,8 @@ static int test_cipher(const char *name, size_t keylen)
     clone = EVP_CIPHER_CTX_new();
     if (!clone || !EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL)
             || !EVP_EncryptUpdate(ctx, recovered, &outlen, input, 13)
-            || outlen != 13 || !EVP_CIPHER_CTX_copy(clone, ctx))
+            || outlen != 13 || !get_num(ctx, &chunks_num) || chunks_num != 13u
+            || !EVP_CIPHER_CTX_copy(clone, ctx))
         goto end;
     memcpy(chunks, recovered, 13);
     if (!EVP_EncryptUpdate(ctx, recovered + 13, &outlen,
@@ -134,6 +159,10 @@ static int test_cipher(const char *name, size_t keylen)
             || finlen != 0
             || !EVP_EncryptFinal_ex(clone, chunks + MESSAGE_SIZE, &finlen)
             || finlen != 0
+            || !EVP_CIPHER_CTX_get_updated_iv(ctx, updated_chunks, sizeof(updated_chunks))
+            || CRYPTO_memcmp(updated_whole, updated_chunks, sizeof(updated_whole)) != 0
+            || !EVP_CIPHER_CTX_get_updated_iv(clone, updated_decrypt, sizeof(updated_decrypt))
+            || CRYPTO_memcmp(updated_whole, updated_decrypt, sizeof(updated_whole)) != 0
             || CRYPTO_memcmp(recovered, whole, MESSAGE_SIZE) != 0
             || CRYPTO_memcmp(chunks, whole, MESSAGE_SIZE) != 0) {
         fprintf(stderr, "%s: duplicated context mismatch\n", name);
