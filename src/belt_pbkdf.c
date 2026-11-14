@@ -11,6 +11,8 @@ typedef struct {
     unsigned char *salt;
     size_t salt_len;
     size_t iter;
+    int password_set;
+    int salt_set;
 } bee2_belt_pbkdf_ctx_t;
 
 static void belt_pbkdf_clear(bee2_belt_pbkdf_ctx_t *ctx) {
@@ -21,6 +23,8 @@ static void belt_pbkdf_clear(bee2_belt_pbkdf_ctx_t *ctx) {
     ctx->password = ctx->salt = NULL;
     ctx->password_len = ctx->salt_len = 0;
     ctx->iter = 0;
+    ctx->password_set = 0;
+    ctx->salt_set = 0;
 }
 
 static void *belt_pbkdf_newctx(void *provctx) {
@@ -72,11 +76,13 @@ static int belt_pbkdf_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         OPENSSL_clear_free(ctx->password, ctx->password_len);
         ctx->password = new_pwd;
         ctx->password_len = pwd->data_size;
+        ctx->password_set = 1;
     }
     if (salt) {
         OPENSSL_clear_free(ctx->salt, ctx->salt_len);
         ctx->salt = new_salt;
         ctx->salt_len = salt->data_size;
+        ctx->salt_set = 1;
     }
     ctx->iter = (size_t)iter;
     return 1;
@@ -88,7 +94,7 @@ belt_pbkdf_derive(void *vctx, unsigned char *key, size_t keylen, const OSSL_PARA
     if (!belt_pbkdf_set_ctx_params(ctx, params))
         return 0;
     if (ctx == NULL || key == NULL || keylen != 32 ||
-        !ctx->password || !ctx->salt || ctx->iter == 0)
+        !ctx->password_set || !ctx->salt_set || ctx->iter == 0)
         return 0;
     return beltPBKDF2(key, ctx->password, ctx->password_len, ctx->iter, ctx->salt, ctx->salt_len) ==
            ERR_OK;
