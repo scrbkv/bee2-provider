@@ -184,6 +184,13 @@ jobs:
             bash scripts/ci-build-openssl.sh
           echo "LD_LIBRARY_PATH=$legacy_prefix/lib:$OPENSSL_PREFIX/lib" >> "$GITHUB_ENV"
 
+      - name: Configure legacy request defaults
+        shell: bash
+        run: |
+          config="$RUNNER_TEMP/bee2evp-openssl.cnf"
+          printf '%s\n' '[req]' 'distinguished_name = req_dn' '[req_dn]' 'commonName = Common Name' > "$config"
+          echo "BEE2EVP_OPENSSL_CONF=$config" >> "$GITHUB_ENV"
+
       - name: Build pinned bee2evp engine
         shell: bash
         run: |
@@ -221,7 +228,7 @@ jobs:
             -DBEE2_OPENSSL_EXECUTABLE="$OPENSSL_PREFIX/bin/openssl" \
             -DBEE2_INTEROP_PROVIDER_OPENSSL="$OPENSSL_PREFIX/bin/openssl" \
             -DBEE2_INTEROP_BEE2EVP_OPENSSL="$BEE2EVP_OPENSSL_PREFIX/bin/openssl" \
-            -DBEE2_INTEROP_BEE2EVP_OPENSSL_CONF=/dev/null \
+            -DBEE2_INTEROP_BEE2EVP_OPENSSL_CONF="$BEE2EVP_OPENSSL_CONF" \
             -DBEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
           cmake --build build-interop --parallel 4
 
