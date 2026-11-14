@@ -9,6 +9,7 @@
 #define BEE2_PKEY_PARAM_ENC_PARAMS "enc_params"
 
 typedef struct {
+    OSSL_LIB_CTX *libctx;
     const bee2_bign_variant_t *variant;
     int selection;
     int encode_explicit;
@@ -16,6 +17,7 @@ typedef struct {
 } bee2_bign_gen_ctx_t;
 
 typedef struct {
+    OSSL_LIB_CTX *libctx;
     int failed;
 } bee2_bign_rng_t;
 
@@ -518,7 +520,10 @@ static void *bign_load(const void *reference, size_t reference_sz) {
 }
 
 static void *
-bign_gen_init_common(const bee2_bign_variant_t *variant, int selection, const OSSL_PARAM params[]) {
+bign_gen_init_common(void *provctx,
+                     const bee2_bign_variant_t *variant,
+                     int selection,
+                     const OSSL_PARAM params[]) {
     bee2_bign_gen_ctx_t *gctx;
 
     if (!(selection & OSSL_KEYMGMT_SELECT_KEYPAIR))
@@ -526,6 +531,7 @@ bign_gen_init_common(const bee2_bign_variant_t *variant, int selection, const OS
     gctx = OPENSSL_zalloc(sizeof(*gctx));
     if (!gctx)
         return NULL;
+    gctx->libctx = bee2_provider_libctx(provctx);
     gctx->variant = variant;
     gctx->selection = selection;
     if (!bign_apply_encoding_params(&gctx->encode_explicit, &gctx->encode_cofactor, params)) {
@@ -536,18 +542,15 @@ bign_gen_init_common(const bee2_bign_variant_t *variant, int selection, const OS
 }
 
 static void *bign256_gen_init(void *provctx, int selection, const OSSL_PARAM params[]) {
-    (void)provctx;
-    return bign_gen_init_common(bee2_bign_variant_256(), selection, params);
+    return bign_gen_init_common(provctx, bee2_bign_variant_256(), selection, params);
 }
 
 static void *bign384_gen_init(void *provctx, int selection, const OSSL_PARAM params[]) {
-    (void)provctx;
-    return bign_gen_init_common(bee2_bign_variant_384(), selection, params);
+    return bign_gen_init_common(provctx, bee2_bign_variant_384(), selection, params);
 }
 
 static void *bign512_gen_init(void *provctx, int selection, const OSSL_PARAM params[]) {
-    (void)provctx;
-    return bign_gen_init_common(bee2_bign_variant_512(), selection, params);
+    return bign_gen_init_common(provctx, bee2_bign_variant_512(), selection, params);
 }
 
 static int bign_gen_set_template(void *vgenctx, void *vtempl) {
@@ -579,7 +582,7 @@ static const OSSL_PARAM *bign_gen_settable_params(void *genctx, void *provctx) {
 static void bee2_bign_openssl_rng(void *buf, size_t count, void *state) {
     bee2_bign_rng_t *rng = state;
 
-    if (rng == NULL || count > (size_t)INT_MAX || RAND_priv_bytes(buf, (int)count) != 1) {
+    if (rng == NULL || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
         if (buf != NULL)
             bee2_bign_cleanse(buf, count);
         if (rng != NULL)
@@ -600,6 +603,7 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     (void)cbarg;
     if (!gctx || !gctx->variant)
         return NULL;
+    rng.libctx = gctx->libctx;
 
     OPENSSL_cleanse(&curve, sizeof(curve));
     key = bign_new_common(gctx->variant);

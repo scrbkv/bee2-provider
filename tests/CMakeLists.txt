@@ -379,3 +379,21 @@ target_link_libraries(bee2_provider_contexts PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_provider_contexts
     COMMAND bee2_provider_contexts $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_provider_contexts PROPERTIES LABELS "full_coverage;provider")
+
+add_executable(bee2_bde_mode_metadata bde_mode_metadata.c)
+target_link_libraries(bee2_bde_mode_metadata PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bde_mode_metadata
+    COMMAND bee2_bde_mode_metadata $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bde_mode_metadata PROPERTIES LABELS "regression;evp;belt;bde")
+
+add_executable(bee2_brng_contract brng_contract.c)
+target_link_libraries(bee2_brng_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_brng_contract
+    COMMAND bee2_brng_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_brng_contract PROPERTIES LABELS "regression;rand;brng")
+
+add_executable(bee2_provider_isolation provider_isolation.c)
+target_link_libraries(bee2_provider_isolation PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_isolation
+    COMMAND bee2_provider_isolation $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_isolation PROPERTIES LABELS "regression;provider;libctx;bign")

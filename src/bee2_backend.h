@@ -12,6 +12,7 @@
 #include <bee2/crypto/bash.h>
 #include <bee2/crypto/belt.h>
 #include <bee2/crypto/bign.h>
+#include <bee2/crypto/brng.h>
 #include <openssl/crypto.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -42,6 +43,8 @@ static inline int bee2_backend_is_compatible(void) {
            beltDWP_keep() <= BEE2_BACKEND_STATE_SIZE && beltMAC_keep() <= BEE2_BACKEND_STATE_SIZE &&
            beltHMAC_keep() <= BEE2_BACKEND_STATE_SIZE &&
            beltSDE_keep() <= BEE2_BACKEND_STATE_SIZE &&
+           brngCTR_keep() <= BEE2_BACKEND_STATE_SIZE &&
+           brngHMAC_keep() <= BEE2_BACKEND_STATE_SIZE &&
            bashHash_keep() <= BEE2_BACKEND_STATE_SIZE && bashPrg_keep() <= BEE2_BACKEND_STATE_SIZE;
 }
 

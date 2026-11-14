@@ -20,6 +20,8 @@ Bee2 Provider implements:
 - `belt-mac128`, `belt-mac192` and `belt-mac256`;
 - `belt-pbkdf`;
 - `brng-ctr-hbelt` and `brng-hmac-hbelt` random generators;
+  these deterministic generators require caller-supplied keys and do not
+  independently obtain entropy or provide prediction resistance;
 - `bign-256`, `bign-384` and `bign-512` key generation, signatures,
   Diffie--Hellman key agreement, key transport and PEM/DER encoding.
 

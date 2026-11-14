@@ -16,14 +16,19 @@
 #include "bee2_backend.h"
 #include "provider.h"
 
+#include <openssl/evp.h>
+
 /* ------------------------------------------------------------------ */
-/*  EVP cipher mode numbers (from <openssl/evp.h>)                     */
-/* ------------------------------------------------------------------ */
-#define BEE2_EVP_CIPH_ECB_MODE 1
-#define BEE2_EVP_CIPH_CBC_MODE 2
-#define BEE2_EVP_CIPH_CFB_MODE 3
-#define BEE2_EVP_CIPH_CTR_MODE 5
-#define BEE2_EVP_CIPH_BDE_MODE 8 /* XTS (8) is closest standard analogue */
+/* EVP has no named mode for BELT-BDE. OpenSSL represents a zero mode
+ * as STREAM_CIPHER; this is a compatibility fallback, NOT a statement
+ * that BELT-BDE has stream-cipher or XTS semantics. Applications must
+ * identify BELT-BDE by its algorithm name or bee2-mode parameter. */
+#define BEE2_EVP_CIPH_ECB_MODE EVP_CIPH_ECB_MODE
+#define BEE2_EVP_CIPH_CBC_MODE EVP_CIPH_CBC_MODE
+#define BEE2_EVP_CIPH_CFB_MODE EVP_CIPH_CFB_MODE
+#define BEE2_EVP_CIPH_CTR_MODE EVP_CIPH_CTR_MODE
+#define BEE2_EVP_CIPH_BDE_MODE 0u
+#define BEE2_CIPHER_PARAM_BEE2_MODE "bee2-mode"
 
 /* ------------------------------------------------------------------ */
 /*  Context                                                             */
@@ -402,6 +407,7 @@ static const OSSL_PARAM bee2_cipher_gettable_params[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_BLOCK_SIZE, NULL),
     OSSL_PARAM_uint(OSSL_CIPHER_PARAM_MODE, NULL),
+    OSSL_PARAM_utf8_string(BEE2_CIPHER_PARAM_BEE2_MODE, NULL, 0),
     OSSL_PARAM_END};
 
 static const OSSL_PARAM *belt_gettable_params(void *provctx) {
@@ -427,6 +433,11 @@ static int belt_get_params_impl(
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_MODE);
     if (p && !OSSL_PARAM_set_uint(p, mode_val))
+        return 0;
+
+    p = OSSL_PARAM_locate(params, BEE2_CIPHER_PARAM_BEE2_MODE);
+    if (p && mode_val == BEE2_EVP_CIPH_BDE_MODE &&
+        !OSSL_PARAM_set_utf8_string(p, "belt-bde"))
         return 0;
 
     return 1;

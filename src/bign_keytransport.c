@@ -4,18 +4,20 @@
 #include <openssl/rand.h>
 
 typedef struct {
+    OSSL_LIB_CTX *libctx;
     bee2_bign_key_t *key;
     int encrypt;
 } bee2_bign_keytransport_ctx_t;
 
 typedef struct {
+    OSSL_LIB_CTX *libctx;
     int failed;
 } bee2_bign_keytransport_rng_t;
 
 static void bign_keytransport_rng(void *buf, size_t count, void *state) {
     bee2_bign_keytransport_rng_t *rng = state;
 
-    if (rng == NULL || count > (size_t)INT_MAX || RAND_priv_bytes(buf, (int)count) != 1) {
+    if (rng == NULL || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
         if (buf != NULL)
             bee2_bign_cleanse(buf, count);
         if (rng != NULL)
@@ -24,8 +26,10 @@ static void bign_keytransport_rng(void *buf, size_t count, void *state) {
 }
 
 static void *bign_keytransport_newctx(void *provctx) {
-    (void)provctx;
-    return OPENSSL_zalloc(sizeof(bee2_bign_keytransport_ctx_t));
+    bee2_bign_keytransport_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
+    if (ctx)
+        ctx->libctx = bee2_provider_libctx(provctx);
+    return ctx;
 }
 
 static void bign_keytransport_freectx(void *vctx) {
@@ -91,6 +95,7 @@ static int bign_keytransport_encrypt(void *vctx,
     }
     if (outsize < need)
         return 0;
+    rng.libctx = ctx->libctx;
     OPENSSL_cleanse(&curve, sizeof(curve));
     if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
         goto cleanup;

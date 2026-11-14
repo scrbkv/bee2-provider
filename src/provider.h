@@ -1,7 +1,20 @@
 #ifndef BEE2_PROVIDER_H
 #define BEE2_PROVIDER_H
 
+#include <openssl/crypto.h>
 #include <openssl/core.h>
+
+/* Each provider instance owns a child library context.  It borrows the
+ * parent's provider configuration without using the process-global ctx. */
+typedef struct {
+    OSSL_LIB_CTX *libctx;
+} bee2_provider_ctx_t;
+
+static inline OSSL_LIB_CTX *bee2_provider_libctx(const void *provctx) {
+    const bee2_provider_ctx_t *ctx = provctx;
+    return ctx != NULL ? ctx->libctx : NULL;
+}
+
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/params.h>

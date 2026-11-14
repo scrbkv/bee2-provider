@@ -468,7 +468,11 @@ static const OSSL_ALGORITHM *bee2_query(void *provctx, int operation_id, int *no
 }
 
 static void bee2_teardown(void *provctx) {
-    (void)provctx;
+    bee2_provider_ctx_t *ctx = provctx;
+    if (!ctx)
+        return;
+    OSSL_LIB_CTX_free(ctx->libctx);
+    OPENSSL_free(ctx);
 }
 
 static const OSSL_ITEM bee2_reason_strings[] = {{0, NULL}};
@@ -533,7 +537,7 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
                        const OSSL_DISPATCH *in,
                        const OSSL_DISPATCH **out,
                        void **provctx) {
-    (void)handle;
+    bee2_provider_ctx_t *ctx;
 
     if (in == NULL || out == NULL || provctx == NULL || !bee2_backend_is_compatible())
         return 0;
@@ -551,10 +555,16 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
         }
     }
 
-    if (!bee2_register_bign_oids())
+    ctx = OPENSSL_zalloc(sizeof(*ctx));
+    if (!ctx)
         return 0;
+    ctx->libctx = OSSL_LIB_CTX_new_child(handle, in);
+    if (!ctx->libctx || !bee2_register_bign_oids()) {
+        bee2_teardown(ctx);
+        return 0;
+    }
 
     *out = bee2_provider_functions;
-    *provctx = NULL;
+    *provctx = ctx;
     return 1;
 }

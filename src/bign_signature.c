@@ -20,6 +20,7 @@ typedef enum {
 } bee2_bign_sig_mode_t;
 
 typedef struct {
+    OSSL_LIB_CTX *libctx;
     const bee2_bign_variant_t *variant;
     bee2_bign_key_t *key;
     bee2_bign_sig_mode_t mode;
@@ -33,6 +34,7 @@ typedef struct {
 } bee2_bign_sig_ctx_t;
 
 typedef struct {
+    OSSL_LIB_CTX *libctx;
     int failed;
 } bee2_bign_sig_rng_t;
 
@@ -203,7 +205,7 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
         return 1;
     }
 
-    md = EVP_MD_fetch(NULL, mdname, (mdprops && mdprops[0] != '\0') ? mdprops : NULL);
+    md = EVP_MD_fetch(ctx->libctx, mdname, (mdprops && mdprops[0] != '\0') ? mdprops : NULL);
     if (!md)
         return 0;
 
@@ -223,7 +225,7 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]);
 static void bign_sig_openssl_rng(void *buf, size_t count, void *state) {
     bee2_bign_sig_rng_t *rng = state;
 
-    if (!rng || count > (size_t)INT_MAX || RAND_priv_bytes(buf, (int)count) != 1) {
+    if (!rng || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
         if (buf)
             bee2_bign_cleanse(buf, count);
         if (rng)
@@ -327,6 +329,7 @@ static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
     if (sigsize < need_sig_len)
         return 0;
 
+    rng.libctx = ctx->libctx;
     OPENSSL_cleanse(&curve, sizeof(curve));
     priv_len = bee2_bign_priv_len(ctx->variant);
 
@@ -427,36 +430,33 @@ static int bign_sig_digest_init_common(bee2_bign_sig_ctx_t *ctx,
     return bign_sig_reset_mdctx(ctx);
 }
 
-static void *bign_sig_newctx_common(const bee2_bign_variant_t *variant) {
+static void *bign_sig_newctx_common(void *provctx, const bee2_bign_variant_t *variant) {
     bee2_bign_sig_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
         return NULL;
+    ctx->libctx = bee2_provider_libctx(provctx);
     ctx->variant = variant;
     return ctx;
 }
 
 static void *bign256_sig_newctx(void *provctx, const char *propq) {
-    (void)provctx;
     (void)propq;
-    return bign_sig_newctx_common(bee2_bign_variant_256());
+    return bign_sig_newctx_common(provctx, bee2_bign_variant_256());
 }
 
 static void *bign384_sig_newctx(void *provctx, const char *propq) {
-    (void)provctx;
     (void)propq;
-    return bign_sig_newctx_common(bee2_bign_variant_384());
+    return bign_sig_newctx_common(provctx, bee2_bign_variant_384());
 }
 
 static void *bign512_sig_newctx(void *provctx, const char *propq) {
-    (void)provctx;
     (void)propq;
-    return bign_sig_newctx_common(bee2_bign_variant_512());
+    return bign_sig_newctx_common(provctx, bee2_bign_variant_512());
 }
 
 static void *bign_sig_newctx(void *provctx, const char *propq) {
-    (void)provctx;
     (void)propq;
-    return bign_sig_newctx_common(NULL);
+    return bign_sig_newctx_common(provctx, NULL);
 }
 
 static void bign_sig_freectx(void *vctx) {
@@ -478,6 +478,7 @@ static void *bign_sig_dupctx(void *vctx) {
     if (!dst)
         return NULL;
 
+    dst->libctx = src->libctx;
     dst->variant = src->variant;
     dst->key = src->key;
     dst->mode = src->mode;

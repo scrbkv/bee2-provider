@@ -136,7 +136,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector)' \
+            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report

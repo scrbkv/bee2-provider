@@ -1,25 +1,23 @@
 /*
- * brng_rand.c -- OpenSSL 3.x provider: Bee2 BRNG generators
- *
- * Implemented algorithms:
- *   - BRNG-CTR-HBELT  (section 6.2, based on belt-hash)
- *   - BRNG-HMAC-HBELT (section 6.3, based on HMAC[belt-hash])
+ * OpenSSL EVP_RAND adapters for the BRNG mechanisms of STB 34.101.47.
+ * The cryptographic state transitions are implemented by Bee2.
  */
 
 #include "bee2_backend.h"
 #include "provider.h"
 #include "provider_util.h"
 
+#include <bee2/crypto/brng.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
-#define BRNG_BLOCK_SIZE 32
-#define BRNG_STRENGTH_BITS 256U
+#define BRNG_BLOCK_SIZE 32u
+#define BRNG_STRENGTH_BITS 256u
 #define BRNG_IV_PARAM "iv"
 
 typedef enum {
-    BRNG_MODE_CTR_HBELT = 1,
-    BRNG_MODE_HMAC_HBELT = 2
+    BRNG_MODE_CTR_HBELT,
+    BRNG_MODE_HMAC_HBELT
 } brng_mode_t;
 
 typedef struct {
@@ -28,268 +26,20 @@ typedef struct {
     unsigned int strength;
     size_t max_request;
     int instantiated;
-
     unsigned char *key;
     size_t key_len;
-    int have_key;
-
     unsigned char *iv;
     size_t iv_len;
+    int have_key;
     int have_iv;
-
-    /* BRNG-CTR-HBELT base: belt-hash(key || ...) */
-    belt_hash_ctx_t ctr_key_base;
-
-    /* BRNG-HMAC-HBELT bases: hash((key^ipad) || ...), hash((key^opad) || ...) */
-    belt_hash_ctx_t hmac_inner_base;
-    belt_hash_ctx_t hmac_outer_base;
-
-    unsigned char s[BRNG_BLOCK_SIZE];
-    unsigned char r[BRNG_BLOCK_SIZE];
-    unsigned char block[BRNG_BLOCK_SIZE];
-    size_t reserved;
+    bee2_backend_state_t backend;
 } bee2_brng_ctx_t;
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-static void brng_hash_update(belt_hash_ctx ctx, const unsigned char *in, size_t inl) {
-    belt_hash_update(ctx, in, inl);
+static void brng_clear_backend(bee2_brng_ctx_t *c) {
+    OPENSSL_cleanse(&c->backend, sizeof(c->backend));
+    c->instantiated = 0;
+    c->state = EVP_RAND_STATE_UNINITIALISED;
 }
-
-static void
-brng_hbelt_digest(const unsigned char *in, size_t inl, unsigned char out[BRNG_BLOCK_SIZE]) {
-    belt_hash_ctx_t h;
-    belt_hash_init(&h);
-    if (inl > 0)
-        brng_hash_update(&h, in, inl);
-    belt_hash_get(&h, out);
-    belt_hash_cleanup(&h);
-}
-
-static void ctr_block_inc(unsigned char block[BRNG_BLOCK_SIZE]) {
-    unsigned int carry = 1;
-    size_t i;
-    for (i = 0; i < BRNG_BLOCK_SIZE - 1; ++i) {
-        unsigned int v = (unsigned int)block[i] + carry;
-        block[i] = (unsigned char)v;
-        carry = (v >> 8) & 1U;
-    }
-    block[BRNG_BLOCK_SIZE - 1] = (unsigned char)(block[BRNG_BLOCK_SIZE - 1] + carry);
-}
-
-static void brng_hbelt_hmac_bases_init(bee2_brng_ctx_t *c) {
-    unsigned char key_block[BRNG_BLOCK_SIZE];
-    unsigned char pad[BRNG_BLOCK_SIZE];
-    size_t i;
-
-    if (c->key_len <= BRNG_BLOCK_SIZE) {
-        OPENSSL_cleanse(key_block, sizeof(key_block));
-        if (c->key_len > 0)
-            memcpy(key_block, c->key, c->key_len);
-    } else {
-        brng_hbelt_digest(c->key, c->key_len, key_block);
-    }
-
-    for (i = 0; i < BRNG_BLOCK_SIZE; ++i)
-        pad[i] = key_block[i] ^ 0x36U;
-    belt_hash_init(&c->hmac_inner_base);
-    brng_hash_update(&c->hmac_inner_base, pad, BRNG_BLOCK_SIZE);
-
-    for (i = 0; i < BRNG_BLOCK_SIZE; ++i)
-        pad[i] = key_block[i] ^ 0x5CU;
-    belt_hash_init(&c->hmac_outer_base);
-    brng_hash_update(&c->hmac_outer_base, pad, BRNG_BLOCK_SIZE);
-
-    OPENSSL_cleanse(pad, sizeof(pad));
-    OPENSSL_cleanse(key_block, sizeof(key_block));
-}
-
-static void brng_hbelt_hmac_compute(const bee2_brng_ctx_t *c,
-                                    const unsigned char *part1,
-                                    size_t part1_len,
-                                    const unsigned char *part2,
-                                    size_t part2_len,
-                                    unsigned char out[BRNG_BLOCK_SIZE]) {
-    belt_hash_ctx_t inner = c->hmac_inner_base;
-    belt_hash_ctx_t outer = c->hmac_outer_base;
-    unsigned char inner_hash[BRNG_BLOCK_SIZE];
-
-    if (part1_len > 0)
-        brng_hash_update(&inner, part1, part1_len);
-    if (part2_len > 0)
-        brng_hash_update(&inner, part2, part2_len);
-    belt_hash_get(&inner, inner_hash);
-    brng_hash_update(&outer, inner_hash, BRNG_BLOCK_SIZE);
-    belt_hash_get(&outer, out);
-
-    belt_hash_cleanup(&inner);
-    belt_hash_cleanup(&outer);
-    OPENSSL_cleanse(inner_hash, sizeof(inner_hash));
-}
-
-static int brng_prepare_ctr(bee2_brng_ctx_t *c) {
-    size_t i;
-
-    if (!c->have_key || c->key_len != BRNG_BLOCK_SIZE)
-        return 0;
-
-    belt_hash_init(&c->ctr_key_base);
-    brng_hash_update(&c->ctr_key_base, c->key, BRNG_BLOCK_SIZE);
-
-    if (c->have_iv && c->iv_len == BRNG_BLOCK_SIZE) {
-        memcpy(c->s, c->iv, BRNG_BLOCK_SIZE);
-    } else {
-        memset(c->s, 0, BRNG_BLOCK_SIZE);
-    }
-
-    for (i = 0; i < BRNG_BLOCK_SIZE; ++i)
-        c->r[i] = (unsigned char)~c->s[i];
-    memset(c->block, 0, sizeof(c->block));
-    c->reserved = 0;
-    return 1;
-}
-
-static int brng_prepare_hmac(bee2_brng_ctx_t *c) {
-    static const unsigned char empty_octet = 0;
-
-    if (!c->have_key)
-        return 0;
-
-    brng_hbelt_hmac_bases_init(c);
-    brng_hbelt_hmac_compute(
-        c, c->have_iv ? c->iv : &empty_octet, c->have_iv ? c->iv_len : 0, NULL, 0, c->r);
-    memset(c->block, 0, sizeof(c->block));
-    c->reserved = 0;
-    return 1;
-}
-
-static void brng_ctr_make_block(bee2_brng_ctx_t *c,
-                                const unsigned char x[BRNG_BLOCK_SIZE],
-                                unsigned char y[BRNG_BLOCK_SIZE]) {
-    size_t i;
-    belt_hash_ctx_t h = c->ctr_key_base;
-
-    brng_hash_update(&h, c->s, BRNG_BLOCK_SIZE);
-    brng_hash_update(&h, x, BRNG_BLOCK_SIZE);
-    brng_hash_update(&h, c->r, BRNG_BLOCK_SIZE);
-    belt_hash_get(&h, y);
-    belt_hash_cleanup(&h);
-
-    ctr_block_inc(c->s);
-    for (i = 0; i < BRNG_BLOCK_SIZE; ++i)
-        c->r[i] ^= y[i];
-}
-
-static void brng_generate_ctr(bee2_brng_ctx_t *c,
-                              unsigned char *out,
-                              size_t outlen,
-                              const unsigned char *addin,
-                              size_t addin_len) {
-    size_t addin_off = 0;
-
-    if (c->reserved > 0) {
-        if (c->reserved >= outlen) {
-            memcpy(out, c->block + BRNG_BLOCK_SIZE - c->reserved, outlen);
-            c->reserved -= outlen;
-            return;
-        }
-        memcpy(out, c->block + BRNG_BLOCK_SIZE - c->reserved, c->reserved);
-        out += c->reserved;
-        outlen -= c->reserved;
-        c->reserved = 0;
-    }
-
-    while (outlen >= BRNG_BLOCK_SIZE) {
-        unsigned char x[BRNG_BLOCK_SIZE];
-        size_t take = 0;
-
-        if (addin && addin_off < addin_len) {
-            take = addin_len - addin_off;
-            if (take > BRNG_BLOCK_SIZE)
-                take = BRNG_BLOCK_SIZE;
-            memcpy(x, addin + addin_off, take);
-        }
-        if (take < BRNG_BLOCK_SIZE)
-            memset(x + take, 0, BRNG_BLOCK_SIZE - take);
-        addin_off += take;
-
-        brng_ctr_make_block(c, x, out);
-        OPENSSL_cleanse(x, sizeof(x));
-
-        out += BRNG_BLOCK_SIZE;
-        outlen -= BRNG_BLOCK_SIZE;
-    }
-
-    if (outlen > 0) {
-        unsigned char x[BRNG_BLOCK_SIZE];
-        size_t take = 0;
-
-        if (addin && addin_off < addin_len) {
-            take = addin_len - addin_off;
-            if (take > outlen)
-                take = outlen;
-            memcpy(x, addin + addin_off, take);
-        }
-        if (take < BRNG_BLOCK_SIZE)
-            memset(x + take, 0, BRNG_BLOCK_SIZE - take);
-
-        brng_ctr_make_block(c, x, c->block);
-        OPENSSL_cleanse(x, sizeof(x));
-
-        memcpy(out, c->block, outlen);
-        c->reserved = BRNG_BLOCK_SIZE - outlen;
-    }
-}
-
-static void brng_generate_hmac(bee2_brng_ctx_t *c, unsigned char *out, size_t outlen) {
-    static const unsigned char empty_octet = 0;
-    const unsigned char *iv = c->have_iv ? c->iv : &empty_octet;
-    const size_t iv_len = c->have_iv ? c->iv_len : 0;
-
-    if (c->reserved > 0) {
-        if (c->reserved >= outlen) {
-            memcpy(out, c->block + BRNG_BLOCK_SIZE - c->reserved, outlen);
-            c->reserved -= outlen;
-            return;
-        }
-        memcpy(out, c->block + BRNG_BLOCK_SIZE - c->reserved, c->reserved);
-        out += c->reserved;
-        outlen -= c->reserved;
-        c->reserved = 0;
-    }
-
-    while (outlen >= BRNG_BLOCK_SIZE) {
-        unsigned char r_old[BRNG_BLOCK_SIZE];
-        unsigned char r_new[BRNG_BLOCK_SIZE];
-        memcpy(r_old, c->r, BRNG_BLOCK_SIZE);
-        brng_hbelt_hmac_compute(c, r_old, BRNG_BLOCK_SIZE, NULL, 0, r_new);
-        brng_hbelt_hmac_compute(c, r_old, BRNG_BLOCK_SIZE, iv, iv_len, out);
-        memcpy(c->r, r_new, BRNG_BLOCK_SIZE);
-        OPENSSL_cleanse(r_new, sizeof(r_new));
-        OPENSSL_cleanse(r_old, sizeof(r_old));
-        out += BRNG_BLOCK_SIZE;
-        outlen -= BRNG_BLOCK_SIZE;
-    }
-
-    if (outlen > 0) {
-        unsigned char r_old[BRNG_BLOCK_SIZE];
-        unsigned char r_new[BRNG_BLOCK_SIZE];
-        memcpy(r_old, c->r, BRNG_BLOCK_SIZE);
-        brng_hbelt_hmac_compute(c, r_old, BRNG_BLOCK_SIZE, NULL, 0, r_new);
-        brng_hbelt_hmac_compute(c, r_old, BRNG_BLOCK_SIZE, iv, iv_len, c->block);
-        memcpy(c->r, r_new, BRNG_BLOCK_SIZE);
-        OPENSSL_cleanse(r_new, sizeof(r_new));
-        OPENSSL_cleanse(r_old, sizeof(r_old));
-        memcpy(out, c->block, outlen);
-        c->reserved = BRNG_BLOCK_SIZE - outlen;
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/*  RAND lifecycle                                                     */
-/* ------------------------------------------------------------------ */
 
 static void *brng_newctx_common(brng_mode_t mode) {
     bee2_brng_ctx_t *c = OPENSSL_zalloc(sizeof(*c));
@@ -320,16 +70,10 @@ static void brng_freectx(void *vctx) {
     bee2_brng_ctx_t *c = vctx;
     if (!c)
         return;
-
     OPENSSL_clear_free(c->key, c->key_len);
     OPENSSL_clear_free(c->iv, c->iv_len);
-    OPENSSL_cleanse(c, sizeof(*c));
     OPENSSL_clear_free(c, sizeof(*c));
 }
-
-/* ------------------------------------------------------------------ */
-/*  RAND params                                                        */
-/* ------------------------------------------------------------------ */
 
 static const OSSL_PARAM brng_gettable_params[] = {
     OSSL_PARAM_int(OSSL_RAND_PARAM_STATE, NULL),
@@ -344,19 +88,15 @@ static const OSSL_PARAM *brng_gettable_params_callback(void *provctx) {
 
 static int brng_get_params(OSSL_PARAM params[]) {
     OSSL_PARAM *p;
-
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STATE);
     if (p && !OSSL_PARAM_set_int(p, EVP_RAND_STATE_UNINITIALISED))
         return 0;
-
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STRENGTH);
     if (p && !OSSL_PARAM_set_uint(p, BRNG_STRENGTH_BITS))
         return 0;
-
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_MAX_REQUEST);
     if (p && !OSSL_PARAM_set_size_t(p, SIZE_MAX))
         return 0;
-
     return 1;
 }
 
@@ -378,41 +118,36 @@ static int brng_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     static const unsigned char empty_octet = 0;
     bee2_brng_ctx_t *c = vctx;
     OSSL_PARAM *p;
-    const unsigned char *iv_ptr;
+    const unsigned char *iv_data;
     size_t iv_len;
+    unsigned char live_iv[BRNG_BLOCK_SIZE];
 
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STATE);
     if (p && !OSSL_PARAM_set_int(p, c->state))
         return 0;
-
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STRENGTH);
     if (p && !OSSL_PARAM_set_uint(p, c->strength))
         return 0;
-
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_MAX_REQUEST);
     if (p && !OSSL_PARAM_set_size_t(p, c->max_request))
         return 0;
-
     p = OSSL_PARAM_locate(params, BRNG_IV_PARAM);
-    if (p) {
-        if (c->mode == BRNG_MODE_CTR_HBELT) {
-            if (c->instantiated) {
-                iv_ptr = c->s;
-            } else if (c->have_iv && c->iv_len == BRNG_BLOCK_SIZE) {
-                iv_ptr = c->iv;
-            } else {
-                iv_ptr = zero_iv;
-            }
-            iv_len = BRNG_BLOCK_SIZE;
-        } else {
-            iv_ptr = c->have_iv ? c->iv : &empty_octet;
-            iv_len = c->have_iv ? c->iv_len : 0;
-        }
-        if (!OSSL_PARAM_set_octet_string(p, iv_ptr, iv_len))
-            return 0;
-    }
+    if (!p)
+        return 1;
 
-    return 1;
+    if (c->mode == BRNG_MODE_CTR_HBELT) {
+        if (c->instantiated) {
+            brngCTRStepG(live_iv, &c->backend);
+            iv_data = live_iv;
+        } else {
+            iv_data = c->have_iv ? c->iv : zero_iv;
+        }
+        iv_len = BRNG_BLOCK_SIZE;
+    } else {
+        iv_data = c->have_iv ? c->iv : &empty_octet;
+        iv_len = c->have_iv ? c->iv_len : 0;
+    }
+    return OSSL_PARAM_set_octet_string(p, iv_data, iv_len);
 }
 
 static const OSSL_PARAM brng_settable_ctx_params[] = {
@@ -428,45 +163,38 @@ static const OSSL_PARAM *brng_settable_ctx_params_callback(void *vctx, void *pro
 
 static int brng_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_brng_ctx_t *c = vctx;
-    const OSSL_PARAM *p;
-    const void *ptr = NULL;
-    size_t len = 0;
+    const OSSL_PARAM *key_param, *iv_param;
+    const void *key_data = NULL, *iv_data = NULL;
+    size_t key_len = 0, iv_len = 0;
 
     if (!params)
         return 1;
+    key_param = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_KEY);
+    iv_param = OSSL_PARAM_locate_const(params, BRNG_IV_PARAM);
+    if (key_param &&
+        (!OSSL_PARAM_get_octet_string_ptr(key_param, &key_data, &key_len) ||
+         (c->mode == BRNG_MODE_CTR_HBELT && key_len != BRNG_BLOCK_SIZE) ||
+         (c->mode == BRNG_MODE_HMAC_HBELT && key_len == 0)))
+        return 0;
+    if (iv_param &&
+        (!OSSL_PARAM_get_octet_string_ptr(iv_param, &iv_data, &iv_len) ||
+         (c->mode == BRNG_MODE_CTR_HBELT && iv_len != BRNG_BLOCK_SIZE)))
+        return 0;
 
-    p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_KEY);
-    if (p) {
-        if (!OSSL_PARAM_get_octet_string_ptr(p, &ptr, &len))
-            return 0;
-        if (c->mode == BRNG_MODE_CTR_HBELT && len != BRNG_BLOCK_SIZE)
-            return 0;
-        if (!bee2_secret_replace(&c->key, &c->key_len, ptr, len))
+    if (key_param || iv_param)
+        brng_clear_backend(c);
+    if (key_param) {
+        if (!bee2_secret_replace(&c->key, &c->key_len, key_data, key_len))
             return 0;
         c->have_key = 1;
-        c->instantiated = 0;
-        c->state = EVP_RAND_STATE_UNINITIALISED;
     }
-
-    p = OSSL_PARAM_locate_const(params, BRNG_IV_PARAM);
-    if (p) {
-        if (!OSSL_PARAM_get_octet_string_ptr(p, &ptr, &len))
-            return 0;
-        if (c->mode == BRNG_MODE_CTR_HBELT && len != BRNG_BLOCK_SIZE)
-            return 0;
-        if (!bee2_secret_replace(&c->iv, &c->iv_len, ptr, len))
+    if (iv_param) {
+        if (!bee2_secret_replace(&c->iv, &c->iv_len, iv_data, iv_len))
             return 0;
         c->have_iv = 1;
-        c->instantiated = 0;
-        c->state = EVP_RAND_STATE_UNINITIALISED;
     }
-
     return 1;
 }
-
-/* ------------------------------------------------------------------ */
-/*  RAND operations                                                    */
-/* ------------------------------------------------------------------ */
 
 static int brng_instantiate(void *vctx,
                             unsigned int strength,
@@ -475,63 +203,85 @@ static int brng_instantiate(void *vctx,
                             size_t pstr_len,
                             const OSSL_PARAM params[]) {
     static const unsigned char zero_iv[BRNG_BLOCK_SIZE] = {0};
+    static const unsigned char empty_octet = 0;
     bee2_brng_ctx_t *c = vctx;
+    unsigned int max_strength;
 
-    (void)prediction_resistance;
     (void)pstr;
-    (void)pstr_len;
-
-    if (strength > BRNG_STRENGTH_BITS)
+    /* These deterministic generators cannot source fresh entropy by themselves.
+     * Never silently claim prediction resistance or personalization support. */
+    if (prediction_resistance || pstr_len != 0 || !brng_set_ctx_params(vctx, params))
         return 0;
-    if (!brng_set_ctx_params(vctx, params))
+    if (!c->have_key || c->key_len == 0)
+        return 0;
+    if (c->mode == BRNG_MODE_CTR_HBELT && c->key_len != BRNG_BLOCK_SIZE)
         return 0;
 
-    c->reserved = 0;
-    OPENSSL_cleanse(c->block, sizeof(c->block));
-    OPENSSL_cleanse(c->s, sizeof(c->s));
-    OPENSSL_cleanse(c->r, sizeof(c->r));
-
+    max_strength = c->key_len >= BRNG_BLOCK_SIZE ? BRNG_STRENGTH_BITS
+                                                : (unsigned int)(c->key_len * 8u);
+    if (strength > max_strength)
+        return 0;
+    brng_clear_backend(c);
     if (c->mode == BRNG_MODE_CTR_HBELT) {
-        if (!c->have_key || c->key_len != BRNG_BLOCK_SIZE) {
-            c->state = EVP_RAND_STATE_ERROR;
-            return 0;
-        }
-        if (!c->have_iv) {
-            if (!bee2_secret_replace(&c->iv, &c->iv_len, zero_iv, BRNG_BLOCK_SIZE)) {
-                c->state = EVP_RAND_STATE_ERROR;
-                return 0;
-            }
-            c->have_iv = 1;
-        }
-        if (!brng_prepare_ctr(c)) {
-            c->state = EVP_RAND_STATE_ERROR;
-            return 0;
-        }
+        brngCTRStart(&c->backend, c->key, c->have_iv ? c->iv : zero_iv);
     } else {
-        if (!c->have_key) {
-            c->state = EVP_RAND_STATE_ERROR;
-            return 0;
-        }
-        if (!brng_prepare_hmac(c)) {
-            c->state = EVP_RAND_STATE_ERROR;
-            return 0;
-        }
+        brngHMACStart(&c->backend,
+                      c->key,
+                      c->key_len,
+                      c->have_iv ? c->iv : &empty_octet,
+                      c->have_iv ? c->iv_len : 0);
     }
-
     c->instantiated = 1;
+    c->strength = max_strength;
     c->state = EVP_RAND_STATE_READY;
     return 1;
 }
 
 static int brng_uninstantiate(void *vctx) {
     bee2_brng_ctx_t *c = vctx;
+    brng_clear_backend(c);
+    OPENSSL_clear_free(c->key, c->key_len);
+    OPENSSL_clear_free(c->iv, c->iv_len);
+    c->key = NULL;
+    c->iv = NULL;
+    c->key_len = c->iv_len = 0;
+    c->have_key = c->have_iv = 0;
+    c->strength = BRNG_STRENGTH_BITS;
+    return 1;
+}
 
-    c->instantiated = 0;
-    c->state = EVP_RAND_STATE_UNINITIALISED;
-    c->reserved = 0;
-    OPENSSL_cleanse(c->block, sizeof(c->block));
-    OPENSSL_cleanse(c->s, sizeof(c->s));
-    OPENSSL_cleanse(c->r, sizeof(c->r));
+static int brng_generate_ctr(bee2_brng_ctx_t *c,
+                             unsigned char *out,
+                             size_t outlen,
+                             const unsigned char *addin,
+                             size_t addin_len) {
+    unsigned char block[BRNG_BLOCK_SIZE];
+    unsigned char *additional = NULL;
+    size_t pos = 0;
+
+    /* Copy additional input because it may overlap with the output. The
+     * initialized bytes become Bee2's X, and absent bytes are zero-padded. */
+    if (addin_len) {
+        additional = OPENSSL_memdup(addin, addin_len);
+        if (!additional)
+            return 0;
+    }
+    while (pos < outlen) {
+        size_t chunk = outlen - pos;
+        size_t input = pos < addin_len ? addin_len - pos : 0;
+        if (chunk > sizeof(block))
+            chunk = sizeof(block);
+        if (input > chunk)
+            input = chunk;
+        memset(block, 0, sizeof(block));
+        if (input)
+            memcpy(block, additional + pos, input);
+        brngCTRStepR(block, chunk, &c->backend);
+        memcpy(out + pos, block, chunk);
+        pos += chunk;
+    }
+    OPENSSL_cleanse(block, sizeof(block));
+    OPENSSL_clear_free(additional, addin_len);
     return 1;
 }
 
@@ -544,21 +294,23 @@ static int brng_generate(void *vctx,
                          size_t addin_len) {
     bee2_brng_ctx_t *c = vctx;
 
-    (void)prediction_resistance;
-
-    if (!c->instantiated || c->state != EVP_RAND_STATE_READY)
+    if (!c->instantiated || c->state != EVP_RAND_STATE_READY ||
+        strength > c->strength || outlen > c->max_request ||
+        (outlen && !out) || (addin_len && !addin) || prediction_resistance)
         return 0;
-    if (strength > c->strength)
+    if (c->mode == BRNG_MODE_HMAC_HBELT) {
+        /* Bee2 BRNG-HMAC has no additional-input parameter. */
+        if (addin_len)
+            return 0;
+        if (outlen)
+            brngHMACStepR(out, outlen, &c->backend);
+        return 1;
+    }
+    /* Bee2 BRNG-CTR consumes X from the output buffer. If X is longer
+     * than the requested output, it would otherwise be silently ignored. */
+    if (addin_len > outlen)
         return 0;
-    if (outlen > c->max_request)
-        return 0;
-
-    if (c->mode == BRNG_MODE_CTR_HBELT)
-        brng_generate_ctr(c, out, outlen, addin, addin_len);
-    else
-        brng_generate_hmac(c, out, outlen);
-
-    return 1;
+    return brng_generate_ctr(c, out, outlen, addin, addin_len);
 }
 
 static int brng_reseed(void *vctx,
@@ -568,35 +320,31 @@ static int brng_reseed(void *vctx,
                        const unsigned char *addin,
                        size_t addin_len) {
     bee2_brng_ctx_t *c = vctx;
-
-    (void)prediction_resistance;
-
-    if (ent && ent_len > 0) {
-        if (c->mode == BRNG_MODE_CTR_HBELT && ent_len != BRNG_BLOCK_SIZE)
-            return 0;
-        if (!bee2_secret_replace(&c->key, &c->key_len, ent, ent_len))
-            return 0;
-        c->have_key = 1;
-    }
-    if (addin && addin_len > 0) {
-        if (c->mode == BRNG_MODE_CTR_HBELT && addin_len != BRNG_BLOCK_SIZE)
-            return 0;
-        if (!bee2_secret_replace(&c->iv, &c->iv_len, addin, addin_len))
-            return 0;
-        c->have_iv = 1;
-    }
-
-    return brng_instantiate(vctx, c->strength, 0, NULL, 0, NULL);
+    (void)addin;
+    /* Reseed means explicitly replacing the key, not reusing the old state.
+     * The Bee2 algorithms have no prediction-resistance / reseed-mix API. */
+    if (prediction_resistance || addin_len || !ent || !ent_len ||
+        !c->instantiated ||
+        (c->mode == BRNG_MODE_CTR_HBELT && ent_len != BRNG_BLOCK_SIZE))
+        return 0;
+    if (!bee2_secret_replace(&c->key, &c->key_len, ent, ent_len))
+        return 0;
+    c->have_key = 1;
+    return brng_instantiate(c, 0, 0, NULL, 0, NULL);
 }
 
 static int brng_verify_zeroization(void *vctx) {
-    bee2_brng_ctx_t *c = vctx;
-    return c->instantiated == 0 && c->reserved == 0;
+    const bee2_brng_ctx_t *c = vctx;
+    const unsigned char *p = (const unsigned char *)&c->backend;
+    size_t i;
+    if (c->instantiated || c->have_key || c->have_iv)
+        return 0;
+    for (i = 0; i < sizeof(c->backend); ++i) {
+        if (p[i])
+            return 0;
+    }
+    return 1;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Dispatch                                                           */
-/* ------------------------------------------------------------------ */
 
 const OSSL_DISPATCH bee2_brng_ctr_hbelt_functions[] = {
     {OSSL_FUNC_RAND_NEWCTX, (void (*)(void))brng_ctr_newctx},

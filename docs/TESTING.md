@@ -59,10 +59,15 @@ both implement the same mistake.
 
 The standard CTest run includes `bee2_evp_streaming_contract`, six
 `bee2_evp_padding_*` cases, `bee2_bign_public_check` and
-`bee2_bign_asn1_negative`. These cover CFB/CTR streaming, ECB/CBC PKCS#7
+`bee2_bign_asn1_negative`, `bee2_bign_der_framing`, `bee2_sde_min_sector`,
+`bee2_bde_mode_metadata`, `bee2_brng_contract`, and
+`bee2_provider_isolation`. These cover CFB/CTR streaming, ECB/CBC PKCS#7
 padding and unpadded operation, modified ciphertext rejection, malformed
 PKCS#8 and SPKI structures, and public-key validation. The ASN.1 key
-reader rejects inputs exceeding 1 MiB. Run them separately with:
+reader rejects inputs exceeding 1 MiB. The RAND contract test verifies that
+unsupported features fail explicitly; provider isolation uses a null global
+provider to detect accidental global RAND/digest fetches. Run these separately
+with:
 
 ```sh
 ctest --test-dir build -L regression --output-on-failure
