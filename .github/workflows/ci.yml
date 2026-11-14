@@ -136,7 +136,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|digest_oneshot|bign_params_contract)' \
+            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|bash_prgae_stb|digest_oneshot|bign_params_contract)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
@@ -214,7 +214,7 @@ jobs:
 
       - name: Run fixed, boundary and random interoperability tests
         run: |
-          ctest --test-dir build-interop --output-on-failure --timeout 240 \
+          ctest --test-dir build-interop --output-on-failure --parallel 4 --timeout 240 \
             -R '^(bee2_bee2evp_interop_|bee2_bee2evp_bign_cert_|bee2_interop_matrix_)' \
             --output-junit interoperability-tests.xml
 

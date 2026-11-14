@@ -45,6 +45,45 @@ def check_belt(runner: OpenSSLRunner) -> None:
             expected,
         )
 
+    # Published decryption answers from STB 34.101.31 A.10/12/14/16.
+    # This is deliberately not a round-trip of provider-generated ciphertext.
+    h256 = to_bytes(BASH_X_192) + bytes.fromhex(
+        "BE32971343FC9A48A02A885F194B09A1"
+        "7ECDA4D01544AF8CA58450BF66D2E88A"
+        "A2D7465242A8DFB36974C551EB232921"
+        "D4EFD9B43A622875911410EA776CDA1D"
+    )
+    decrypt_vectors = (
+        ("belt-ecb256", 48,
+         "0DC5300600CAB840B38448E5E993F421"
+         "E55A239F2AB5C5D5FDB6E81B40938E2A"
+         "54120CA3E6E19C7AD750FC3531DAEAB7", "A.10-1"),
+        ("belt-cbc256", 48,
+         "730894D6158E17CC1600185A8F411CAB"
+         "0471FF85C83792398D8924EBD57D03DB"
+         "95B97A9B7907E4B020960455E46176F8", "A.12-1"),
+        ("belt-cfb256", 48,
+         "FA9D107A86F375EE65CD1DB881224BD0"
+         "16AFF814938ED39B3361ABB0BF0851B6"
+         "52244EB06842DD4C94AA4500774E40BB", "A.14"),
+        ("belt-ctr256", 44,
+         "DF181ED008A20F43DCBBB93650DAD34B"
+         "389CDEE5826D40E2D4BD80F49A93F5D2"
+         "12F6333166456F169043CC5F", "A.16"),
+    )
+    for name, length, expected, appendix in decrypt_vectors:
+        source = runner.tmp / "decrypt_source.bin"
+        destination = runner.tmp / "decrypt_result.bin"
+        source.write_bytes(h256[64:64 + length])
+        args = [f"-{name}", "-d", "-nosalt", "-nopad",
+                "-K", h256[160:192].hex()]
+        if name != "belt-ecb256":
+            args += ["-iv", h256[208:224].hex()]
+        args += ["-in", str(source), "-out", str(destination)]
+        run_checked(runner._cmd("enc", args))
+        assert_hex_eq(f"STB 34.101.31 {appendix} {name} decrypt",
+                      destination.read_bytes(), expected)
+
     # STB 34.101.45, appendix E.5: belt-PBKDF2 over HMAC-HBELT.
     # The password is ASCII, and the salt is the first eight bytes of H[192:].
     pbkdf_out = runner.tmp / "pbkdf_out.bin"

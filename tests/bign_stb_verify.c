@@ -1,4 +1,4 @@
-/* STB 34.101.45 Appendix G.1-G.3: BIGN public key and signatures. */
+/* STB 34.101.45 Appendix G.1-G.3: BIGN key, DH and signatures. */
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -48,6 +48,59 @@ end:
     return ok;
 }
 
+static int check_dh(const unsigned char expected_public[64])
+{
+    static const char *const private_hex =
+        "1F66B5B84B7339674533F0329C74F218"
+        "34281FED0732429E0C79235FC273E269";
+    static const char *const generator_y_hex =
+        "936A510418CF291E52F608C466399178"
+        "5D83D651A3C9E45C9FD616FB3CFCF76B";
+    unsigned char private_bytes[32], generator[64] = {0}, shared[64];
+    OSSL_PARAM private_params[] = {
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
+                                private_bytes, sizeof(private_bytes)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM public_params[] = {
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                generator, sizeof(generator)),
+        OSSL_PARAM_END
+    };
+    EVP_PKEY_CTX *import_ctx = NULL, *derive_ctx = NULL;
+    EVP_PKEY *private_key = NULL, *base_point = NULL;
+    size_t shared_len = sizeof(shared);
+    int ok = 0;
+
+    if (!from_hex(private_bytes, sizeof(private_bytes), private_hex) ||
+        !from_hex(generator + 32, 32, generator_y_hex))
+        goto end;
+    import_ctx = EVP_PKEY_CTX_new_from_name(NULL, "bign-256", "provider=bee2");
+    if (import_ctx == NULL || EVP_PKEY_fromdata_init(import_ctx) <= 0 ||
+        EVP_PKEY_fromdata(import_ctx, &private_key, EVP_PKEY_KEYPAIR,
+                          private_params) <= 0 ||
+        EVP_PKEY_fromdata(import_ctx, &base_point, EVP_PKEY_PUBLIC_KEY,
+                          public_params) <= 0)
+        goto end;
+    derive_ctx = EVP_PKEY_CTX_new_from_pkey(NULL, private_key, "provider=bee2");
+    if (derive_ctx == NULL || EVP_PKEY_derive_init(derive_ctx) <= 0 ||
+        EVP_PKEY_derive_set_peer(derive_ctx, base_point) <= 0 ||
+        EVP_PKEY_derive(derive_ctx, shared, &shared_len) <= 0 ||
+        shared_len != sizeof(shared) ||
+        CRYPTO_memcmp(shared, expected_public, shared_len) != 0)
+        goto end;
+    ok = 1;
+
+end:
+    EVP_PKEY_CTX_free(derive_ctx);
+    EVP_PKEY_CTX_free(import_ctx);
+    EVP_PKEY_free(private_key);
+    EVP_PKEY_free(base_point);
+    OPENSSL_cleanse(private_bytes, sizeof(private_bytes));
+    OPENSSL_cleanse(shared, sizeof(shared));
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *const pub_hex =
@@ -92,7 +145,8 @@ int main(int argc, char **argv)
     if (ctx == NULL || EVP_PKEY_fromdata_init(ctx) <= 0 ||
         EVP_PKEY_fromdata(ctx, &key, EVP_PKEY_PUBLIC_KEY, params) <= 0 ||
         !run_vector(key, hash_g2, sig_g2) ||
-        !run_vector(key, hash_g3, sig_g3))
+        !run_vector(key, hash_g3, sig_g3) ||
+        !check_dh(pub))
         goto end;
     ok = 1;
 

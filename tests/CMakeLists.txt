@@ -433,6 +433,12 @@ add_test(NAME bee2_digest_oneshot
     COMMAND bee2_digest_oneshot $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_digest_oneshot PROPERTIES LABELS "regression;evp;digest;native")
 
+add_executable(bee2_bash_prgae_stb bash_prgae_stb.c)
+target_link_libraries(bee2_bash_prgae_stb PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bash_prgae_stb
+    COMMAND bee2_bash_prgae_stb $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bash_prgae_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
+
 add_executable(bee2_bign_stb_verify bign_stb_verify.c)
 target_link_libraries(bee2_bign_stb_verify PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bign_stb_verify
