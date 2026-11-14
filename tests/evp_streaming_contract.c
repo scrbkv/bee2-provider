@@ -15,6 +15,8 @@ static int test_cipher(const char *name, size_t keylen)
     unsigned char input[MESSAGE_SIZE];
     unsigned char whole[MESSAGE_SIZE + 16];
     unsigned char chunks[MESSAGE_SIZE + 16];
+    unsigned char recovered[MESSAGE_SIZE + 16];
+    EVP_CIPHER_CTX *clone = NULL;
     EVP_CIPHER *cipher = NULL;
     EVP_CIPHER_CTX *ctx = NULL;
     int outlen, finlen, ok = 0;
@@ -66,16 +68,89 @@ static int test_cipher(const char *name, size_t keylen)
         fprintf(stderr, "%s: split/whole encryption mismatch\n", name);
         goto end;
     }
+
+    if (!EVP_DecryptInit_ex2(ctx, cipher, key, iv, NULL))
+        goto end;
+    offset = written = 0;
+    for (i = 0; i < sizeof(parts) / sizeof(parts[0]); ++i) {
+        size_t part = parts[i];
+
+        if (part > MESSAGE_SIZE - offset)
+            part = MESSAGE_SIZE - offset;
+        if (!EVP_DecryptUpdate(ctx, recovered + written, &outlen,
+                               chunks + offset, (int)part) || outlen != (int)part)
+            goto end;
+        offset += part;
+        written += (size_t)outlen;
+    }
+    if (!EVP_DecryptFinal_ex(ctx, recovered + written, &finlen)
+            || finlen != 0 || written != MESSAGE_SIZE
+            || CRYPTO_memcmp(recovered, input, MESSAGE_SIZE) != 0) {
+        fprintf(stderr, "%s: split decryption mismatch\n", name);
+        goto end;
+    }
+
+    /* The Bee2 adapter must also support EVP's in-place updates. */
+    memcpy(recovered, input, MESSAGE_SIZE);
+    if (!EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL))
+        goto end;
+    for (offset = 0; offset < MESSAGE_SIZE; ++offset) {
+        if (!EVP_EncryptUpdate(ctx, recovered + offset, &outlen,
+                               recovered + offset, 1) || outlen != 1)
+            goto end;
+    }
+    if (!EVP_EncryptFinal_ex(ctx, recovered + MESSAGE_SIZE, &finlen)
+            || finlen != 0 || CRYPTO_memcmp(recovered, whole, MESSAGE_SIZE) != 0) {
+        fprintf(stderr, "%s: in-place encryption mismatch\n", name);
+        goto end;
+    }
+    if (!EVP_DecryptInit_ex2(ctx, cipher, key, iv, NULL))
+        goto end;
+    for (offset = 0; offset < MESSAGE_SIZE; ++offset) {
+        if (!EVP_DecryptUpdate(ctx, recovered + offset, &outlen,
+                               recovered + offset, 1) || outlen != 1)
+            goto end;
+    }
+    if (!EVP_DecryptFinal_ex(ctx, recovered + MESSAGE_SIZE, &finlen)
+            || finlen != 0 || CRYPTO_memcmp(recovered, input, MESSAGE_SIZE) != 0) {
+        fprintf(stderr, "%s: in-place decryption mismatch\n", name);
+        goto end;
+    }
+
+    /* Context duplication must preserve a partially consumed keystream. */
+    clone = EVP_CIPHER_CTX_new();
+    if (!clone || !EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL)
+            || !EVP_EncryptUpdate(ctx, recovered, &outlen, input, 13)
+            || outlen != 13 || !EVP_CIPHER_CTX_copy(clone, ctx))
+        goto end;
+    memcpy(chunks, recovered, 13);
+    if (!EVP_EncryptUpdate(ctx, recovered + 13, &outlen,
+                           input + 13, MESSAGE_SIZE - 13)
+            || outlen != MESSAGE_SIZE - 13
+            || !EVP_EncryptUpdate(clone, chunks + 13, &outlen,
+                                  input + 13, MESSAGE_SIZE - 13)
+            || outlen != MESSAGE_SIZE - 13
+            || !EVP_EncryptFinal_ex(ctx, recovered + MESSAGE_SIZE, &finlen)
+            || finlen != 0
+            || !EVP_EncryptFinal_ex(clone, chunks + MESSAGE_SIZE, &finlen)
+            || finlen != 0
+            || CRYPTO_memcmp(recovered, whole, MESSAGE_SIZE) != 0
+            || CRYPTO_memcmp(chunks, whole, MESSAGE_SIZE) != 0) {
+        fprintf(stderr, "%s: duplicated context mismatch\n", name);
+        goto end;
+    }
     ok = 1;
 
  end:
     if (!ok)
         fprintf(stderr, "%s: EVP streaming contract failed\n", name);
+    EVP_CIPHER_CTX_free(clone);
     EVP_CIPHER_CTX_free(ctx);
     EVP_CIPHER_free(cipher);
     OPENSSL_cleanse(key, sizeof(key));
     OPENSSL_cleanse(chunks, sizeof(chunks));
     OPENSSL_cleanse(whole, sizeof(whole));
+    OPENSSL_cleanse(recovered, sizeof(recovered));
     return ok;
 }
 

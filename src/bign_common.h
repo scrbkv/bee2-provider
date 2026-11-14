@@ -44,6 +44,7 @@ bee2_bign_key_t *bee2_bign_key_new(const bee2_bign_variant_t *variant);
 void bee2_bign_key_free(bee2_bign_key_t *key);
 int bee2_bign_key_ensure_public(bee2_bign_key_t *key);
 int bee2_bign_key_validate_pair(const bee2_bign_key_t *key);
+int bee2_bign_key_validate_public(const bee2_bign_key_t *key);
 
 void bee2_bign_cleanse(void *ptr, size_t len);
 

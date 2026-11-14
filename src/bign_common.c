@@ -107,6 +107,19 @@ int bee2_bign_key_ensure_public(bee2_bign_key_t *key) {
     return 1;
 }
 
+int bee2_bign_key_validate_public(const bee2_bign_key_t *key) {
+    bign_params curve;
+    int valid = 0;
+
+    if (!key || !key->variant || !key->has_pub)
+        return 0;
+    if (!bee2_bign_curve_init_std(key->variant, &curve))
+        return 0;
+    valid = bignPubkeyVal(&curve, key->pub) == ERR_OK;
+    bee2_bign_cleanse(&curve, sizeof(curve));
+    return valid;
+}
+
 int bee2_bign_key_validate_pair(const bee2_bign_key_t *key) {
     unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
     size_t public_length;

@@ -241,7 +241,7 @@ static int bign_sig_assign_key(bee2_bign_sig_ctx_t *ctx, void *vkey, int for_sig
         return 0;
     if (for_sign && !key->has_priv)
         return 0;
-    if (!for_sign && !key->has_pub)
+    if (!for_sign && !bee2_bign_key_validate_public(key))
         return 0;
     ctx->key = key;
     ctx->mode = for_sign ? BEE2_BIGN_SIG_SIGN : BEE2_BIGN_SIG_VERIFY;

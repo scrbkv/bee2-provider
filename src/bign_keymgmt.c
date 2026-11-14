@@ -207,9 +207,18 @@ static int bign_validate(const void *vkey, int selection, int checktype) {
     if (!bign_has(vkey, selection))
         return 0;
 
-    if ((selection & OSSL_KEYMGMT_SELECT_KEYPAIR) == OSSL_KEYMGMT_SELECT_KEYPAIR && key->has_priv &&
-        key->has_pub)
+    if ((selection & OSSL_KEYMGMT_SELECT_KEYPAIR) == OSSL_KEYMGMT_SELECT_KEYPAIR)
         return bee2_bign_key_validate_pair(key);
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) &&
+        !bee2_bign_key_validate_public(key))
+        return 0;
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
+        unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
+        int valid = bee2_bign_derive_pubkey(key->variant, derived, key->priv);
+
+        bee2_bign_cleanse(derived, sizeof(derived));
+        return valid;
+    }
     return 1;
 }
 
@@ -351,12 +360,10 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
     if (!have_priv_in && !have_pub_in && !(selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS))
         goto cleanup;
 
-    if ((selection & OSSL_KEYMGMT_SELECT_KEYPAIR) == OSSL_KEYMGMT_SELECT_KEYPAIR &&
-        candidate.has_priv && candidate.has_pub) {
-        if (!bign_validate(
-                &candidate, OSSL_KEYMGMT_SELECT_KEYPAIR, OSSL_KEYMGMT_VALIDATE_QUICK_CHECK))
-            goto cleanup;
-    }
+    if (candidate.has_pub && !bee2_bign_key_validate_public(&candidate))
+        goto cleanup;
+    if (candidate.has_priv && candidate.has_pub && !bee2_bign_key_validate_pair(&candidate))
+        goto cleanup;
 
     *key = candidate;
     ok = 1;

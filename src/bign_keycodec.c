@@ -18,6 +18,7 @@
 
 #define BIGN_PEM_LABEL "PRIVATE KEY"
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
+#define BIGN_MAX_KEY_INPUT (1024u * 1024u)
 
 static int bign_asn1_string_length(const ASN1_STRING *str) {
 #if OPENSSL_VERSION_NUMBER >= 0x40100000L
@@ -394,6 +395,10 @@ static const bee2_bign_variant_t *variant_from_domain_params(const ASN1_STRING *
     dp = d2i_BIGN_DOMAINPARAMS(NULL, &p, len);
     if (!dp)
         return NULL;
+    if (p != ASN1_STRING_get0_data(params) + len) {
+        BIGN_DOMAINPARAMS_free(dp);
+        return NULL;
+    }
 
     if (dp->type == 0) {
         variant = variant_from_curve_obj(dp->value.named);
@@ -622,12 +627,14 @@ static int decode_pkcs8_der(const unsigned char *buf,
     const bee2_bign_variant_t *variant = NULL;
     size_t need = 0;
 
-    if (!buf || len == 0 || !key)
+    if (!buf || len == 0 || len > LONG_MAX || !key)
         return 0;
 
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
     if (!p8)
         return 0;
+    if (p != buf + len)
+        goto err;
 
     if (!PKCS8_pkey_get0(&alg, &priv, &priv_len, &palg, p8)) {
         goto err;
@@ -680,6 +687,10 @@ static unsigned char *read_all(OSSL_CORE_BIO *in, size_t *out_len) {
         }
         if (n == 0)
             break;
+        if (n > BIGN_MAX_KEY_INPUT - used) {
+            OPENSSL_clear_free(buf, cap);
+            return NULL;
+        }
         if (!append_bytes(&buf, &used, &cap, tmp, n)) {
             OPENSSL_clear_free(buf, cap);
             return NULL;
@@ -719,6 +730,8 @@ pem_to_der_buf(const unsigned char *buf, size_t len, size_t *out_len, char **out
     if (out_name)
         *out_name = NULL;
 
+    if (!buf || len > INT_MAX)
+        return NULL;
     bio = BIO_new_mem_buf(buf, (int)len);
     if (!bio)
         return NULL;
@@ -838,13 +851,14 @@ static int decode_spki_der(const unsigned char *buf,
     int pub_len = 0;
     int ok = 0;
 
-    if (!buf || len == 0 || !key)
+    if (!buf || len == 0 || len > LONG_MAX || !key)
         return 0;
 
     ret = ASN1_get_object(&p, &seqlen, &tag, &xclass, (long)len);
-    if ((ret & 0x80) != 0 || tag != V_ASN1_SEQUENCE || seqlen < 0)
+    if ((ret & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
+        xclass != V_ASN1_UNIVERSAL || seqlen < 0)
         return 0;
-    if ((size_t)seqlen > (size_t)(buf + len - p))
+    if ((size_t)seqlen != (size_t)(buf + len - p))
         return 0;
 
     const unsigned char *seq_end = p + seqlen;
@@ -854,8 +868,19 @@ static int decode_spki_der(const unsigned char *buf,
         goto cleanup;
 
     bit = d2i_ASN1_BIT_STRING(NULL, &p, (long)(seq_end - p));
-    if (!bit)
+    if (!bit || p != seq_end)
         goto cleanup;
+#if OPENSSL_VERSION_MAJOR >= 4
+    size_t bit_bytes = 0;
+    int unused_bits = 0;
+    if (!ASN1_BIT_STRING_get_length(bit, &bit_bytes, &unused_bits) ||
+        unused_bits != 0 || bit_bytes > INT_MAX)
+        goto cleanup;
+#else
+    if ((bit->flags & ASN1_STRING_FLAG_BITS_LEFT) != 0 &&
+        (bit->flags & 7) != 0)
+        goto cleanup;
+#endif
 
     X509_ALGOR_get0(&aobj, &ptype, &pval, alg);
     if (!oid_equals(aobj, BEE2_OID_BIGN_PUBKEY))
@@ -875,7 +900,7 @@ static int decode_spki_der(const unsigned char *buf,
     key->variant = variant;
     memcpy(key->pub, pub, (size_t)pub_len);
     key->has_pub = 1;
-    ok = 1;
+    ok = bee2_bign_key_validate_public(key);
 
 cleanup:
     ASN1_BIT_STRING_free(bit);
@@ -1031,6 +1056,10 @@ static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PA
     if ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && !key->has_priv)
         goto err;
     if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !key->has_pub)
+        goto err;
+    if (key->has_pub && !bee2_bign_key_validate_public(key))
+        goto err;
+    if (key->has_priv && key->has_pub && !bee2_bign_key_validate_pair(key))
         goto err;
 
     return key;
@@ -1261,7 +1290,8 @@ static void *bign_store_open_ex(void *provctx,
         size_t n = fread(tmp, 1, sizeof(tmp), fp);
         if (n == 0)
             break;
-        if (!append_bytes(&buf, &len, &cap, tmp, n)) {
+        if (n > BIGN_MAX_KEY_INPUT - len ||
+            !append_bytes(&buf, &len, &cap, tmp, n)) {
             OPENSSL_clear_free(buf, cap);
             fclose(fp);
             return NULL;
@@ -1314,6 +1344,8 @@ static int bign_store_load(void *vctx,
     unsigned char *pdata = NULL;
     long pdata_len = 0;
 
+    if (ctx->len > INT_MAX)
+        return 0;
     BIO *bio = BIO_new_mem_buf(ctx->data, (int)ctx->len);
     if (bio && PEM_read_bio(bio, &name, &header, &pdata, &pdata_len)) {
         if (name && strcmp(name, BIGN_PEM_LABEL) == 0) {

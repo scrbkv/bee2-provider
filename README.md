@@ -23,6 +23,10 @@ Bee2 Provider implements:
 - `bign-256`, `bign-384` and `bign-512` key generation, signatures,
   Diffie--Hellman key agreement, key transport and PEM/DER encoding.
 
+BELT-ECB and BELT-CBC use PKCS#7 padding by default. Applications can disable
+it with `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad`. BELT-CFB
+and BELT-CTR accept arbitrary input lengths and emit bytes on each EVP update.
+
 ## Requirements
 
 - a C11 compiler;
@@ -128,9 +132,9 @@ ctest --test-dir build --output-on-failure
 
 GitHub Actions verifies Linux builds against pinned OpenSSL 3.5, 4.0 and 4.1
 releases. Optional `bee2evp` interoperability tests need a separately built
-engine. Two pending security/EVP regression tests are opt-in until the known
-issues they exercise are fixed. See [Testing](docs/TESTING.md), [CI](docs/CI.md) and
-[Contributing](CONTRIBUTING.md) for the details.
+engine. EVP streaming and BIGN public-key validation regressions are part of
+the standard CTest suite. See [Testing](docs/TESTING.md), [CI](docs/CI.md)
+and [Contributing](CONTRIBUTING.md) for details.
 
 **Security note:** successful functional tests are not a security audit. The
 provider has not been independently audited or FIPS validated.

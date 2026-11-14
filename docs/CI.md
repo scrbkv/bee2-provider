@@ -28,8 +28,8 @@ revisions should be reviewed periodically for updates.
 2. Run the first CI builds and inspect compiler errors, test failures and
    sanitizer output.
 3. Fix confirmed failures without hiding tests or silently ignoring error
-   codes. Regression tests described in `TESTING.md` must eventually be
-   enabled by default.
+   codes. Include the EVP padding, streaming and BIGN regression tests in the required
+   CI jobs.
 4. Once the workflow is green, configure a GitHub ruleset protecting `main`
    with the required matrix job names. Include reviews before merging.
 5. Add macOS and Windows jobs only after their OpenSSL and Bee2 builds are

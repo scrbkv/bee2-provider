@@ -6,7 +6,6 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 find_program(BEE2_OPENSSL_EXECUTABLE NAMES openssl REQUIRED)
 
 option(BEE2_PROVIDER_ENABLE_INTEROP "Register bee2evp engine interoperability tests" OFF)
-option(BEE2_PROVIDER_ENABLE_REGRESSION_TESTS "Enable tests for known EVP/key validation gaps" OFF)
 
 add_test(
     NAME bee2_bee2evp_export_parity
@@ -334,22 +333,35 @@ foreach(alg IN LISTS BEE2_CIPHER_COVERAGE_ALGS)
     set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage cipher ${alg_id})
 endforeach()
 
-# These tests define behavior that the current implementation does not yet
-# satisfy. Keep them available during the corrective work without making
-# the baseline CI depend on fixes that have not been reviewed.
-if(BEE2_PROVIDER_ENABLE_REGRESSION_TESTS)
-    add_executable(bee2_evp_streaming_contract evp_streaming_contract.c)
-    target_link_libraries(bee2_evp_streaming_contract PRIVATE OpenSSL::Crypto)
-    add_test(NAME bee2_evp_streaming_contract
-        COMMAND bee2_evp_streaming_contract $<TARGET_FILE_DIR:bee2_provider>)
-    set_tests_properties(bee2_evp_streaming_contract PROPERTIES LABELS "regression;evp")
+add_executable(bee2_evp_streaming_contract evp_streaming_contract.c)
+target_link_libraries(bee2_evp_streaming_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_evp_streaming_contract
+    COMMAND bee2_evp_streaming_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_evp_streaming_contract PROPERTIES LABELS "regression;evp")
 
-    add_executable(bee2_bign_public_check bign_public_check.c)
-    target_link_libraries(bee2_bign_public_check PRIVATE OpenSSL::Crypto)
-    add_test(NAME bee2_bign_public_check
-        COMMAND bee2_bign_public_check $<TARGET_FILE_DIR:bee2_provider>)
-    set_tests_properties(bee2_bign_public_check PROPERTIES LABELS "regression;bign")
-endif()
+add_executable(bee2_evp_padding_contract evp_padding_contract.c)
+target_link_libraries(bee2_evp_padding_contract PRIVATE OpenSSL::Crypto)
+foreach(mode IN ITEMS ecb cbc)
+    foreach(bits IN ITEMS 128 192 256)
+        set(test_name "bee2_evp_padding_${mode}${bits}")
+        add_test(NAME ${test_name}
+            COMMAND bee2_evp_padding_contract
+                $<TARGET_FILE_DIR:bee2_provider> "belt-${mode}${bits}")
+        set_tests_properties(${test_name} PROPERTIES LABELS "regression;evp;padding")
+    endforeach()
+endforeach()
+
+add_test(NAME bee2_bign_asn1_negative
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bign_asn1_negative.py
+        --provider-path $<TARGET_FILE_DIR:bee2_provider>
+        --openssl ${BEE2_OPENSSL_EXECUTABLE})
+set_tests_properties(bee2_bign_asn1_negative PROPERTIES LABELS "regression;bign;asn1")
+
+add_executable(bee2_bign_public_check bign_public_check.c)
+target_link_libraries(bee2_bign_public_check PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_public_check
+    COMMAND bee2_bign_public_check $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_public_check PROPERTIES LABELS "regression;bign")
 
 add_executable(bee2_provider_contexts provider_contexts.c)
 target_link_libraries(bee2_provider_contexts PRIVATE OpenSSL::Crypto)

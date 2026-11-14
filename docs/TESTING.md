@@ -55,34 +55,24 @@ ctest --test-dir build-interop -L interop --output-on-failure
 comparison between two implementations cannot establish correctness when
 both implement the same mistake.
 
-## Pending regression tests
+## EVP and BIGN validation tests
 
-Two regression tests describe known deficiencies in the current provider.
-They are excluded from the baseline until the implementation is corrected:
-
-- `bee2_evp_streaming_contract`: CFB/CTR `Update()` must produce bytes
-  immediately and behave identically across arbitrary input partitions.
-- `bee2_bign_public_check`: a malformed BIGN public point must be rejected
-  during import or by `EVP_PKEY_public_check()`.
-
-To build and run these explicitly:
+The standard CTest run includes `bee2_evp_streaming_contract`, six
+`bee2_evp_padding_*` cases, `bee2_bign_public_check` and
+`bee2_bign_asn1_negative`. These cover CFB/CTR streaming, ECB/CBC PKCS#7
+padding and unpadded operation, modified ciphertext rejection, malformed
+PKCS#8 and SPKI structures, and public-key validation. The ASN.1 key
+reader rejects inputs exceeding 1 MiB. Run them separately with:
 
 ```sh
-cmake -S . -B build-regression -DBEE2_PROVIDER_BUILD_TESTS=ON \
-    -DBEE2_PROVIDER_ENABLE_REGRESSION_TESTS=ON
-cmake --build build-regression --parallel
-ctest --test-dir build-regression -L regression --output-on-failure
+ctest --test-dir build -L regression --output-on-failure
 ```
-
-Do not treat a baseline green CI run as evidence that these issues are fixed.
-Once they pass for all supported versions, remove the opt-in guard and make
-them required in the normal CI job.
 
 ## Test categories and limitations
 
 The test suite contains known-answer and end-to-end tests. A test name
 containing `_kat` does not by itself guarantee an independent reference vector.
-The suite does not yet establish full coverage of malformed ASN.1, all BIGN
+The suite does not yet establish complete fuzz coverage of ASN.1, all BIGN
 validation paths, multithreaded calls, every size boundary, or memory safety
 under malicious input. Fuzzing and additional property-based tests are release
 blockers, not optional polish.

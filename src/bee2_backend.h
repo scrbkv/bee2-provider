@@ -180,6 +180,23 @@ BELT_IV_MODE(belt_cfb, beltCFB, beltCFBStepE, beltCFBStepD)
 BELT_IV_MODE(belt_ctr, beltCTR, beltCTRStepE, beltCTRStepE)
 BELT_IV_MODE(belt_bde, beltBDE, beltBDEStepE, beltBDEStepD)
 
+/* Both Bee2 stream modes retain unused keystream between Step calls. */
+static inline void
+belt_cfb_encrypt_bytes(belt_cfb_ctx_t *c, const void *in, size_t n, void *out) {
+    memmove(out, in, n);
+    beltCFBStepE(out, n, &c->state);
+}
+static inline void
+belt_cfb_decrypt_bytes(belt_cfb_ctx_t *c, const void *in, size_t n, void *out) {
+    memmove(out, in, n);
+    beltCFBStepD(out, n, &c->state);
+}
+static inline void
+belt_ctr_crypt_bytes(belt_ctr_ctx_t *c, const void *in, size_t n, void *out) {
+    memmove(out, in, n);
+    beltCTRStepE(out, n, &c->state);
+}
+
 /* BELT AEAD adapters. */
 typedef bee2_belt_mode_ctx_t belt_che_ctx_t;
 typedef bee2_belt_mode_ctx_t belt_dwp_ctx_t;

@@ -57,7 +57,6 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
             -DBEE2_PROVIDER_BUILD_TESTS=ON \
             -DBEE2_PROVIDER_ENABLE_INTEROP=OFF \
-            -DBEE2_PROVIDER_ENABLE_REGRESSION_TESTS=OFF \
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_C_FLAGS="-Wall -Wextra" \
             -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
@@ -122,7 +121,6 @@ jobs:
           cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug \
             -DBEE2_PROVIDER_BUILD_TESTS=ON \
             -DBEE2_PROVIDER_ENABLE_INTEROP=OFF \
-            -DBEE2_PROVIDER_ENABLE_REGRESSION_TESTS=OFF \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
             -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=address,undefined" \
@@ -138,7 +136,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts)' \
+            -R '^bee2_(cipher_coverage_kat|brng_kat|bign_sign_kat|bign_keyexchange_kat|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report

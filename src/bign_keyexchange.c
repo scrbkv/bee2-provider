@@ -78,7 +78,7 @@ static int bign_keyexchange_set_peer(void *vctx, void *vkey) {
     bee2_bign_key_t *peer = vkey;
 
     if (!ctx || !ctx->local_key || !peer || !peer->variant || !peer->has_pub ||
-        peer->variant != ctx->local_key->variant)
+        peer->variant != ctx->local_key->variant || !bee2_bign_key_validate_public(peer))
         return 0;
     ctx->peer_key = peer;
     return 1;
