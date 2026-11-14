@@ -3,22 +3,9 @@
 #include "bee2_backend.h"
 #include "bee2_oids.h"
 
-#include <openssl/objects.h>
-
-static OSSL_FUNC_BIO_read_ex_fn *bee2_core_bio_read_ex_fn = NULL;
-static OSSL_FUNC_BIO_write_ex_fn *bee2_core_bio_write_ex_fn = NULL;
-
 /* ------------------------------------------------------------------ */
-/*  OID registration (signatures and digests)                          */
+/*  OID registration                                                   */
 /* ------------------------------------------------------------------ */
-
-static int bee2_add_sigid(int signid, int mdid, int pkeyid) {
-    int md = 0;
-    int pk = 0;
-    if (OBJ_find_sigid_algs(signid, &md, &pk))
-        return 1;
-    return OBJ_add_sigid(signid, mdid, pkeyid);
-}
 
 typedef struct {
     const char *oid;
@@ -78,49 +65,33 @@ static const bee2_oid_definition_t bee2_oid_definitions[] = {
     {BEE2_OID_BASH_PRGAE_2561, "bash-prg-ae2561"},
     {BEE2_OID_BASH_PRGAE_2562, "bash-prg-ae2562"}};
 
-static int bee2_register_bign_oids(void) {
-    int nid_bign_pubkey;
-    static const char *signature_oids[] = {BEE2_OID_BIGN_WITH_HSPEC,
-                                           BEE2_OID_BIGN_WITH_HBELT,
-                                           BEE2_OID_BIGN_WITH_BASH256,
-                                           BEE2_OID_BIGN_WITH_BASH384,
-                                           BEE2_OID_BIGN_WITH_BASH512};
+static int bee2_register_bign_oids(
+    const OSSL_CORE_HANDLE *handle,
+    OSSL_FUNC_core_obj_create_fn *obj_create,
+    OSSL_FUNC_core_obj_add_sigid_fn *obj_add_sigid) {
+    static const char *signature_oids[] = {
+        BEE2_OID_BIGN_WITH_HSPEC,
+        BEE2_OID_BIGN_WITH_HBELT,
+        BEE2_OID_BIGN_WITH_BASH256,
+        BEE2_OID_BIGN_WITH_BASH384,
+        BEE2_OID_BIGN_WITH_BASH512};
     size_t i;
+
+    if (obj_create == NULL || obj_add_sigid == NULL)
+        return 0;
 
     for (i = 0; i < sizeof(bee2_oid_definitions) / sizeof(bee2_oid_definitions[0]); ++i) {
         const bee2_oid_definition_t *definition = &bee2_oid_definitions[i];
-        if (OBJ_txt2nid(definition->oid) == NID_undef &&
-            OBJ_create(definition->oid, definition->name, definition->name) == NID_undef)
+
+        if (!obj_create(handle, definition->oid, definition->name, definition->name))
             return 0;
     }
 
-    nid_bign_pubkey = OBJ_txt2nid(BEE2_OID_BIGN_PUBKEY);
-    if (nid_bign_pubkey == NID_undef)
-        return 0;
     for (i = 0; i < sizeof(signature_oids) / sizeof(signature_oids[0]); ++i) {
-        int signature_nid = OBJ_txt2nid(signature_oids[i]);
-        if (signature_nid == NID_undef ||
-            !bee2_add_sigid(signature_nid, NID_undef, nid_bign_pubkey))
+        if (!obj_add_sigid(handle, signature_oids[i], NULL, BEE2_OID_BIGN_PUBKEY))
             return 0;
     }
     return 1;
-}
-
-int bee2_core_bio_read(OSSL_CORE_BIO *bio, void *data, size_t data_len, size_t *bytes_read) {
-    if (!bee2_core_bio_read_ex_fn) {
-        return 0;
-    }
-    return bee2_core_bio_read_ex_fn(bio, data, data_len, bytes_read);
-}
-
-int bee2_core_bio_write(OSSL_CORE_BIO *bio,
-                        const void *data,
-                        size_t data_len,
-                        size_t *bytes_written) {
-    if (!bee2_core_bio_write_ex_fn) {
-        return 0;
-    }
-    return bee2_core_bio_write_ex_fn(bio, data, data_len, bytes_written);
 }
 
 /* ------------------------------------------------------------------ */
@@ -534,22 +505,27 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
                        void **provctx) {
     bee2_provider_ctx_t *ctx;
     const OSSL_DISPATCH *core_dispatch = in;
+    OSSL_FUNC_core_obj_create_fn *core_obj_create_fn = NULL;
+    OSSL_FUNC_core_obj_add_sigid_fn *core_obj_add_sigid_fn = NULL;
 
     if (in == NULL || out == NULL || provctx == NULL || !bee2_backend_is_compatible())
         return 0;
 
     for (; in->function_id != 0; in++) {
         switch (in->function_id) {
-        case OSSL_FUNC_BIO_READ_EX:
-            bee2_core_bio_read_ex_fn = OSSL_FUNC_BIO_read_ex(in);
+        case OSSL_FUNC_CORE_OBJ_CREATE:
+            core_obj_create_fn = OSSL_FUNC_core_obj_create(in);
             break;
-        case OSSL_FUNC_BIO_WRITE_EX:
-            bee2_core_bio_write_ex_fn = OSSL_FUNC_BIO_write_ex(in);
+        case OSSL_FUNC_CORE_OBJ_ADD_SIGID:
+            core_obj_add_sigid_fn = OSSL_FUNC_core_obj_add_sigid(in);
             break;
         default:
             break;
         }
     }
+
+    if (core_obj_create_fn == NULL || core_obj_add_sigid_fn == NULL)
+        return 0;
 
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
@@ -557,7 +533,7 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
     /* The iteration above advances in to the terminator.  The child
      * context needs the original core dispatch table. */
     ctx->libctx = OSSL_LIB_CTX_new_child(handle, core_dispatch);
-    if (!ctx->libctx || !bee2_register_bign_oids()) {
+    if (!ctx->libctx || !bee2_register_bign_oids(handle, core_obj_create_fn, core_obj_add_sigid_fn)) {
         bee2_teardown(ctx);
         return 0;
     }
