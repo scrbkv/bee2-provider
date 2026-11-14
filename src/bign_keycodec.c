@@ -122,14 +122,17 @@ ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT)
 
 typedef struct {
     const bee2_bign_variant_t *variant;
+    OSSL_LIB_CTX *libctx;
 } bee2_bign_decoder_ctx_t;
 
-static int write_all_core(OSSL_CORE_BIO *bio, const void *data, size_t len) {
+static int write_all(BIO *bio, const void *data, size_t len) {
     const unsigned char *p = data;
+
     while (len > 0) {
-        size_t chunk = (len > INT_MAX) ? (size_t)INT_MAX : len;
+        size_t chunk = len > INT_MAX ? (size_t)INT_MAX : len;
         size_t written = 0;
-        if (!bee2_core_bio_write(bio, p, chunk, &written) || written == 0)
+
+        if (!BIO_write_ex(bio, p, chunk, &written) || written == 0)
             return 0;
         p += written;
         len -= written;
@@ -616,7 +619,7 @@ err:
     return 0;
 }
 
-static unsigned char *read_all(OSSL_CORE_BIO *in, size_t *out_len) {
+static unsigned char *read_all(BIO *in, size_t *out_len) {
     unsigned char *buf = NULL;
     size_t cap = 0;
     size_t used = 0;
@@ -628,7 +631,7 @@ static unsigned char *read_all(OSSL_CORE_BIO *in, size_t *out_len) {
 
     for (;;) {
         size_t n = 0;
-        int ok = bee2_core_bio_read(in, tmp, sizeof(tmp), &n);
+        int ok = BIO_read_ex(in, tmp, sizeof(tmp), &n);
         if (!ok) {
             if (n == 0)
                 break;
@@ -933,15 +936,16 @@ static int bign_encoder_encode(void *vctx,
     }
 
     int ok = 0;
-    if (ctx->output_pem) {
-        BIO *bio = BIO_new_from_core_bio(ctx->libctx, out);
-        if (bio) {
+    BIO *bio = BIO_new_from_core_bio(ctx->libctx, out);
+
+    if (bio != NULL) {
+        if (ctx->output_pem) {
             if (der_len <= LONG_MAX)
                 ok = PEM_write_bio(bio, label, NULL, der, (long)der_len);
-            BIO_free(bio);
+        } else {
+            ok = write_all(bio, der, der_len);
         }
-    } else {
-        ok = write_all_core(out, der, der_len);
+        BIO_free(bio);
     }
     if (!ok) {
         ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "bign_encoder_encode: write failed");
@@ -1055,11 +1059,13 @@ static void bign_encoder_free_object(void *obj) {
     bee2_bign_key_free(obj);
 }
 
-static void *bign_decoder_newctx_common(const bee2_bign_variant_t *variant) {
+static void *bign_decoder_newctx_common(const bee2_bign_variant_t *variant, void *provctx) {
     bee2_bign_decoder_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
+
     if (!ctx)
         return NULL;
     ctx->variant = variant;
+    ctx->libctx = bee2_provider_libctx(provctx);
     return ctx;
 }
 
@@ -1093,8 +1099,14 @@ static int bign_decoder_decode(void *vctx,
     if (!ctx || !data_cb)
         return 0;
 
+    BIO *bio = BIO_new_from_core_bio(ctx->libctx, in);
     size_t len = 0;
-    unsigned char *buf = read_all(in, &len);
+    unsigned char *buf;
+
+    if (bio == NULL)
+        return 0;
+    buf = read_all(bio, &len);
+    BIO_free(bio);
     if (!buf || len == 0) {
         OPENSSL_clear_free(buf, len);
         return 1;
@@ -1193,8 +1205,7 @@ BIGN_CODEC_NEWCTX(384)
 BIGN_CODEC_NEWCTX(512)
 
 static void *bign_decoder_newctx(void *provctx) {
-    (void)provctx;
-    return bign_decoder_newctx_common(NULL);
+    return bign_decoder_newctx_common(NULL, provctx);
 }
 
 static void *bign_pem_encoder_newctx(void *provctx) {
