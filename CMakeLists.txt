@@ -64,6 +64,12 @@ target_compile_definitions(bee2_provider PRIVATE
     BEE2_PROVIDER_VERSION="${PROJECT_VERSION}"
 )
 
+# Warnings in the provider are errors. Third-party Bee2 sources keep their
+# own warning policy rather than inheriting a blanket -Werror flag.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(bee2_provider PRIVATE -Wall -Wextra -Werror)
+endif()
+
 target_link_libraries(bee2_provider PRIVATE
     bee2_static
     $<$<BOOL:${WIN32}>:bee2_compat>
@@ -97,7 +103,7 @@ option(BEE2_PROVIDER_BUILD_TESTS "Build the provider test suite" OFF)
 if(BEE2_PROVIDER_BUILD_TESTS)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
         message(FATAL_ERROR
-            "The test suite is available only in the complete GitLab repository")
+            "Test sources are missing; use the complete GitHub source tree")
     endif()
     enable_testing()
     add_subdirectory(tests)

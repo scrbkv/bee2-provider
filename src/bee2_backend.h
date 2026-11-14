@@ -4,7 +4,7 @@
 /*
  * Small, provider-local adaptation layer over the upstream Bee2 API.
  * All cryptographic operations below are implemented by Bee2's Start/Step
- * interfaces; the previous backend is not used.
+ * interfaces.
  */
 
 #include <bee2/core/err.h>
@@ -50,7 +50,7 @@ static inline void bee2_backend_cleanup(void *ctx, size_t size) {
         OPENSSL_cleanse(ctx, size);
 }
 
-/* Preserve bee2evp's formatted-key byte representation. */
+/* Formatted-key bytes match the bee2evp representation. */
 static inline void bee2_belt_expand_key(const void *key, size_t key_len, octet expanded[32]) {
     u32 words[8];
 

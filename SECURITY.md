@@ -1,14 +1,16 @@
 # Security Policy
 
-## Supported versions
+## Development status
 
-Until the first stable release, only the latest commit on the primary GitLab
-branch is supported. Older snapshots do not receive security fixes.
+Bee2 Provider is under development ahead of its initial public release.
+Security fixes are reviewed for the current `main` branch; no stable release
+is available yet.
 
 ## Reporting a vulnerability
 
-Do not open a public issue for a suspected vulnerability. Use a private
-security report on the repository hosting service and include:
+Do not open a public issue for a suspected vulnerability. Use GitHub private
+vulnerability reporting if it is enabled for this repository. Otherwise,
+contact the maintainer privately before sharing technical details. Include:
 
 - the affected operation and algorithm;
 - the OpenSSL, Bee2, compiler and operating-system versions;

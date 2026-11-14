@@ -1,0 +1,358 @@
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra -Werror)
+endif()
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_program(BEE2_OPENSSL_EXECUTABLE NAMES openssl REQUIRED)
+
+option(BEE2_PROVIDER_ENABLE_INTEROP "Register bee2evp engine interoperability tests" OFF)
+option(BEE2_PROVIDER_ENABLE_REGRESSION_TESTS "Enable tests for known EVP/key validation gaps" OFF)
+
+add_test(
+    NAME bee2_bee2evp_export_parity
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/openssl_exports.py
+        --provider-path $<TARGET_FILE_DIR:bee2_provider>
+        --openssl ${BEE2_OPENSSL_EXECUTABLE}
+)
+set_property(TEST bee2_bee2evp_export_parity APPEND PROPERTY LABELS parity full_coverage)
+
+set(BEE2_OPENSSL_KAT_GROUPS
+    belt-block
+    belt-mac
+    belt-hash
+    hmac-hbelt
+    belt-keyexpand
+    bash-hash
+    hmac-compat-belt-hash
+    hmac-compat-bash-256
+    hmac-compat-bash-384
+    hmac-compat-bash-512
+)
+
+foreach(group IN LISTS BEE2_OPENSSL_KAT_GROUPS)
+    string(REPLACE "-" "_" group_id "${group}")
+    set(test_name "bee2_openssl_kat_${group_id}")
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/openssl_kat.py
+            --provider-path $<TARGET_FILE_DIR:bee2_provider>
+            --group ${group}
+            --openssl ${BEE2_OPENSSL_EXECUTABLE}
+    )
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage openssl_kat ${group_id})
+endforeach()
+
+if(BEE2_PROVIDER_ENABLE_INTEROP)
+set(BEE2_INTEROP_PROVIDER_OPENSSL "$ENV{BEE2_INTEROP_PROVIDER_OPENSSL}" CACHE STRING
+    "OpenSSL executable used for bee2_provider interop commands")
+if(NOT BEE2_INTEROP_PROVIDER_OPENSSL)
+    set(BEE2_INTEROP_PROVIDER_OPENSSL "openssl" CACHE STRING
+        "OpenSSL executable used for bee2_provider interop commands" FORCE)
+endif()
+
+set(BEE2_INTEROP_BEE2EVP_OPENSSL "$ENV{BEE2EVP_OPENSSL}" CACHE STRING
+    "OpenSSL executable used for bee2evp interop commands")
+if(NOT BEE2_INTEROP_BEE2EVP_OPENSSL AND DEFINED ENV{BEE2_OPENSSL})
+    set(BEE2_INTEROP_BEE2EVP_OPENSSL "$ENV{BEE2_OPENSSL}" CACHE STRING
+        "OpenSSL executable used for bee2evp interop commands" FORCE)
+endif()
+if(NOT BEE2_INTEROP_BEE2EVP_OPENSSL)
+    set(BEE2_INTEROP_BEE2EVP_OPENSSL "openssl" CACHE STRING
+        "OpenSSL executable used for bee2evp interop commands" FORCE)
+endif()
+
+set(BEE2_INTEROP_BEE2EVP_ENGINE "$ENV{BEE2EVP_ENGINE}" CACHE STRING
+    "bee2evp engine name used in interop commands")
+if(NOT BEE2_INTEROP_BEE2EVP_ENGINE)
+    set(BEE2_INTEROP_BEE2EVP_ENGINE "bee2evp" CACHE STRING
+        "bee2evp engine name used in interop commands" FORCE)
+endif()
+
+set(BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH "$ENV{BEE2EVP_LD_LIBRARY_PATH}" CACHE STRING
+    "LD_LIBRARY_PATH prepended for bee2evp interop commands")
+if(NOT BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH)
+    set(BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH "-" CACHE STRING
+        "LD_LIBRARY_PATH prepended for bee2evp interop commands" FORCE)
+endif()
+
+set(BEE2_INTEROP_BEE2EVP_OPENSSL_CONF "$ENV{BEE2EVP_OPENSSL_CONF}" CACHE STRING
+    "OPENSSL_CONF used for bee2evp interop commands")
+if(NOT BEE2_INTEROP_BEE2EVP_OPENSSL_CONF)
+    set(BEE2_INTEROP_BEE2EVP_OPENSSL_CONF "-" CACHE STRING
+        "OPENSSL_CONF used for bee2evp interop commands" FORCE)
+endif()
+
+function(add_bee2_bee2evp_cipher_test test_name provider_name bee2evp_name key_size iv_size data_len)
+    set(spec
+        "cipher|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|${key_size}|${iv_size}|-|-"
+    )
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
+            "${spec}"
+    )
+endfunction()
+
+function(add_bee2_bee2evp_digest_test test_name provider_name bee2evp_name data_len)
+    set(spec
+        "digest|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|0|0|-|-"
+    )
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
+            "${spec}"
+    )
+endfunction()
+
+function(add_bee2_bee2evp_mac_test test_name provider_name bee2evp_name key_size data_len)
+    set(options)
+    set(one_value_args PROVIDER_DIGEST BEE2EVP_DIGEST)
+    cmake_parse_arguments(MAC "${options}" "${one_value_args}" "" ${ARGN})
+
+    set(provider_digest "-")
+    set(bee2evp_digest "-")
+    if(MAC_PROVIDER_DIGEST)
+        set(provider_digest "${MAC_PROVIDER_DIGEST}")
+    endif()
+    if(MAC_BEE2EVP_DIGEST)
+        set(bee2evp_digest "${MAC_BEE2EVP_DIGEST}")
+    endif()
+    set(spec
+        "mac|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|${key_size}|0|${provider_digest}|${bee2evp_digest}"
+    )
+
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
+            "${spec}"
+    )
+endfunction()
+
+function(add_bee2_bee2evp_bign_cert_test test_name provider_alg bee2evp_alg)
+    set(options EXPLICIT_BEE2)
+    set(one_value_args DAYS)
+    cmake_parse_arguments(BIGN "${options}" "${one_value_args}" "" ${ARGN})
+
+    if(NOT BIGN_DAYS)
+        set(BIGN_DAYS 30)
+    endif()
+
+    set(explicit_flag 0)
+    if(BIGN_EXPLICIT_BEE2)
+        set(explicit_flag 1)
+    endif()
+    set(spec
+        "${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_alg}|${bee2evp_alg}|${explicit_flag}|${BIGN_DAYS}"
+    )
+
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/openssl_bign_cert_interop.py
+            "${spec}"
+    )
+endfunction()
+
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_ecb belt-ecb128 belt-ecb128 16 0 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_128_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_ecb)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_ecb belt-ecb192 belt-ecb192 24 0 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_192_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_ecb)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_ecb belt-ecb256 belt-ecb256 32 0 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_256_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_ecb)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_cbc belt-cbc128 belt-cbc128 16 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_128_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_cbc)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_cbc belt-cbc192 belt-cbc192 24 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_192_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_cbc)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_cbc belt-cbc256 belt-cbc256 32 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_256_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_cbc)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_cfb belt-cfb128 belt-cfb128 16 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_128_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_cfb)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_cfb belt-cfb192 belt-cfb192 24 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_192_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_cfb)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_cfb belt-cfb256 belt-cfb256 32 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_256_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_cfb)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_ctr belt-ctr128 belt-ctr128 16 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_128_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_ctr)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_ctr belt-ctr192 belt-ctr192 24 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_192_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_ctr)
+add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_ctr belt-ctr256 belt-ctr256 32 16 32)
+set_property(TEST bee2_bee2evp_interop_cipher_belt_256_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_ctr)
+
+add_bee2_bee2evp_mac_test(bee2_bee2evp_interop_mac_belt_mac256 belt-mac256 belt-mac256 32 257)
+set_property(TEST bee2_bee2evp_interop_mac_belt_mac256 APPEND PROPERTY LABELS interop bee2evp mac_belt_mac256)
+add_bee2_bee2evp_mac_test(bee2_bee2evp_interop_mac_belt_hmac belt-hmac belt-hmac 32 257 PROVIDER_DIGEST belt-hash)
+set_property(TEST bee2_bee2evp_interop_mac_belt_hmac APPEND PROPERTY LABELS interop bee2evp mac_belt_hmac)
+
+add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_belt_hash belt-hash belt-hash 257)
+set_property(TEST bee2_bee2evp_interop_digest_belt_hash APPEND PROPERTY LABELS interop bee2evp digest_belt_hash)
+add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_256 bash256 bash256 257)
+set_property(TEST bee2_bee2evp_interop_digest_bash_256 APPEND PROPERTY LABELS interop bee2evp digest_bash_256)
+add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_384 bash384 bash384 257)
+set_property(TEST bee2_bee2evp_interop_digest_bash_384 APPEND PROPERTY LABELS interop bee2evp digest_bash_384)
+add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_512 bash512 bash512 257)
+set_property(TEST bee2_bee2evp_interop_digest_bash_512 APPEND PROPERTY LABELS interop bee2evp digest_bash_512)
+
+add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_256 bign-256 bign-256 DAYS 30)
+set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_256 APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_256)
+add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_384 bign-384 bign-384 DAYS 30)
+set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_384 APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_384)
+add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_512 bign-512 bign-512 DAYS 30)
+set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_512 APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_512)
+add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_256_explicit bign-256 bign-256 EXPLICIT_BEE2 DAYS 30)
+set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_256_explicit APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_256_explicit)
+add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_384_explicit bign-384 bign-384 EXPLICIT_BEE2 DAYS 30)
+set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_384_explicit APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_384_explicit)
+add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_512_explicit bign-512 bign-512 EXPLICIT_BEE2 DAYS 30)
+set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_512_explicit APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_512_explicit)
+
+endif()
+
+add_executable(bee2_brng_kat brng_kat.c)
+target_link_libraries(bee2_brng_kat PRIVATE OpenSSL::Crypto)
+
+set(BEE2_BRNG_ALGS
+    brng-ctr-hbelt
+    brng-hmac-hbelt
+)
+foreach(alg IN LISTS BEE2_BRNG_ALGS)
+    string(REPLACE "-" "_" alg_id "${alg}")
+    set(test_name "bee2_brng_kat_${alg_id}")
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            bee2_brng_kat
+            $<TARGET_FILE_DIR:bee2_provider>
+            ${alg}
+    )
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage brng ${alg_id})
+endforeach()
+
+add_executable(bee2_bign_sign_kat bign_sign_kat.c)
+target_link_libraries(bee2_bign_sign_kat PRIVATE OpenSSL::Crypto)
+
+add_executable(bee2_bign_keyexchange_kat bign_keyexchange_kat.c)
+target_link_libraries(bee2_bign_keyexchange_kat PRIVATE OpenSSL::Crypto)
+
+add_test(
+    NAME bee2_bign_options
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/bign_options.py
+        --provider-path $<TARGET_FILE_DIR:bee2_provider>
+        --openssl ${BEE2_OPENSSL_EXECUTABLE}
+)
+set_property(TEST bee2_bign_options APPEND PROPERTY LABELS full_coverage bign)
+
+set(BEE2_BIGN_ALGS
+    bign-256
+    bign-384
+    bign-512
+)
+foreach(alg IN LISTS BEE2_BIGN_ALGS)
+    string(REPLACE "-" "_" alg_id "${alg}")
+    set(test_name "bee2_bign_sign_kat_${alg_id}")
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            bee2_bign_sign_kat
+            $<TARGET_FILE_DIR:bee2_provider>
+            ${alg}
+    )
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage bign ${alg_id})
+
+    set(keyexchange_test_name "bee2_bign_keyexchange_kat_${alg_id}")
+    add_test(
+        NAME ${keyexchange_test_name}
+        COMMAND
+            bee2_bign_keyexchange_kat
+            $<TARGET_FILE_DIR:bee2_provider>
+            ${alg}
+    )
+    set_property(TEST ${keyexchange_test_name} APPEND PROPERTY
+        LABELS full_coverage bign keyexchange ${alg_id})
+endforeach()
+
+add_executable(bee2_cipher_coverage_kat cipher_coverage_kat.c)
+target_link_libraries(bee2_cipher_coverage_kat PRIVATE OpenSSL::Crypto)
+
+set(BEE2_CIPHER_COVERAGE_ALGS
+    belt-ecb128
+    belt-ecb192
+    belt-ecb256
+    belt-cbc128
+    belt-cbc192
+    belt-cbc256
+    belt-cfb128
+    belt-cfb192
+    belt-cfb256
+    belt-ctr128
+    belt-ctr192
+    belt-ctr256
+    belt-bde128
+    belt-bde192
+    belt-bde256
+    belt-che128
+    belt-che192
+    belt-che256
+    belt-dwp128
+    belt-dwp192
+    belt-dwp256
+    bash-prg-ae1281
+    bash-prg-ae1282
+    bash-prg-ae1921
+    bash-prg-ae1922
+    bash-prg-ae2561
+    bash-prg-ae2562
+    belt-sde128
+    belt-sde192
+    belt-sde256
+    belt-kwp128
+    belt-kwp192
+    belt-kwp256
+)
+foreach(alg IN LISTS BEE2_CIPHER_COVERAGE_ALGS)
+    string(REPLACE "-" "_" alg_id "${alg}")
+    set(test_name "bee2_cipher_coverage_kat_${alg_id}")
+    add_test(
+        NAME ${test_name}
+        COMMAND
+            bee2_cipher_coverage_kat
+            $<TARGET_FILE_DIR:bee2_provider>
+            ${alg}
+    )
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS full_coverage cipher ${alg_id})
+endforeach()
+
+# These tests define behavior that the current implementation does not yet
+# satisfy. Keep them available during the corrective work without making
+# the baseline CI depend on fixes that have not been reviewed.
+if(BEE2_PROVIDER_ENABLE_REGRESSION_TESTS)
+    add_executable(bee2_evp_streaming_contract evp_streaming_contract.c)
+    target_link_libraries(bee2_evp_streaming_contract PRIVATE OpenSSL::Crypto)
+    add_test(NAME bee2_evp_streaming_contract
+        COMMAND bee2_evp_streaming_contract $<TARGET_FILE_DIR:bee2_provider>)
+    set_tests_properties(bee2_evp_streaming_contract PROPERTIES LABELS "regression;evp")
+
+    add_executable(bee2_bign_public_check bign_public_check.c)
+    target_link_libraries(bee2_bign_public_check PRIVATE OpenSSL::Crypto)
+    add_test(NAME bee2_bign_public_check
+        COMMAND bee2_bign_public_check $<TARGET_FILE_DIR:bee2_provider>)
+    set_tests_properties(bee2_bign_public_check PROPERTIES LABELS "regression;bign")
+endif()
+
+add_executable(bee2_provider_contexts provider_contexts.c)
+target_link_libraries(bee2_provider_contexts PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_contexts
+    COMMAND bee2_provider_contexts $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_contexts PROPERTIES LABELS "full_coverage;provider")

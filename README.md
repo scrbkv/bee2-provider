@@ -115,6 +115,26 @@ Replace `-cipher-algorithms` with `-digest-algorithms`, `-mac-algorithms`,
 `-kdf-algorithms`, `-random-generators`, `-signature-algorithms` or
 `-key-managers` as required.
 
+## Testing
+
+The public test suite is included in this repository. From a recursive clone:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBEE2_PROVIDER_BUILD_TESTS=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+GitHub Actions verifies Linux builds against pinned OpenSSL 3.5, 4.0 and 4.1
+releases. Optional `bee2evp` interoperability tests need a separately built
+engine. Two pending security/EVP regression tests are opt-in until the known
+issues they exercise are fixed. See [Testing](docs/TESTING.md), [CI](docs/CI.md) and
+[Contributing](CONTRIBUTING.md) for the details.
+
+**Security note:** successful functional tests are not a security audit. The
+provider has not been independently audited or FIPS validated.
+
 ## License
 
 Bee2 Provider is distributed under the Apache License, Version 2.0. See

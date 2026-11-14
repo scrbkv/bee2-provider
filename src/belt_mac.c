@@ -77,7 +77,7 @@ static int provider_belt_mac_set_ctx_params(void *vctx, const OSSL_PARAM params[
 
 /*
  * provider_belt_mac_init — resets the MAC and optionally installs a new key.
- * If no key is supplied, the previously stored key is reused.
+ * If no key is supplied, reuse the key stored in the context.
  */
 static int provider_belt_mac_init(void *vctx,
                                   const unsigned char *key,
