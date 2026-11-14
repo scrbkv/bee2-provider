@@ -568,17 +568,34 @@ static const OSSL_PARAM bee2_cipher_ctx_settable[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
     OSSL_PARAM_END};
 
-static const OSSL_PARAM *belt_gettable_ctx_params(void *cctx, void *provctx) {
-    const bee2_belt_ctx_t *c = cctx;
-
+static const OSSL_PARAM *belt_ecb_gettable_ctx_params(void *cctx, void *provctx) {
+    (void)cctx;
     (void)provctx;
-    if (c == NULL)
-        return bee2_cipher_ctx_gettable;
-    if (c->mode == &belt_cbc_mode)
-        return bee2_cipher_iv_ctx_gettable;
-    if (c->mode == &belt_cfb_mode || c->mode == &belt_ctr_mode)
-        return bee2_cipher_stream_ctx_gettable;
     return bee2_cipher_ctx_gettable;
+}
+
+static const OSSL_PARAM *belt_bde_gettable_ctx_params(void *cctx, void *provctx) {
+    (void)cctx;
+    (void)provctx;
+    return bee2_cipher_ctx_gettable;
+}
+
+static const OSSL_PARAM *belt_cbc_gettable_ctx_params(void *cctx, void *provctx) {
+    (void)cctx;
+    (void)provctx;
+    return bee2_cipher_iv_ctx_gettable;
+}
+
+static const OSSL_PARAM *belt_cfb_gettable_ctx_params(void *cctx, void *provctx) {
+    (void)cctx;
+    (void)provctx;
+    return bee2_cipher_stream_ctx_gettable;
+}
+
+static const OSSL_PARAM *belt_ctr_gettable_ctx_params(void *cctx, void *provctx) {
+    (void)cctx;
+    (void)provctx;
+    return bee2_cipher_stream_ctx_gettable;
 }
 
 static const OSSL_PARAM *belt_settable_ctx_params(void *cctx, void *provctx) {
@@ -674,7 +691,7 @@ static int belt_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         {OSSL_FUNC_CIPHER_GET_PARAMS, (void (*)(void))belt_##KEYBITS##_##MODE_LC##_get_params}, \
         {OSSL_FUNC_CIPHER_GETTABLE_PARAMS, (void (*)(void))belt_gettable_params}, \
         {OSSL_FUNC_CIPHER_GET_CTX_PARAMS, (void (*)(void))belt_get_ctx_params}, \
-        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_gettable_ctx_params}, \
+        {OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS, (void (*)(void))belt_##MODE_LC##_gettable_ctx_params}, \
         {OSSL_FUNC_CIPHER_SET_CTX_PARAMS, (void (*)(void))belt_set_ctx_params}, \
         {OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS, (void (*)(void))belt_settable_ctx_params}, \
         {0, NULL}}
