@@ -50,16 +50,34 @@ cleanup:
 
 static int same_private_key(EVP_PKEY *left, EVP_PKEY *right)
 {
-    unsigned char first[64], second[64];
+    unsigned char first[128], second[128];
+    char group_left[80], group_right[80];
     size_t first_len = 0, second_len = 0;
-    int ok;
+    int ok = 0;
 
-    ok = EVP_PKEY_get_octet_string_param(left, OSSL_PKEY_PARAM_PRIV_KEY,
-                                         first, sizeof(first), &first_len) > 0 &&
-         EVP_PKEY_get_octet_string_param(right, OSSL_PKEY_PARAM_PRIV_KEY,
-                                         second, sizeof(second), &second_len) > 0 &&
-         first_len == second_len && CRYPTO_memcmp(first, second, first_len) == 0 &&
-         EVP_PKEY_eq(left, right) == 1;
+    if (EVP_PKEY_get_octet_string_param(left, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        first, sizeof(first), &first_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(right, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        second, sizeof(second), &second_len) <= 0 ||
+        first_len != second_len || CRYPTO_memcmp(first, second, first_len) != 0)
+        goto cleanup;
+
+    if (EVP_PKEY_get_octet_string_param(left, OSSL_PKEY_PARAM_PUB_KEY,
+                                        first, sizeof(first), &first_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(right, OSSL_PKEY_PARAM_PUB_KEY,
+                                        second, sizeof(second), &second_len) <= 0 ||
+        first_len != second_len || CRYPTO_memcmp(first, second, first_len) != 0)
+        goto cleanup;
+
+    if (EVP_PKEY_get_utf8_string_param(left, OSSL_PKEY_PARAM_GROUP_NAME,
+                                       group_left, sizeof(group_left), NULL) <= 0 ||
+        EVP_PKEY_get_utf8_string_param(right, OSSL_PKEY_PARAM_GROUP_NAME,
+                                       group_right, sizeof(group_right), NULL) <= 0 ||
+        strcmp(group_left, group_right) != 0)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
     OPENSSL_cleanse(first, sizeof(first));
     OPENSSL_cleanse(second, sizeof(second));
     return ok;
