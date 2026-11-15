@@ -93,6 +93,11 @@ static int run_block_cipher_roundtrip(const cipher_case_t *tc, unsigned char see
         goto cleanup;
     }
     ct_len += tmplen;
+    if (strstr(tc->name, "-sde") != NULL &&
+        EVP_EncryptFinal_ex(enc, ct + ct_len, &tmplen) > 0) {
+        fprintf(stderr, "[FAIL] repeated sector final accepted for %s\n", tc->name);
+        goto cleanup;
+    }
 
     if (EVP_DecryptInit_ex2(dec, cipher, key, tc->iv_len ? iv : NULL, init_params) != 1) {
         fprintf(stderr, "[FAIL] EVP_DecryptInit_ex2(%s)\n", tc->name);
@@ -112,6 +117,11 @@ static int run_block_cipher_roundtrip(const cipher_case_t *tc, unsigned char see
         goto cleanup;
     }
     rt_len += tmplen;
+    if (strstr(tc->name, "-sde") != NULL &&
+        EVP_DecryptFinal_ex(dec, rt + rt_len, &tmplen) > 0) {
+        fprintf(stderr, "[FAIL] repeated sector decrypt final accepted for %s\n", tc->name);
+        goto cleanup;
+    }
 
     if ((size_t)rt_len != tc->msg_len || CRYPTO_memcmp(rt, pt, tc->msg_len) != 0) {
         fprintf(stderr, "[FAIL] roundtrip mismatch for %s\n", tc->name);
@@ -244,6 +254,10 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed, size_t
         goto cleanup;
     }
     ct_len += tmplen;
+    if (EVP_EncryptFinal_ex(enc, ct + ct_len, &tmplen) > 0) {
+        fprintf(stderr, "[FAIL] repeated wrap final accepted for %s\n", tc->name);
+        goto cleanup;
+    }
     if ((size_t)ct_len != plain_len + 16u)
         goto cleanup;
 
@@ -259,6 +273,10 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed, size_t
         goto cleanup;
     }
     rt_len += tmplen;
+    if (EVP_DecryptFinal_ex(dec, rt + rt_len, &tmplen) > 0) {
+        fprintf(stderr, "[FAIL] repeated unwrap final accepted for %s\n", tc->name);
+        goto cleanup;
+    }
     if (rt_len != (int)plain_len || CRYPTO_memcmp(rt, pt, plain_len) != 0) {
         fprintf(stderr, "[FAIL] wrap roundtrip mismatch for %s\n", tc->name);
         goto cleanup;

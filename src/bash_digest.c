@@ -107,13 +107,15 @@ static int bash_update(void *vctx, const unsigned char *in, size_t inl) {
     bee2_bash_ctx_t *c = vctx;
     if (inl == 0)
         return 1;
+    if (in == NULL)
+        return 0;
     bashHashStepH(in, inl, &c->backend_state);
     return 1;
 }
 
 static int bash_final(void *vctx, unsigned char *out, size_t *outl, size_t outsz) {
     bee2_bash_ctx_t *c = vctx;
-    if (outsz < c->var->output_size)
+    if (out == NULL || outl == NULL || outsz < c->var->output_size)
         return 0;
     bashHashStepG(out, c->var->output_size, &c->backend_state);
     *outl = c->var->output_size;

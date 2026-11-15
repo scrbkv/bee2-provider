@@ -54,13 +54,15 @@ static int provider_belt_hash_update(void *vctx, const unsigned char *in, size_t
     belt_hash_ctx_t *state = vctx;
     if (inl == 0)
         return 1;
+    if (in == NULL)
+        return 0;
     beltHashStepH(in, inl, state);
     return 1;
 }
 
 static int provider_belt_hash_final(void *vctx, unsigned char *out, size_t *outl, size_t outsz) {
     belt_hash_ctx_t *state = vctx;
-    if (outsz < BELT_HASH_DIGEST_SIZE)
+    if (out == NULL || outl == NULL || outsz < BELT_HASH_DIGEST_SIZE)
         return 0;
     beltHashStepG(out, state);
     *outl = BELT_HASH_DIGEST_SIZE;

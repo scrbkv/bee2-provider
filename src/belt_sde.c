@@ -34,6 +34,7 @@ typedef struct {
 
     int enc;
     int processed;
+    int finalized;
     size_t fixed_key_len; /* wrapper-fixed key length (16/24/32) */
 } bee2_belt_sde_ctx_t;
 
@@ -93,6 +94,7 @@ static int belt_sde_init_operation(void *vctx,
     bee2_belt_sde_ctx_t *c = vctx;
     c->enc = enc;
     c->processed = 0;
+    c->finalized = 0;
 
     if (params && !belt_sde_set_ctx_params(c, params))
         return 0;
@@ -143,10 +145,11 @@ static int belt_sde_update(void *vctx,
                            size_t inl) {
     bee2_belt_sde_ctx_t *c = vctx;
     *outl = 0;
+    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->processed || c->finalized)
+        return 0;
     if (inl == 0)
         return 1;
-    if (!c->backend_state.key_set || !c->backend_state.iv_set || c->processed ||
-        !in || !out || inl < 2u * BELT_BLOCK_SIZE ||
+    if (!in || !out || inl < 2u * BELT_BLOCK_SIZE ||
         inl % BELT_BLOCK_SIZE != 0 || outsize < inl)
         return 0;
 
@@ -165,11 +168,17 @@ static int belt_sde_update(void *vctx,
 /* ------------------------------------------------------------------ */
 
 static int belt_sde_final(void *vctx, unsigned char *out, size_t *outl, size_t outsize) {
-    const bee2_belt_sde_ctx_t *c = vctx;
+    bee2_belt_sde_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
-    return c->backend_state.key_set && c->backend_state.iv_set && c->processed;
+    if (!c->backend_state.key_set || !c->backend_state.iv_set ||
+        !c->processed || c->finalized)
+        return 0;
+    c->finalized = 1;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */

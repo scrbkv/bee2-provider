@@ -43,6 +43,7 @@ typedef struct {
     int enc;
     int key_set;
     int processed;
+    int finalized;
     size_t fixed_key_len; /* key length selected by algorithm name */
 
     octet key[BELT_KEY_SIZE];     /* expanded 256-bit key                 */
@@ -106,6 +107,7 @@ static int belt_kwp_init_operation(void *vctx,
     bee2_belt_kwp_ctx_t *c = vctx;
     c->enc = enc;
     c->processed = 0;
+    c->finalized = 0;
 
     if (params && !belt_kwp_set_ctx_params(c, params))
         return 0;
@@ -160,9 +162,11 @@ static int belt_kwp_update(void *vctx,
     if (c == NULL || outl == NULL)
         return 0;
     *outl = 0;
+    if (!c->key_set || c->processed || c->finalized)
+        return 0;
     if (inl == 0)
         return 1;
-    if (!c->key_set || c->processed || in == NULL || out == NULL)
+    if (in == NULL || out == NULL)
         return 0;
 
     if (c->enc) {
@@ -195,11 +199,16 @@ static int belt_kwp_update(void *vctx,
 /* ------------------------------------------------------------------ */
 
 static int belt_kwp_final(void *vctx, unsigned char *out, size_t *outl, size_t outsize) {
-    const bee2_belt_kwp_ctx_t *c = vctx;
+    bee2_belt_kwp_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
+    if (c == NULL || outl == NULL)
+        return 0;
     *outl = 0;
-    return c->key_set && c->processed;
+    if (!c->key_set || !c->processed || c->finalized)
+        return 0;
+    c->finalized = 1;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
