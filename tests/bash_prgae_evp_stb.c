@@ -61,28 +61,60 @@ static int check_prgae2561(void)
         OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, sizeof(tag)),
         OSSL_PARAM_END
     };
-    int outlen = 0, final_len = 0, ok = 0;
+    int outlen = 0, final_len = 0, ok = 0, stage = 0;
 
+    stage = 1;
     if (!from_hex(h, sizeof(h), h_hex) ||
         !from_hex(expected, sizeof(expected), ciphertext_hex) ||
         !from_hex(expected_tag, sizeof(expected_tag), tag_hex) ||
-        cipher == NULL || ctx == NULL ||
-        EVP_EncryptInit_ex2(ctx, cipher, NULL, NULL, NULL) <= 0 ||
-        EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL) <= 0 ||
-        (got_ivlen = (size_t)EVP_CIPHER_CTX_get_iv_length(ctx)) != 16 ||
-        EVP_EncryptInit_ex2(ctx, NULL, h + 32, h, NULL) <= 0 ||
-        EVP_EncryptUpdate(ctx, NULL, &outlen, h + 64, 49) <= 0 ||
-        EVP_EncryptUpdate(ctx, output, &outlen, zeros, sizeof(zeros)) <= 0 ||
-        outlen != (int)sizeof(output) ||
-        EVP_EncryptFinal_ex(ctx, output + outlen, &final_len) <= 0 ||
-        final_len != 0 || EVP_CIPHER_CTX_get_params(ctx, get_tag) <= 0 ||
-        CRYPTO_memcmp(output, expected, sizeof(output)) != 0 ||
+        cipher == NULL || ctx == NULL)
+        goto end;
+    stage = 2;
+    if (EVP_EncryptInit_ex2(ctx, cipher, NULL, NULL, NULL) <= 0)
+        goto end;
+    stage = 3;
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL) <= 0)
+        goto end;
+    stage = 4;
+    got_ivlen = (size_t)EVP_CIPHER_CTX_get_iv_length(ctx);
+    if (got_ivlen != 16)
+        goto end;
+    stage = 5;
+    if (EVP_EncryptInit_ex2(ctx, NULL, h + 32, h, NULL) <= 0)
+        goto end;
+    stage = 6;
+    if (EVP_EncryptUpdate(ctx, NULL, &outlen, h + 64, 49) <= 0)
+        goto end;
+    stage = 7;
+    if (EVP_EncryptUpdate(ctx, output, &outlen, zeros, sizeof(zeros)) <= 0 ||
+        outlen != (int)sizeof(output))
+        goto end;
+    stage = 8;
+    if (EVP_EncryptFinal_ex(ctx, output + outlen, &final_len) <= 0 ||
+        final_len != 0)
+        goto end;
+    stage = 9;
+    if (EVP_CIPHER_CTX_get_params(ctx, get_tag) <= 0)
+        goto end;
+    stage = 10;
+    if (CRYPTO_memcmp(output, expected, sizeof(output)) != 0 ||
         CRYPTO_memcmp(tag, expected_tag, sizeof(tag)) != 0)
         goto end;
     ok = 1;
 end:
-    if (!ok)
-        fprintf(stderr, "STB 34.101.77 A.6 EVP BASH-PRGAE2561 KAT failed\n");
+    if (!ok) {
+        fprintf(stderr, "STB 34.101.77 A.6 EVP BASH-PRGAE2561 KAT failed at stage %d\n", stage);
+        if (stage == 10) {
+            size_t i;
+            fprintf(stderr, "ciphertext first 16: ");
+            for (i = 0; i < 16; ++i)
+                fprintf(stderr, "%02X", output[i]);
+            fprintf(stderr, "\nexpected first 16: ");
+            for (i = 0; i < 16; ++i)
+                fprintf(stderr, "%02X", expected[i]);
+            fprintf(stderr, "\n");
+        }
+    }
     EVP_CIPHER_CTX_free(ctx);
     EVP_CIPHER_free(cipher);
     OPENSSL_cleanse(h, sizeof(h));
