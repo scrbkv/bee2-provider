@@ -133,7 +133,7 @@ cleanup:
 }
 
 /* Check that decoding does not require EOF or swallow the next DER key. */
-static int check_der_stream(EVP_PKEY *key)
+static int check_key_stream(EVP_PKEY *key, const char *format)
 {
     OSSL_ENCODER_CTX *encoder = NULL;
     OSSL_DECODER_CTX *decoder = NULL;
@@ -143,7 +143,7 @@ static int check_der_stream(EVP_PKEY *key)
     int ok = 0;
 
     encoder = OSSL_ENCODER_CTX_new_for_pkey(
-        key, OSSL_KEYMGMT_SELECT_KEYPAIR, "DER", "PrivateKeyInfo", "provider=bee2");
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, format, "PrivateKeyInfo", "provider=bee2");
     encoded = BIO_new(BIO_s_mem());
     if (!encoder || !encoded || !OSSL_ENCODER_to_bio(encoder, encoded) ||
         !BIO_get_mem_ptr(encoded, &data) || !data || data->length == 0 ||
@@ -157,7 +157,7 @@ static int check_der_stream(EVP_PKEY *key)
         goto cleanup;
 
     decoder = OSSL_DECODER_CTX_new_for_pkey(
-        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+        &decoded, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
     if (!decoder || OSSL_DECODER_from_bio(decoder, input) <= 0 ||
         !decoded || !same_private_key(key, decoded) ||
         BIO_ctrl_pending(input) != data->length)
@@ -168,7 +168,7 @@ static int check_der_stream(EVP_PKEY *key)
     decoded = NULL;
 
     decoder = OSSL_DECODER_CTX_new_for_pkey(
-        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+        &decoded, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
     if (!decoder || OSSL_DECODER_from_bio(decoder, input) <= 0 ||
         !decoded || !same_private_key(key, decoded) || BIO_ctrl_pending(input) != 0)
         goto cleanup;
@@ -181,7 +181,7 @@ static int check_der_stream(EVP_PKEY *key)
         BIO_write(writer, data->data, (int)data->length) != (int)data->length)
         goto cleanup;
     decoder = OSSL_DECODER_CTX_new_for_pkey(
-        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+        &decoded, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
     if (!decoder || OSSL_DECODER_from_bio(decoder, reader) <= 0 ||
         !decoded || !same_private_key(key, decoded))
         goto cleanup;
@@ -189,7 +189,7 @@ static int check_der_stream(EVP_PKEY *key)
 
 cleanup:
     if (!ok)
-        fprintf(stderr, "BIGN DER stream framing failed\n");
+        fprintf(stderr, "BIGN %s stream framing failed\n", format);
     EVP_PKEY_free(decoded);
     OSSL_DECODER_CTX_free(decoder);
     BIO_free(writer);
@@ -379,7 +379,8 @@ int main(int argc, char **argv)
         key = generate_key(names[i]);
         if (!key)
             goto cleanup;
-        if (!check_public_only_decoding(key) || !check_der_stream(key))
+        if (!check_public_only_decoding(key) ||
+            !check_key_stream(key, "DER") || !check_key_stream(key, "PEM"))
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {
             if (!check_serialization(key, formats[j], 0) ||
