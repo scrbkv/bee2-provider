@@ -20,6 +20,11 @@
 #define BIGN_ENCRYPTED_PEM_LABEL "ENCRYPTED PRIVATE KEY"
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
 
+/* STB 34.101.45, Annex E: PBKDF2 recommends >= 10000 iterations
+ * and a salt of >= 8 octets. Retain interoperable OpenSSL PBES2. */
+#define BIGN_PKCS8_PBKDF2_ITER 10000
+#define BIGN_PKCS8_SALT_LEN 16
+
 static int bign_asn1_string_length(const ASN1_STRING *str) {
 #if OPENSSL_VERSION_NUMBER >= 0x40100000L
     size_t len = ASN1_STRING_get_length(str);
@@ -590,7 +595,8 @@ static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
     if (!p8 || p != der + der_len)
         goto cleanup;
-    encrypted = PKCS8_encrypt_ex(-1, cipher, password, (int)password_len, NULL, 0, 0,
+    encrypted = PKCS8_encrypt_ex(-1, cipher, password, (int)password_len,
+                                 NULL, BIGN_PKCS8_SALT_LEN, BIGN_PKCS8_PBKDF2_ITER,
                                  p8, libctx, NULL);
     if (!encrypted)
         goto cleanup;
@@ -660,8 +666,7 @@ static int decode_pkcs8_der(const unsigned char *buf, size_t len,
 static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
                                       const bee2_bign_variant_t *expected,
                                       bee2_bign_key_t *key, OSSL_LIB_CTX *libctx,
-                                      OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,
-                                      int *recognized) {
+                                      OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg) {
     const unsigned char *p = buf;
     X509_SIG *encrypted = NULL;
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
@@ -669,7 +674,6 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
     size_t password_len = 0;
     int ok = 0;
 
-    *recognized = 0;
     if (!bign_der_sequence_body(buf, len, &p))
         return 0;
     p = buf;
@@ -678,7 +682,6 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
     ERR_pop_to_mark();
     if (!encrypted || p != buf + len)
         goto cleanup;
-    *recognized = 1;
     if (!cb)
         goto cleanup;
 
@@ -1119,7 +1122,8 @@ static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PA
         key->has_priv = 1;
     }
 
-    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
+    p = (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+            ? OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY) : NULL;
     if (p) {
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
             goto err;
@@ -1253,18 +1257,20 @@ static int bign_decoder_decode(void *vctx,
 
     bee2_bign_key_t *key = bee2_bign_key_new(NULL);
     if (!key) {
+        if (der != buf)
+            OPENSSL_clear_free(der, der_len);
         OPENSSL_clear_free(buf, len);
+        OPENSSL_free(pem_name);
         return 0;
     }
 
     int decoded = 0;
-    int recognized = 0;
     if (pem_name) {
         if (strcmp(pem_name, BIGN_PEM_LABEL) == 0) {
             decoded = decode_pkcs8_der(der, der_len, ctx->variant, key);
         } else if (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) == 0) {
             decoded = decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
-                                                 ctx->libctx, pw_cb, pw_cbarg, &recognized);
+                                                 ctx->libctx, pw_cb, pw_cbarg);
         } else if (strcmp(pem_name, BIGN_PUB_PEM_LABEL) == 0) {
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
         }
@@ -1272,8 +1278,8 @@ static int bign_decoder_decode(void *vctx,
         decoded = decode_pkcs8_der(der, der_len, ctx->variant, key);
         if (!decoded)
             decoded = decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
-                                                 ctx->libctx, pw_cb, pw_cbarg, &recognized);
-        if (!decoded && !recognized)
+                                                 ctx->libctx, pw_cb, pw_cbarg);
+        if (!decoded)
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
     }
 
@@ -1294,7 +1300,9 @@ static int bign_decoder_decode(void *vctx,
             OPENSSL_clear_free(der, der_len);
         OPENSSL_clear_free(buf, len);
         OPENSSL_free(pem_name);
-        return recognized ? 0 : 1;
+        /* EncryptedPrivateKeyInfo is shared by all key algorithms.
+         * An unsuccessful BIGN decode must not abort other decoders. */
+        return 1;
     }
 
     int obj_type = OSSL_OBJECT_PKEY;

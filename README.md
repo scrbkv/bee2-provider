@@ -33,6 +33,12 @@ as an ASN.1 OBJECT parameter. Selecting a compatible non-STB digest (for example
 with `bign-256`) also selects the hSpec signature identifier. Digests with
 fixed BIGN signature identifiers continue to use those identifiers.
 
+Encrypted BIGN PKCS#8 uses OpenSSL PBES2/PBKDF2 with 10,000 iterations and a
+random 16-byte salt, meeting the iteration/salt recommendations of STB
+34.101.45, Annex E. The PBES2 cipher and PRF are selected by OpenSSL; this
+does not claim the STB-specific HMAC-HBELT PBES2 profile. Older PBES2
+containers remain readable.
+
 BIGN keys in PKCS#8 and SPKI PEM/DER formats use the standard OpenSSL
 `file:` store loader and this provider's key decoders. Load both the `default`
 and `bee2_provider` providers when using `openssl storeutl`. The separate
