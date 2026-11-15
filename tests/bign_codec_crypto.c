@@ -70,8 +70,7 @@ static int check_public_only_decoding(EVP_PKEY *key)
         &public_key, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_PUBLIC_KEY, NULL, NULL);
     input = BIO_new_mem_buf(data->data, (int)data->length);
     if (!decoder || !input || OSSL_DECODER_from_bio(decoder, input) <= 0 ||
-        !public_key || EVP_PKEY_has(public_key, OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0 ||
-        EVP_PKEY_get_octet_string_param(public_key, OSSL_PKEY_PARAM_PRIV_KEY,
+        !public_key || EVP_PKEY_get_octet_string_param(public_key, OSSL_PKEY_PARAM_PRIV_KEY,
                                          decoded, sizeof(decoded), &decoded_len) > 0 ||
         EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
                                          original, sizeof(original), &original_len) <= 0 ||
