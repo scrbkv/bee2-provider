@@ -15,12 +15,14 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bee2/CMakeLists.txt")
         "Bee2 submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared Bee2 library" FORCE)
-set(BUILD_CMD OFF CACHE BOOL "Build bee2cmd" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "Build Bee2 tests" FORCE)
-set(BUILD_DOC OFF CACHE BOOL "Build Bee2 documentation" FORCE)
-set(INSTALL_HEADERS OFF CACHE BOOL "Install Bee2 headers" FORCE)
-set(BUILD_PIC ON CACHE BOOL "Build position-independent Bee2" FORCE)
+# Bee2 uses option() for these settings. Normal variables are inherited
+# by its subdirectory without overwriting the parent project's cache.
+set(BUILD_SHARED_LIBS OFF)
+set(BUILD_CMD OFF)
+set(BUILD_TESTS OFF)
+set(BUILD_DOC OFF)
+set(INSTALL_HEADERS OFF)
+set(BUILD_PIC ON)
 add_subdirectory(bee2 EXCLUDE_FROM_ALL)
 
 # ---- Platform compatibility ----------------------------------------

@@ -276,21 +276,20 @@ static int brng_generate_ctr(bee2_brng_ctx_t *c,
     unsigned char *additional = NULL;
     size_t pos = 0;
 
-    /* A new X must apply to a new BRNG block. Bee2 otherwise returns
-     * previously reserved bytes without reading the caller's X. Discard
-     * that reserve before processing nonempty additional input. */
-    if (addin_len != 0 && c->ctr_unused != 0) {
-        brngCTRStepR(block, c->ctr_unused, &c->backend);
-        c->ctr_unused = 0;
-        OPENSSL_cleanse(block, sizeof(block));
-    }
-
-    /* Copy additional input because it may overlap with the output. The
-     * initialized bytes become Bee2's X, and absent bytes are zero-padded. */
+    /* Copy additional input before changing BRNG state. It may overlap
+     * the output, and an allocation failure must leave the state intact. */
     if (addin_len) {
         additional = OPENSSL_memdup(addin, addin_len);
         if (!additional)
             return 0;
+    }
+
+    /* A new X must apply to a new BRNG block. Bee2 otherwise returns
+     * previously reserved bytes without reading the caller's X. */
+    if (addin_len != 0 && c->ctr_unused != 0) {
+        brngCTRStepR(block, c->ctr_unused, &c->backend);
+        c->ctr_unused = 0;
+        OPENSSL_cleanse(block, sizeof(block));
     }
     while (pos < outlen) {
         size_t chunk = outlen - pos;
