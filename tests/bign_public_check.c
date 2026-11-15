@@ -1,4 +1,5 @@
 /* Invalid public points must not pass the provider's EVP validation. */
+#include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
@@ -121,6 +122,75 @@ end:
     return ok;
 }
 
+/* Encoder imports must honor PRIVATE_KEY selection even when a caller
+ * supplies an unrelated malformed public component. */
+static int test_encoder_private_selection(OSSL_PROVIDER *provider)
+{
+    const OSSL_ALGORITHM *algs, *alg;
+    const OSSL_DISPATCH *d;
+    OSSL_FUNC_encoder_newctx_fn *newctx = NULL;
+    OSSL_FUNC_encoder_freectx_fn *freectx = NULL;
+    OSSL_FUNC_encoder_import_object_fn *import_object = NULL;
+    OSSL_FUNC_encoder_free_object_fn *free_object = NULL;
+    unsigned char priv[32] = {1}, invalid_pub[64] = {0};
+    char group[] = "bign-curve256v1";
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, group, 0),
+        OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, priv, sizeof(priv)),
+        OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY, invalid_pub,
+                                           sizeof(invalid_pub)),
+        OSSL_PARAM_construct_end()
+    };
+    void *ctx = NULL, *obj = NULL;
+    int no_cache = 0, ok = 0;
+
+    algs = OSSL_PROVIDER_query_operation(provider, OSSL_OP_ENCODER, &no_cache);
+    if (!algs)
+        return 0;
+    for (alg = algs; alg->algorithm_names != NULL; ++alg) {
+        if (strstr(alg->algorithm_names, "bign-256") != NULL &&
+            alg->property_definition != NULL &&
+            strstr(alg->property_definition, "output=der,structure=PrivateKeyInfo"))
+            break;
+    }
+    if (alg->algorithm_names == NULL)
+        goto cleanup;
+    for (d = alg->implementation; d && d->function_id != 0; ++d) {
+        switch (d->function_id) {
+        case OSSL_FUNC_ENCODER_NEWCTX:
+            newctx = OSSL_FUNC_encoder_newctx(d);
+            break;
+        case OSSL_FUNC_ENCODER_FREECTX:
+            freectx = OSSL_FUNC_encoder_freectx(d);
+            break;
+        case OSSL_FUNC_ENCODER_IMPORT_OBJECT:
+            import_object = OSSL_FUNC_encoder_import_object(d);
+            break;
+        case OSSL_FUNC_ENCODER_FREE_OBJECT:
+            free_object = OSSL_FUNC_encoder_free_object(d);
+            break;
+        }
+    }
+    if (!newctx || !freectx || !import_object || !free_object)
+        goto cleanup;
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider));
+    if (!ctx)
+        goto cleanup;
+    obj = import_object(ctx, OSSL_KEYMGMT_SELECT_PRIVATE_KEY, params);
+    ok = obj != NULL;
+
+cleanup:
+    if (obj && free_object)
+        free_object(obj);
+    if (ctx && freectx)
+        freectx(ctx);
+    OSSL_PROVIDER_unquery_operation(provider, OSSL_OP_ENCODER, algs);
+    OPENSSL_cleanse(priv, sizeof(priv));
+    if (!ok)
+        fprintf(stderr, "BIGN encoder ignored selection or rejected private key\n");
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *defprov = NULL, *bee2prov = NULL;
@@ -138,6 +208,8 @@ int main(int argc, char **argv)
         ok = 0;
         goto end;
     }
+    if (!test_encoder_private_selection(bee2prov))
+        ok = 0;
     if (!test_invalid_public_key("bign-256", 32) ||
         !test_generated_key("bign-256", "bign-curve256v1",
                             "1.2.112.0.2.0.34.101.45.3.1"))
