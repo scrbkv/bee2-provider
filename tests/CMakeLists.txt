@@ -526,3 +526,10 @@ if(BEE2_PROVIDER_ENABLE_INTEROP)
         set_tests_properties(${test_name} PROPERTIES LABELS "interop;bee2evp;matrix")
     endforeach()
 endif()
+
+# BIGN PKCS#8/SPKI cryptographic key serialization in PEM and DER.
+add_executable(bee2_bign_codec_crypto bign_codec_crypto.c)
+target_link_libraries(bee2_bign_codec_crypto PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_codec_crypto
+    COMMAND bee2_bign_codec_crypto $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_codec_crypto PROPERTIES LABELS "bign;codec;crypto;native")
