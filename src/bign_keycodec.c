@@ -647,6 +647,7 @@ static int decode_pkcs8_der(const unsigned char *buf, size_t len,
 
     if (!key || !bign_der_sequence_body(buf, len, &p))
         return 0;
+    p = buf;
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
     if (!p8)
         return 0;
