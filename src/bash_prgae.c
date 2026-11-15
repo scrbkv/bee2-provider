@@ -424,6 +424,7 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             return 0;
         memcpy(c->tag, tag, tag_len);
         c->tag_set = 1;
+    }
 
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_IVLEN);
     if (p != NULL) {
@@ -438,7 +439,6 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             c->backend_state.iv_set = 0;
         }
         c->iv_len = ivlen;
-    }
     }
     return 1;
 }
