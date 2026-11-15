@@ -191,6 +191,47 @@ cleanup:
     return ok;
 }
 
+static int test_private_only_public_export(void)
+{
+    EVP_PKEY_CTX *ctx = NULL;
+    EVP_PKEY *key = NULL;
+    OSSL_PARAM *exported = NULL;
+    const OSSL_PARAM *public_param;
+    unsigned char priv[32] = {1}, first[64], second[64];
+    size_t first_len = 0, second_len = 0;
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, priv, sizeof(priv)),
+        OSSL_PARAM_construct_end()
+    };
+    int ok = 0;
+
+    ctx = EVP_PKEY_CTX_new_from_name(NULL, "bign-256", "provider=bee2");
+    if (!ctx || EVP_PKEY_fromdata_init(ctx) <= 0 ||
+        EVP_PKEY_fromdata(ctx, &key, EVP_PKEY_PRIVATE_KEY, params) <= 0 ||
+        !EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
+                                         first, sizeof(first), &first_len) ||
+        !EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
+                                         second, sizeof(second), &second_len) ||
+        first_len != sizeof(first) || second_len != first_len ||
+        CRYPTO_memcmp(first, second, first_len) != 0 ||
+        EVP_PKEY_todata(key, EVP_PKEY_PUBLIC_KEY, &exported) <= 0)
+        goto cleanup;
+    public_param = OSSL_PARAM_locate_const(exported, OSSL_PKEY_PARAM_PUB_KEY);
+    if (!public_param || public_param->data_size != first_len ||
+        CRYPTO_memcmp(first, public_param->data, first_len) != 0)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "BIGN private-only key public export failed\n");
+    OSSL_PARAM_free(exported);
+    EVP_PKEY_free(key);
+    EVP_PKEY_CTX_free(ctx);
+    OPENSSL_cleanse(priv, sizeof(priv));
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *defprov = NULL, *bee2prov = NULL;
@@ -208,7 +249,8 @@ int main(int argc, char **argv)
         ok = 0;
         goto end;
     }
-    if (!test_encoder_private_selection(bee2prov))
+    if (!test_encoder_private_selection(bee2prov) ||
+        !test_private_only_public_export())
         ok = 0;
     if (!test_invalid_public_key("bign-256", 32) ||
         !test_generated_key("bign-256", "bign-curve256v1",
