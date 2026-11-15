@@ -1,5 +1,6 @@
 /* BIGN key serialization, including encrypted PKCS#8 PEM and DER. */
 #include <limits.h>
+#include <openssl/buffer.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/decoder.h>
