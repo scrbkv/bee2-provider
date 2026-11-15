@@ -541,8 +541,8 @@ int main(int argc, char **argv) {
         ran = 1;
         if (!run_block_cipher_roundtrip(&block_cases[i], (unsigned char)(0x10u + i)))
             goto cleanup;
-        if (strstr(block_cases[i].name, "-cfb") == NULL &&
-            strstr(block_cases[i].name, "-ctr") == NULL &&
+        if ((strstr(block_cases[i].name, "-bde") != NULL ||
+             strstr(block_cases[i].name, "-sde") != NULL) &&
             !run_block_cipher_partial_rejection(&block_cases[i], (unsigned char)(0x50u + i)))
             goto cleanup;
     }

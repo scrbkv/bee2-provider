@@ -39,13 +39,15 @@ and `bee2_provider` providers when using `openssl storeutl`. The separate
 `bign:` URI scheme is not supported.
 
 BELT-ECB and BELT-CBC use PKCS#7 padding by default. Applications can disable
-it with `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad`. Without
-padding, their input length **must be a multiple of the 16-byte BELT block**.
-The provider deliberately does not implement ciphertext stealing (CTS), even
-though the corresponding full STB modes define it for partial final blocks.
-With PKCS#7 enabled, the plaintext may have any length, but the result is
-PKCS#7-padded BELT, **not** the STB CTS construction. BELT-CFB and BELT-CTR
-accept arbitrary input lengths and emit bytes on each EVP update.
+it with `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad`.
+Without padding, inputs of at least 16 bytes are accepted, including a partial
+last block: the provider uses Bee2's STB ciphertext stealing (CTS). An incomplete
+block is retained until finalization, so the last one or two blocks can be
+emitted by `EVP_CipherFinal_ex()`. With PKCS#7 enabled, plaintext may have any
+length, but the result is PKCS#7-padded BELT, **not** the STB CTS construction.
+BELT-CFB, BELT-CTR, BELT-CHE/DWP, BASH-PRG-AE and BELT-KWP accept non-aligned
+input lengths. BELT-KWP requires at least 16 bytes of plaintext. BELT-BDE and
+BELT-SDE still require complete 16-byte blocks (SDE requires at least 32 bytes).
 BELT-CBC exposes its current chaining value through
 `EVP_CIPHER_CTX_get_updated_iv()`; BELT-CFB and BELT-CTR also expose the
 current byte offset through `OSSL_CIPHER_PARAM_NUM`.

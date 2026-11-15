@@ -6,6 +6,7 @@
  *   BELT-CBC  — Cipher Block Chaining
  *   BELT-CFB  — Cipher Feedback (streaming; supports partial last block)
  *   BELT-CTR  — Counter mode (streaming; supports partial last block)
+ *   ECB/CBC without padding use Bee2 ciphertext stealing for final partial blocks.
  *   BELT-BDE  — Block Disk Encryption (XEX-based tweakable block cipher)
  *
  * Key  : 16/24/32 bytes (128/192/256-bit)
@@ -195,6 +196,32 @@ static void belt_process_block(bee2_belt_ctx_t *c, const octet *in, octet *out) 
         memcpy(c->updated_iv, out, sizeof(c->updated_iv));
 }
 
+/* Bee2's ECB/CBC ciphertext stealing requires the final complete block
+ * together with any trailing bytes; earlier blocks advance its state. */
+static void belt_process_tail(bee2_belt_ctx_t *c, const octet *input,
+                              size_t count, octet *output) {
+    octet tail[2 * BELT_BLOCK_SIZE];
+
+    memcpy(tail, input, count);
+    if (c->mode == &belt_ecb_mode) {
+        if (c->enc)
+            beltECBStepE(tail, count, &c->backend_state.state);
+        else
+            beltECBStepD(tail, count, &c->backend_state.state);
+    } else {
+        if (!c->enc)
+            memcpy(c->updated_iv, tail, BELT_BLOCK_SIZE);
+        if (c->enc)
+            beltCBCStepE(tail, count, &c->backend_state.state);
+        else
+            beltCBCStepD(tail, count, &c->backend_state.state);
+        if (c->enc)
+            memcpy(c->updated_iv, tail, BELT_BLOCK_SIZE);
+    }
+    memcpy(output, tail, count);
+    OPENSSL_cleanse(tail, sizeof(tail));
+}
+
 /* ------------------------------------------------------------------ */
 /*  Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
@@ -331,7 +358,9 @@ static int belt_update(void *vctx,
     bee2_belt_ctx_t *c = vctx;
     size_t written = 0, original_inl = inl, full_blocks;
     unsigned char *copy = NULL;
-    int hold_last = !c->enc && c->padding;
+    int hold_last = (!c->enc && c->padding) ||
+                    (!c->padding && (c->mode == &belt_ecb_mode ||
+                                    c->mode == &belt_cbc_mode));
 
     *outl = 0;
     if (c->finalized || !c->backend_state.key_set ||
@@ -438,6 +467,26 @@ static int belt_final(void *vctx, unsigned char *out, size_t *outl, size_t outsi
         return 1;
     }
     if (!c->padding) {
+        if (c->mode == &belt_ecb_mode || c->mode == &belt_cbc_mode) {
+            octet tail[2 * BELT_BLOCK_SIZE];
+
+            /* Bee2 ECB/CBC require at least one complete block. */
+            if (!c->have_last)
+                return 0;
+            length = BELT_BLOCK_SIZE + c->buf_len;
+            if (!out || outsize < length)
+                return 0;
+            memcpy(tail, c->last, BELT_BLOCK_SIZE);
+            if (c->buf_len != 0)
+                memcpy(tail + BELT_BLOCK_SIZE, c->buf, c->buf_len);
+            belt_process_tail(c, tail, length, out);
+            OPENSSL_cleanse(tail, sizeof(tail));
+            c->have_last = 0;
+            c->buf_len = 0;
+            c->finalized = 1;
+            *outl = length;
+            return 1;
+        }
         if (c->buf_len != 0)
             return 0;
         c->finalized = 1;

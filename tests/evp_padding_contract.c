@@ -102,24 +102,33 @@ static int test_invalid_padding(EVP_CIPHER *cipher, const unsigned char *key,
 static int test_no_padding(EVP_CIPHER *cipher, const unsigned char *key,
                            const unsigned char *iv)
 {
-    unsigned char input[2 * BLOCK_SIZE + 1] = {0};
-    unsigned char output[4 * BLOCK_SIZE] = {0};
-    unsigned char decoded[4 * BLOCK_SIZE] = {0};
-    size_t clen = 0, plen = 0;
+    static const size_t lengths[] = {16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65};
+    unsigned char input[MESSAGE_MAX] = {0};
+    unsigned char whole[MESSAGE_MAX + 2 * BLOCK_SIZE] = {0};
+    unsigned char split[MESSAGE_MAX + 2 * BLOCK_SIZE] = {0};
+    unsigned char decoded[MESSAGE_MAX + 2 * BLOCK_SIZE] = {0};
+    size_t clen = 0, slen = 0, plen = 0;
     size_t i;
 
     for (i = 0; i < sizeof(input); i++)
         input[i] = (unsigned char)(i * 13 + 19);
-    if (!crypt(cipher, 1, 0, 1, key, iv, input, sizeof(input) - 1, output, &clen) ||
-        clen != sizeof(input) - 1 ||
-        !crypt(cipher, 0, 0, 1, key, iv, output, clen, decoded, &plen) ||
-        plen != clen || CRYPTO_memcmp(input, decoded, clen) != 0) {
-        fprintf(stderr, "unpadded roundtrip failed\n");
-        return 0;
+    for (i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+        size_t n = lengths[i];
+        if (!crypt(cipher, 1, 0, 0, key, iv, input, n, whole, &clen) ||
+            !crypt(cipher, 1, 0, 1, key, iv, input, n, split, &slen) ||
+            clen != n || slen != n || CRYPTO_memcmp(whole, split, n) != 0 ||
+            !crypt(cipher, 0, 0, 1, key, iv, whole, clen, decoded, &plen) ||
+            plen != n || CRYPTO_memcmp(input, decoded, n) != 0) {
+            fprintf(stderr, "unpadded ciphertext-stealing failure at length %zu\n", n);
+            return 0;
+        }
     }
-    if (crypt(cipher, 1, 0, 1, key, iv, input, sizeof(input), output, &clen)) {
-        fprintf(stderr, "unpadded non-block-aligned input was accepted\n");
-        return 0;
+    for (i = 0; i < BLOCK_SIZE; i++) {
+        if (crypt(cipher, 1, 0, 1, key, iv, input, i, whole, &clen) ||
+            crypt(cipher, 0, 0, 1, key, iv, input, i, decoded, &plen)) {
+            fprintf(stderr, "short unpadded ECB/CBC input accepted at length %zu\n", i);
+            return 0;
+        }
     }
     return 1;
 }
