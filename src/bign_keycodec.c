@@ -701,52 +701,99 @@ cleanup:
     return ok;
 }
 
-static int read_all(BIO *in, unsigned char **out, size_t *out_len) {
-    unsigned char *buf = NULL;
-    size_t cap = 0;
-    size_t used = 0;
-    unsigned char tmp[4096];
-
-    if (!in || !out || !out_len)
-        return 0;
-    *out = NULL;
-    *out_len = 0;
-
-    for (;;) {
+/* A decoder consumes one record, not the entire underlying stream. */
+static int read_exact(BIO *bio, unsigned char *out, size_t len) {
+    while (len != 0) {
         size_t n = 0;
-        if (!BIO_read_ex(in, tmp, sizeof(tmp), &n)) {
-            /* A core BIO may not implement BIO_CTRL_EOF. A failed read
-             * without a retry condition is its end-of-input indication. */
-            if (n == 0 && !BIO_should_retry(in))
-                break;
-            goto err;
-        }
-        if (n == 0)
-            break;
-        if (used > BIGN_MAX_KEY_INPUT || n > BIGN_MAX_KEY_INPUT - used ||
-            !append_bytes(&buf, &used, &cap, tmp, n))
-            goto err;
+        if (!BIO_read_ex(bio, out, len, &n) || n == 0)
+            return 0;
+        out += n;
+        len -= n;
     }
-
-    *out = buf;
-    *out_len = used;
     return 1;
+}
 
-err:
-    OPENSSL_clear_free(buf, cap);
+static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
+    unsigned char header[5] = {0x30}, *der;
+    size_t headlen = 2, bodylen = 0, i;
+    unsigned int count;
+
+    if (!read_exact(bio, header + 1, 1))
+        return 0;
+    if (header[1] < 128) {
+        bodylen = header[1];
+    } else {
+        count = header[1] & 127u;
+        if (count == 0 || count > 3 ||
+            !read_exact(bio, header + 2, count) || header[2] == 0)
+            return 0;
+        headlen += count;
+        for (i = 0; i < count; ++i)
+            bodylen = (bodylen << 8) | header[i + 2];
+        if (bodylen < 128)
+            return 0;
+    }
+    if (bodylen > BIGN_MAX_KEY_INPUT - headlen)
+        return 0;
+    der = OPENSSL_malloc(headlen + bodylen);
+    if (!der)
+        return 0;
+    memcpy(der, header, headlen);
+    if (!read_exact(bio, der + headlen, bodylen)) {
+        OPENSSL_clear_free(der, headlen + bodylen);
+        return 0;
+    }
+    *out = der;
+    *len = headlen + bodylen;
+    return 1;
+}
+
+static int read_pem_object(BIO *bio, unsigned char first,
+                           unsigned char **out, size_t *len) {
+    static const char begin[] = "-----BEGIN ";
+    static const char end[] = "-----END ";
+    unsigned char *buf = NULL, ch = first;
+    size_t used = 0, capacity = 0;
+    int begun = 0, ending = 0;
+
+    /* Bytewise reads avoid read-ahead even for core BIOs lacking BIO_gets. */
+    for (;;) {
+        if (used == BIGN_MAX_KEY_INPUT ||
+            !append_bytes(&buf, &used, &capacity, &ch, 1))
+            break;
+        if (!begun && used >= sizeof(begin) - 1 &&
+            memcmp(buf + used - (sizeof(begin) - 1), begin, sizeof(begin) - 1) == 0)
+            begun = 1;
+        if (begun && !ending && used >= sizeof(end) - 1 &&
+            memcmp(buf + used - (sizeof(end) - 1), end, sizeof(end) - 1) == 0)
+            ending = 1;
+        if (ending && used >= 5 && memcmp(buf + used - 5, "-----", 5) == 0) {
+            *out = buf;
+            *len = used;
+            return 1;
+        }
+        if (!read_exact(bio, &ch, 1))
+            break;
+    }
+    OPENSSL_clear_free(buf, capacity);
     return 0;
 }
 
-static int is_pem_data(const unsigned char *buf, size_t len) {
-    static const unsigned char marker[] = "-----BEGIN";
-    size_t offset;
+static int read_one_object(BIO *bio, unsigned char **out, size_t *len) {
+    unsigned char first;
+    size_t n = 0;
 
-    if (!buf || len < sizeof(marker) - 1)
+    if (!bio || !out || !len)
         return 0;
-    for (offset = 0; offset <= len - (sizeof(marker) - 1); ++offset) {
-        if (memcmp(buf + offset, marker, sizeof(marker) - 1) == 0)
-            return 1;
-    }
+    *out = NULL;
+    *len = 0;
+    if (!BIO_read_ex(bio, &first, 1, &n) || n == 0)
+        return !BIO_should_retry(bio);
+    if (first == 0x30)
+        return read_der_object(bio, out, len);
+    if (first == '\t' || first == '\r' || first == '\n' ||
+        (first >= 0x20 && first <= 0x7e))
+        return read_pem_object(bio, first, out, len);
     return 0;
 }
 
@@ -1232,7 +1279,7 @@ static int bign_decoder_decode(void *vctx,
 
     if (bio == NULL)
         return 0;
-    read_ok = read_all(bio, &buf, &len);
+    read_ok = read_one_object(bio, &buf, &len);
     BIO_free(bio);
     if (!read_ok)
         return 0;
@@ -1243,7 +1290,7 @@ static int bign_decoder_decode(void *vctx,
 
     unsigned char *der = buf;
     size_t der_len = len;
-    int is_pem = is_pem_data(buf, len);
+    int is_pem = buf[0] != 0x30;
     char *pem_name = NULL;
     if (is_pem) {
         der = pem_to_der_buf(buf, len, &der_len, &pem_name);
