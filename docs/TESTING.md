@@ -64,7 +64,7 @@ The standard CTest run includes `bee2_evp_streaming_contract`, six
 `bee2_bign_asn1_negative`, `bee2_bign_der_framing`, `bee2_sde_min_sector`,
 `bee2_bde_mode_metadata`, `bee2_brng_contract`, and
 `bee2_provider_isolation`. These cover CFB/CTR streaming, ECB/CBC PKCS#7
-padding and unpadded ciphertext stealing (including split updates), modified ciphertext rejection, malformed
+padding and one-shot ciphertext stealing (aligned data also support split updates), modified ciphertext rejection, malformed
 PKCS#8 and SPKI structures, and public-key validation. The ASN.1 key
 reader rejects inputs exceeding 1 MiB. The RAND contract test verifies that
 unsupported features fail explicitly; provider isolation uses a null global

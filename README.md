@@ -42,8 +42,9 @@ BELT-ECB and BELT-CBC use PKCS#7 padding by default. Applications can disable
 it with `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad`.
 Without padding, inputs of at least 16 bytes are accepted, including a partial
 last block: the provider uses Bee2's STB ciphertext stealing (CTS). An incomplete
-block is retained until finalization, so the last one or two blocks can be
-emitted by `EVP_CipherFinal_ex()`. With PKCS#7 enabled, plaintext may have any
+partial input must be supplied in one final `EVP_CipherUpdate()` call of at
+least 16 bytes; CTS output is emitted by Update and no subsequent input is
+allowed before Final. Aligned blocks can still be streamed across updates. With PKCS#7 enabled, plaintext may have any
 length, but the result is PKCS#7-padded BELT, **not** the STB CTS construction.
 BELT-CFB, BELT-CTR, BELT-CHE/DWP, BASH-PRG-AE and BELT-KWP accept non-aligned
 input lengths. BELT-KWP requires at least 16 bytes of plaintext. BELT-BDE and

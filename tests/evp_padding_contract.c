@@ -115,11 +115,21 @@ static int test_no_padding(EVP_CIPHER *cipher, const unsigned char *key,
     for (i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
         size_t n = lengths[i];
         if (!crypt(cipher, 1, 0, 0, key, iv, input, n, whole, &clen) ||
-            !crypt(cipher, 1, 0, 1, key, iv, input, n, split, &slen) ||
-            clen != n || slen != n || CRYPTO_memcmp(whole, split, n) != 0 ||
-            !crypt(cipher, 0, 0, 1, key, iv, whole, clen, decoded, &plen) ||
+            clen != n ||
+            !crypt(cipher, 0, 0, 0, key, iv, whole, clen, decoded, &plen) ||
             plen != n || CRYPTO_memcmp(input, decoded, n) != 0) {
             fprintf(stderr, "unpadded ciphertext-stealing failure at length %zu\n", n);
+            return 0;
+        }
+        /* Partial final blocks use one Update; aligned data remain streamable. */
+        if (n % BLOCK_SIZE == 0) {
+            if (!crypt(cipher, 1, 0, 1, key, iv, input, n, split, &slen) ||
+                slen != n || CRYPTO_memcmp(whole, split, n) != 0 ||
+                !crypt(cipher, 0, 0, 1, key, iv, whole, n, decoded, &plen) ||
+                plen != n || CRYPTO_memcmp(input, decoded, n) != 0)
+                return 0;
+        } else if (crypt(cipher, 1, 0, 1, key, iv, input, n, split, &slen)) {
+            fprintf(stderr, "unsupported split CTS input accepted at length %zu\n", n);
             return 0;
         }
     }
