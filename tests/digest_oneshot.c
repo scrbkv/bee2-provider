@@ -101,6 +101,8 @@ static int test_variant(OSSL_PROVIDER *provider, const OSSL_ALGORITHM *algs,
         EVP_DigestUpdate(ctx, NULL, 1) > 0 ||
         !EVP_DigestUpdate(ctx, data, 1) ||
         EVP_DigestFinal_ex(ctx, NULL, &streamed_len) > 0 ||
+        !EVP_DigestInit_ex2(ctx, md, NULL) ||
+        !EVP_DigestUpdate(ctx, data, 1) ||
         !EVP_DigestFinal_ex(ctx, streamed, &streamed_len) ||
         streamed_len != variant->size)
         goto end;
