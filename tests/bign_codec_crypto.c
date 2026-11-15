@@ -132,7 +132,7 @@ cleanup:
     return ok;
 }
 
-/* Check that decoding does not require EOF or swallow the next DER key. */
+/* Check record boundaries for DER and PEM, and open-stream DER decoding. */
 static int check_key_stream(EVP_PKEY *key, const char *format)
 {
     OSSL_ENCODER_CTX *encoder = NULL;
@@ -177,14 +177,18 @@ static int check_key_stream(EVP_PKEY *key, const char *format)
     EVP_PKEY_free(decoded);
     decoded = NULL;
 
-    if (!BIO_new_bio_pair(&reader, 0, &writer, 0) ||
-        BIO_write(writer, data->data, (int)data->length) != (int)data->length)
-        goto cleanup;
-    decoder = OSSL_DECODER_CTX_new_for_pkey(
-        &decoded, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
-    if (!decoder || OSSL_DECODER_from_bio(decoder, reader) <= 0 ||
-        !decoded || !same_private_key(key, decoded))
-        goto cleanup;
+    /* OpenSSL's generic PEM decoder requires EOF on BIO pairs; the
+     * provider's DER reader can finish as soon as the DER body arrives. */
+    if (strcmp(format, "DER") == 0) {
+        if (!BIO_new_bio_pair(&reader, 0, &writer, 0) ||
+            BIO_write(writer, data->data, (int)data->length) != (int)data->length)
+            goto cleanup;
+        decoder = OSSL_DECODER_CTX_new_for_pkey(
+            &decoded, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+        if (!decoder || OSSL_DECODER_from_bio(decoder, reader) <= 0 ||
+            !decoded || !same_private_key(key, decoded))
+            goto cleanup;
+    }
     ok = 1;
 
 cleanup:
