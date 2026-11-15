@@ -221,6 +221,61 @@ end:
     return ok;
 }
 
+static int test_bash_zero_iv(void)
+{
+    EVP_CIPHER *cipher = NULL;
+    EVP_CIPHER_CTX *ctx = NULL;
+    unsigned char key[16], aad[17], input[33], expected[33], actual[33];
+    unsigned char expected_tag[16], tag[16];
+    size_t iv_len = 0;
+    OSSL_PARAM iv_params[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &iv_len),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM tag_params[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, sizeof(tag)),
+        OSSL_PARAM_END
+    };
+    void *state = NULL;
+    int got = 0, final_len = 0, ok = 0;
+
+    test_bytes(key, sizeof(key), 4);
+    test_bytes(aad, sizeof(aad), 3);
+    test_bytes(input, sizeof(input), 4);
+    memcpy(expected, input, sizeof(input));
+    state = OPENSSL_zalloc(bashPrg_keep());
+    if (!state)
+        goto cleanup;
+    bashPrgStart(state, 128, 1, NULL, 0, key, sizeof(key));
+    bashPrgAbsorb(aad, sizeof(aad), state);
+    bashPrgEncr(expected, sizeof(expected), state);
+    bashPrgSqueeze(expected_tag, sizeof(expected_tag), state);
+
+    cipher = EVP_CIPHER_fetch(NULL, "bash-prg-ae1281", "provider=bee2");
+    ctx = EVP_CIPHER_CTX_new();
+    if (!cipher || !ctx ||
+        EVP_EncryptInit_ex2(ctx, cipher, key, NULL, iv_params) <= 0 ||
+        EVP_EncryptUpdate(ctx, NULL, &got, aad, sizeof(aad)) <= 0 ||
+        EVP_EncryptUpdate(ctx, actual, &got, input, sizeof(input)) <= 0 ||
+        got != (int)sizeof(input) ||
+        EVP_EncryptFinal_ex(ctx, actual + got, &final_len) <= 0 ||
+        final_len != 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, tag_params) <= 0 ||
+        !same(actual, expected, sizeof(expected)) ||
+        !same(tag, expected_tag, sizeof(tag)))
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "BASH-PRGAE zero-IV interoperability failed\n");
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
+    OPENSSL_clear_free(state, bashPrg_keep());
+    OPENSSL_cleanse(key, sizeof(key));
+    return ok;
+}
+
 static int test_hash(const char *name, size_t level, size_t length, int profile)
 {
     unsigned char input[1024], actual[64], expected[64];
@@ -397,7 +452,7 @@ int main(int argc, char **argv)
                 if (!test_mac(16 + 8 * i, n, profile))
                     goto end;
         }
-    if (!test_pbkdf_empty_boundaries())
+    if (!test_pbkdf_empty_boundaries() || !test_bash_zero_iv())
         goto end;
     ok = 1;
 end:

@@ -59,6 +59,7 @@ typedef struct {
 
     int enc; /* 1 = encrypt, 0 = decrypt */
     int data_started;
+    int aad_started;
 
     size_t iv_len;
     size_t key_len;
@@ -74,6 +75,7 @@ typedef struct {
 
 static void bash_prgae_reinit(bee2_bash_prgae_ctx_t *c) {
     c->data_started = 0;
+    c->aad_started = 0;
     c->finalized = 0;
     c->tag_set = 0;
     memset(c->tag, 0, sizeof(c->tag));
@@ -218,6 +220,7 @@ static int bash_prgae_update(void *vctx,
         /* AAD */
         if (c->data_started)
             return 0;
+        c->aad_started = 1;
         bashPrgAbsorb(in, inl, &c->backend_state.state);
     } else {
         /* plaintext / ciphertext */
@@ -406,6 +409,7 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     size_t new_key_len = c->key_len;
     size_t new_iv_len = c->iv_len;
     int set_tag = 0;
+    int set_ivlen = 0;
     int reset_iv = 0;
 
     if (!params)
@@ -439,8 +443,9 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
 
         if (!OSSL_PARAM_get_size_t(p, &ivlen) ||
             ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u ||
-            c->data_started || c->finalized)
+            c->data_started || c->aad_started || c->finalized)
             return 0;
+        set_ivlen = 1;
         new_iv_len = ivlen;
         reset_iv = c->backend_state.iv_set && c->backend_state.iv_len != ivlen;
     }
@@ -450,6 +455,13 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     if (reset_iv) {
         OPENSSL_cleanse(c->backend_state.iv, sizeof(c->backend_state.iv));
         c->backend_state.iv_set = 0;
+    }
+    if (set_ivlen && new_iv_len == 0) {
+        /* Bee2 accepts an empty announcement as an explicit IV value. */
+        c->backend_state.iv_len = 0;
+        c->backend_state.iv_set = 1;
+        if (c->backend_state.key_set)
+            bash_prgae_reinit(c);
     }
     if (set_tag) {
         memcpy(c->tag, tag, tag_len);

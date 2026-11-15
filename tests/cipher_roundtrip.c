@@ -198,16 +198,16 @@ cleanup:
     return rejected;
 }
 
-static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed) {
+static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed, size_t plain_len) {
     int ok = 0;
     EVP_CIPHER *cipher = NULL;
     EVP_CIPHER_CTX *enc = NULL;
     EVP_CIPHER_CTX *dec = NULL;
     unsigned char key[32];
     unsigned char iv[32];
-    unsigned char pt[32];
-    unsigned char ct[64];
-    unsigned char rt[48];
+    unsigned char pt[64];
+    unsigned char ct[96];
+    unsigned char rt[80];
     int outl = 0;
     int tmplen = 0;
     int ct_len = 0;
@@ -230,11 +230,11 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed) {
 
     fill_bytes(key, tc->key_len, (unsigned char)(seed ^ 0x41u));
     fill_bytes(iv, tc->iv_len, (unsigned char)(seed ^ 0x42u));
-    fill_bytes(pt, sizeof(pt), (unsigned char)(seed ^ 0x43u));
+    fill_bytes(pt, plain_len, (unsigned char)(seed ^ 0x43u));
 
     if (EVP_EncryptInit_ex2(enc, cipher, key, iv, NULL) != 1 ||
         EVP_CIPHER_CTX_set_padding(enc, 0) != 1 ||
-        EVP_EncryptUpdate(enc, ct, &outl, pt, (int)sizeof(pt)) != 1) {
+        EVP_EncryptUpdate(enc, ct, &outl, pt, (int)plain_len) != 1) {
         fprintf(stderr, "[FAIL] wrapping with %s\n", tc->name);
         goto cleanup;
     }
@@ -244,6 +244,8 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed) {
         goto cleanup;
     }
     ct_len += tmplen;
+    if ((size_t)ct_len != plain_len + 16u)
+        goto cleanup;
 
     if (EVP_DecryptInit_ex2(dec, cipher, key, iv, NULL) != 1 ||
         EVP_CIPHER_CTX_set_padding(dec, 0) != 1 ||
@@ -257,7 +259,7 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed) {
         goto cleanup;
     }
     rt_len += tmplen;
-    if (rt_len != (int)sizeof(pt) || CRYPTO_memcmp(rt, pt, sizeof(pt)) != 0) {
+    if (rt_len != (int)plain_len || CRYPTO_memcmp(rt, pt, plain_len) != 0) {
         fprintf(stderr, "[FAIL] wrap roundtrip mismatch for %s\n", tc->name);
         goto cleanup;
     }
@@ -559,8 +561,15 @@ int main(int argc, char **argv) {
         if (!should_run_alg(selected_alg, kwp_cases[i].name))
             continue;
         ran = 1;
-        if (!run_kwp_roundtrip(&kwp_cases[i], (unsigned char)(0xC0u + i)))
-            goto cleanup;
+        {
+            static const size_t kwp_lengths[] = {16, 17, 31, 32, 33, 63};
+            size_t j;
+
+            for (j = 0; j < sizeof(kwp_lengths) / sizeof(kwp_lengths[0]); j++)
+                if (!run_kwp_roundtrip(&kwp_cases[i], (unsigned char)(0xC0u + i),
+                                       kwp_lengths[j]))
+                    goto cleanup;
+        }
     }
     if (!ran) {
         fprintf(stderr, "[FAIL] unknown algorithm selector: %s\n", selected_alg);
