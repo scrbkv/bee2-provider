@@ -222,6 +222,69 @@ cleanup:
     return ok;
 }
 
+/* Foreign encrypted PKCS#8 objects must remain decodable when the BIGN
+ * decoder is loaded alongside OpenSSL's default provider. */
+static int check_foreign_key(const char *algorithm, const char *format, int encrypted)
+{
+    EVP_PKEY_CTX *gen = NULL;
+    EVP_PKEY *original = NULL, *decoded = NULL;
+    OSSL_ENCODER_CTX *encoder = NULL;
+    OSSL_DECODER_CTX *decoder = NULL;
+    BIO *output = NULL, *input = NULL;
+    BUF_MEM *data = NULL;
+    int ok = 0;
+
+    gen = EVP_PKEY_CTX_new_from_name(NULL, algorithm, "provider=default");
+    if (!gen || EVP_PKEY_keygen_init(gen) <= 0)
+        goto cleanup;
+    if (strcmp(algorithm, "RSA") == 0) {
+        if (EVP_PKEY_CTX_set_rsa_keygen_bits(gen, 2048) <= 0)
+            goto cleanup;
+    } else if (EVP_PKEY_CTX_set_group_name(gen, "prime256v1") <= 0) {
+        goto cleanup;
+    }
+    if (EVP_PKEY_generate(gen, &original) <= 0)
+        goto cleanup;
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        original, OSSL_KEYMGMT_SELECT_KEYPAIR, format, "PrivateKeyInfo", "provider=default");
+    output = BIO_new(BIO_s_mem());
+    if (!encoder || !output)
+        goto cleanup;
+    if (encrypted &&
+        (!OSSL_ENCODER_CTX_set_cipher(encoder, "AES-256-CBC", NULL) ||
+         !OSSL_ENCODER_CTX_set_passphrase(encoder, password, sizeof(password) - 1)))
+        goto cleanup;
+    if (!OSSL_ENCODER_to_bio(encoder, output) ||
+        !BIO_get_mem_ptr(output, &data) || !data || data->length > INT_MAX)
+        goto cleanup;
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &decoded, format, NULL, NULL, OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+    input = BIO_new_mem_buf(data->data, (int)data->length);
+    if (!decoder || !input ||
+        (encrypted && !OSSL_DECODER_CTX_set_passphrase(
+                           decoder, password, sizeof(password) - 1)) ||
+        OSSL_DECODER_from_bio(decoder, input) <= 0 ||
+        !decoded || !EVP_PKEY_is_a(decoded, algorithm) ||
+        EVP_PKEY_eq(original, decoded) != 1)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok) {
+        fprintf(stderr, "%s %s %s key loading with BIGN provider failed\n",
+                algorithm, format, encrypted ? "encrypted" : "plain");
+        ERR_print_errors_fp(stderr);
+    }
+    BIO_free(input);
+    BIO_free(output);
+    OSSL_DECODER_CTX_free(decoder);
+    OSSL_ENCODER_CTX_free(encoder);
+    EVP_PKEY_free(original);
+    EVP_PKEY_free(decoded);
+    EVP_PKEY_CTX_free(gen);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *const names[] = {"bign-256", "bign-384", "bign-512"};
@@ -253,6 +316,11 @@ int main(int argc, char **argv)
         }
         EVP_PKEY_free(key);
         key = NULL;
+    }
+    for (i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i) {
+        if (!check_foreign_key("RSA", formats[i], 1) ||
+            !check_foreign_key("EC", formats[i], 1))
+            goto cleanup;
     }
     ok = 1;
 
