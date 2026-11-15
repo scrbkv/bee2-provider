@@ -1,5 +1,6 @@
 /* BIGN key serialization, including encrypted PKCS#8 PEM and DER. */
 #include <limits.h>
+#include <openssl/asn1t.h>
 #include <openssl/buffer.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
@@ -8,6 +9,8 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -129,6 +132,50 @@ cleanup:
     return ok;
 }
 
+/* Verify the DER PBES2 parameters, independently of successful decryption. */
+static int check_pbkdf2_params(const BUF_MEM *data)
+{
+    const unsigned char *p = (const unsigned char *)data->data;
+    const ASN1_OBJECT *oid = NULL;
+    const void *value = NULL;
+    const X509_ALGOR *algorithm = NULL;
+    X509_SIG *encrypted = NULL;
+    PBE2PARAM *pbes2 = NULL;
+    PBKDF2PARAM *pbkdf2 = NULL;
+    int type = 0, ok = 0;
+
+    if (data->length > LONG_MAX)
+        return 0;
+    encrypted = d2i_X509_SIG(NULL, &p, (long)data->length);
+    if (!encrypted || p != (const unsigned char *)data->data + data->length)
+        goto cleanup;
+    X509_SIG_get0(encrypted, &algorithm, NULL);
+    X509_ALGOR_get0(&oid, &type, &value, algorithm);
+    if (OBJ_obj2nid(oid) != NID_pbes2 || type != V_ASN1_SEQUENCE || !value)
+        goto cleanup;
+    pbes2 = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
+    if (!pbes2)
+        goto cleanup;
+    X509_ALGOR_get0(&oid, &type, &value, pbes2->keyfunc);
+    if (OBJ_obj2nid(oid) != NID_id_pbkdf2 || type != V_ASN1_SEQUENCE || !value)
+        goto cleanup;
+    pbkdf2 = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
+    if (!pbkdf2 || !pbkdf2->salt || !pbkdf2->iter ||
+        pbkdf2->salt->type != V_ASN1_OCTET_STRING ||
+        ASN1_INTEGER_get(pbkdf2->iter) != 10000 ||
+        ASN1_STRING_length(pbkdf2->salt->value.octet_string) != 16)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "BIGN encrypted PKCS#8 PBKDF2 parameters are incorrect\n");
+    PBKDF2PARAM_free(pbkdf2);
+    PBE2PARAM_free(pbes2);
+    X509_SIG_free(encrypted);
+    return ok;
+}
+
 static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
 {
     OSSL_ENCODER_CTX *encoder = NULL;
@@ -149,7 +196,8 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
     if (!OSSL_ENCODER_to_bio(encoder, output) || !BIO_get_mem_ptr(output, &data) ||
         data == NULL || data->length == 0)
         goto cleanup;
-    if (!decode_key(&decoded, format, data, password, sizeof(password) - 1) ||
+    if ((encrypted && strcmp(format, "DER") == 0 && !check_pbkdf2_params(data)) ||
+        !decode_key(&decoded, format, data, password, sizeof(password) - 1) ||
         decoded == NULL || !same_private_key(key, decoded))
         goto cleanup;
 
