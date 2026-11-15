@@ -710,11 +710,15 @@ static int read_all(BIO *in, unsigned char **out, size_t *out_len) {
 
     for (;;) {
         size_t n = 0;
-        if (!BIO_read_ex(in, tmp, sizeof(tmp), &n) || n == 0) {
-            if (BIO_eof(in) == 1)
+        if (!BIO_read_ex(in, tmp, sizeof(tmp), &n)) {
+            /* A core BIO may not implement BIO_CTRL_EOF. A failed read
+             * without a retry condition is its end-of-input indication. */
+            if (n == 0 && !BIO_should_retry(in))
                 break;
             goto err;
         }
+        if (n == 0)
+            break;
         if (used > BIGN_MAX_KEY_INPUT || n > BIGN_MAX_KEY_INPUT - used ||
             !append_bytes(&buf, &used, &cap, tmp, n))
             goto err;
