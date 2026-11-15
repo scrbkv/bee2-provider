@@ -401,44 +401,59 @@ static int bash_prgae_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
 static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_bash_prgae_ctx_t *c = vctx;
     const OSSL_PARAM *p;
+    const void *tag = NULL;
+    size_t tag_len = 0;
+    size_t new_key_len = c->key_len;
+    size_t new_iv_len = c->iv_len;
+    int set_tag = 0;
+    int reset_iv = 0;
+
+    if (!params)
+        return 1;
 
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_KEYLEN);
     if (p != NULL) {
         size_t klen;
         if (!OSSL_PARAM_get_size_t(p, &klen))
             return 0;
-        if (klen < c->variant->min_key_size || klen > BASH_PRGAE_MAX_KEY_SIZE)
+        if (klen < c->variant->min_key_size || klen > BASH_PRGAE_MAX_KEY_SIZE ||
+            klen % 4u != 0u)
             return 0;
         if (c->backend_state.key_set && klen != c->backend_state.key_len)
             return 0;
-        c->key_len = klen;
+        new_key_len = klen;
     }
 
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_AEAD_TAG);
     if (p != NULL) {
-        const void *tag = NULL;
-        size_t tag_len = 0;
         if (!OSSL_PARAM_get_octet_string_ptr(p, &tag, &tag_len))
             return 0;
         if (c->enc || c->finalized || tag == NULL || tag_len != c->variant->mac_size)
             return 0;
-        memcpy(c->tag, tag, tag_len);
-        c->tag_set = 1;
+        set_tag = 1;
     }
 
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_IVLEN);
     if (p != NULL) {
         size_t ivlen;
 
-        if (!OSSL_PARAM_get_size_t(p, &ivlen) || ivlen < 4u ||
+        if (!OSSL_PARAM_get_size_t(p, &ivlen) ||
             ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u ||
-            c->data_started)
+            c->data_started || c->finalized)
             return 0;
-        if (c->backend_state.iv_set && c->backend_state.iv_len != ivlen) {
-            OPENSSL_cleanse(c->backend_state.iv, sizeof(c->backend_state.iv));
-            c->backend_state.iv_set = 0;
-        }
-        c->iv_len = ivlen;
+        new_iv_len = ivlen;
+        reset_iv = c->backend_state.iv_set && c->backend_state.iv_len != ivlen;
+    }
+
+    c->key_len = new_key_len;
+    c->iv_len = new_iv_len;
+    if (reset_iv) {
+        OPENSSL_cleanse(c->backend_state.iv, sizeof(c->backend_state.iv));
+        c->backend_state.iv_set = 0;
+    }
+    if (set_tag) {
+        memcpy(c->tag, tag, tag_len);
+        c->tag_set = 1;
     }
     return 1;
 }

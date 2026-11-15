@@ -694,7 +694,10 @@ static int belt_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
 static int belt_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_belt_ctx_t *c = vctx;
     const OSSL_PARAM *p;
+    int new_padding = c->padding;
 
+    if (!params)
+        return 1;
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_PADDING);
     if (p != NULL) {
         unsigned int padding;
@@ -703,7 +706,7 @@ static int belt_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             (padding != 0 && c->mode != &belt_ecb_mode && c->mode != &belt_cbc_mode) ||
             (c->started && (int)padding != c->padding))
             return 0;
-        c->padding = (int)padding;
+        new_padding = (int)padding;
     }
 
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_KEYLEN);
@@ -714,6 +717,7 @@ static int belt_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         if (klen != c->fixed_key_len)
             return 0;
     }
+    c->padding = new_padding;
     return 1;
 }
 

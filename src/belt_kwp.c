@@ -10,10 +10,10 @@
  *             parameter; defaults to all-zeros when not supplied
  *
  * Lengths:
- *   Plaintext  (encrypt input)  : n × 16 bytes  (n ≥ 1, n ≤ 32)
- *   Ciphertext (encrypt output) : (n + 1) × 16 bytes
- *   Ciphertext (decrypt input)  : (n + 1) × 16 bytes
- *   Plaintext  (decrypt output) : n × 16 bytes
+ *   Plaintext  (encrypt input)  : any length at least 16 bytes
+ *   Ciphertext (encrypt output) : plaintext length + 16 bytes
+ *   Ciphertext (decrypt input)  : any length at least 32 bytes
+ *   Plaintext  (decrypt output) : ciphertext length - 16 bytes
  *
  * Decryption verifies the recovered header against the initial header (IV).
  * A mismatch is treated as an authentication failure and returns 0.

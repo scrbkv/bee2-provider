@@ -25,6 +25,7 @@ typedef struct {
     int state;
     unsigned int strength;
     size_t max_request;
+    size_t ctr_unused;
     int instantiated;
     unsigned char *key;
     size_t key_len;
@@ -37,6 +38,7 @@ typedef struct {
 
 static void brng_clear_backend(bee2_brng_ctx_t *c) {
     OPENSSL_cleanse(&c->backend, sizeof(c->backend));
+    c->ctr_unused = 0;
     c->instantiated = 0;
     c->state = EVP_RAND_STATE_UNINITIALISED;
 }
@@ -274,6 +276,15 @@ static int brng_generate_ctr(bee2_brng_ctx_t *c,
     unsigned char *additional = NULL;
     size_t pos = 0;
 
+    /* A new X must apply to a new BRNG block. Bee2 otherwise returns
+     * previously reserved bytes without reading the caller's X. Discard
+     * that reserve before processing nonempty additional input. */
+    if (addin_len != 0 && c->ctr_unused != 0) {
+        brngCTRStepR(block, c->ctr_unused, &c->backend);
+        c->ctr_unused = 0;
+        OPENSSL_cleanse(block, sizeof(block));
+    }
+
     /* Copy additional input because it may overlap with the output. The
      * initialized bytes become Bee2's X, and absent bytes are zero-padded. */
     if (addin_len) {
@@ -293,6 +304,11 @@ static int brng_generate_ctr(bee2_brng_ctx_t *c,
             memcpy(block, additional + pos, input);
         brngCTRStepR(block, chunk, &c->backend);
         memcpy(out + pos, block, chunk);
+        if (chunk <= c->ctr_unused)
+            c->ctr_unused -= chunk;
+        else
+            c->ctr_unused =
+                (BRNG_BLOCK_SIZE - (chunk - c->ctr_unused) % BRNG_BLOCK_SIZE) % BRNG_BLOCK_SIZE;
         pos += chunk;
     }
     OPENSSL_cleanse(block, sizeof(block));
