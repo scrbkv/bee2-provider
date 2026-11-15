@@ -5,6 +5,46 @@
 #include <stdio.h>
 #include <string.h>
 
+static int check_ctr_additional_input(void)
+{
+    unsigned char key[32] = {0}, iv[32] = {0};
+    unsigned char first_left, first_right;
+    unsigned char x[16] = {1}, y[16] = {2};
+    unsigned char left_output[16], right_output[16];
+    EVP_RAND *alg = NULL;
+    EVP_RAND_CTX *left = NULL, *right = NULL;
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_KEY, key, sizeof(key)),
+        OSSL_PARAM_octet_string("iv", iv, sizeof(iv)),
+        OSSL_PARAM_END
+    };
+    int ok = 0;
+
+    alg = EVP_RAND_fetch(NULL, "brng-ctr-hbelt", "provider=bee2");
+    if (!alg || !(left = EVP_RAND_CTX_new(alg, NULL)) ||
+        !(right = EVP_RAND_CTX_new(alg, NULL)) ||
+        !EVP_RAND_CTX_set_params(left, params) ||
+        !EVP_RAND_CTX_set_params(right, params) ||
+        !EVP_RAND_instantiate(left, 256, 0, NULL, 0, NULL) ||
+        !EVP_RAND_instantiate(right, 256, 0, NULL, 0, NULL) ||
+        !EVP_RAND_generate(left, &first_left, 1, 256, 0, NULL, 0) ||
+        !EVP_RAND_generate(right, &first_right, 1, 256, 0, NULL, 0) ||
+        first_left != first_right ||
+        !EVP_RAND_generate(left, left_output, sizeof(left_output), 256, 0, x, sizeof(x)) ||
+        !EVP_RAND_generate(right, right_output, sizeof(right_output), 256, 0, y, sizeof(y)) ||
+        CRYPTO_memcmp(left_output, right_output, sizeof(left_output)) == 0)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "BRNG-CTR ignored additional input after a partial block\n");
+    EVP_RAND_CTX_free(right);
+    EVP_RAND_CTX_free(left);
+    EVP_RAND_free(alg);
+    return ok;
+}
+
 static int check_rand(const char *name, int is_hmac) {
     unsigned char key[32] = {0}, iv[32] = {0}, out[64] = {0};
     unsigned char entropy[32] = {1};
@@ -59,7 +99,7 @@ int main(int argc, char **argv) {
     def = OSSL_PROVIDER_load(NULL, "default");
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
     if (def && bee2 && check_rand("brng-ctr-hbelt", 0) &&
-        check_rand("brng-hmac-hbelt", 1))
+        check_rand("brng-hmac-hbelt", 1) && check_ctr_additional_input())
         ok = 1;
     OSSL_PROVIDER_unload(bee2);
     OSSL_PROVIDER_unload(def);

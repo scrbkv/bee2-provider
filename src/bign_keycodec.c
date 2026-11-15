@@ -1217,8 +1217,6 @@ static int bign_decoder_decode(void *vctx,
                                void *data_cbarg,
                                OSSL_PASSPHRASE_CALLBACK *pw_cb,
                                void *pw_cbarg) {
-    (void)selection;
-
     bee2_bign_decoder_ctx_t *ctx = vctx;
     if (!ctx || !data_cb)
         return 0;
@@ -1277,6 +1275,17 @@ static int bign_decoder_decode(void *vctx,
                                                  ctx->libctx, pw_cb, pw_cbarg, &recognized);
         if (!decoded && !recognized)
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
+    }
+
+    if (decoded && selection != 0) {
+        if (((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && !key->has_priv) ||
+            ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !key->has_pub)) {
+            decoded = 0;
+        } else if (!(selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && key->has_priv) {
+            /* A public-only decoder must not export the private scalar. */
+            OPENSSL_cleanse(key->priv, sizeof(key->priv));
+            key->has_priv = 0;
+        }
     }
 
     if (!decoded) {

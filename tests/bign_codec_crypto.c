@@ -48,6 +48,53 @@ cleanup:
     return ok;
 }
 
+static int check_public_only_decoding(EVP_PKEY *key)
+{
+    OSSL_ENCODER_CTX *encoder = NULL;
+    OSSL_DECODER_CTX *decoder = NULL;
+    EVP_PKEY *public_key = NULL;
+    BIO *output = NULL, *input = NULL;
+    BUF_MEM *data = NULL;
+    unsigned char original[128], decoded[128];
+    size_t original_len = 0, decoded_len = 0;
+    int ok = 0;
+
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, "DER", "PrivateKeyInfo", "provider=bee2");
+    output = BIO_new(BIO_s_mem());
+    if (!encoder || !output || !OSSL_ENCODER_to_bio(encoder, output) ||
+        !BIO_get_mem_ptr(output, &data) || !data || data->length > INT_MAX)
+        goto cleanup;
+
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &public_key, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_PUBLIC_KEY, NULL, NULL);
+    input = BIO_new_mem_buf(data->data, (int)data->length);
+    if (!decoder || !input || OSSL_DECODER_from_bio(decoder, input) <= 0 ||
+        !public_key || EVP_PKEY_has(public_key, OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0 ||
+        EVP_PKEY_get_octet_string_param(public_key, OSSL_PKEY_PARAM_PRIV_KEY,
+                                         decoded, sizeof(decoded), &decoded_len) > 0 ||
+        EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
+                                         original, sizeof(original), &original_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(public_key, OSSL_PKEY_PARAM_PUB_KEY,
+                                         decoded, sizeof(decoded), &decoded_len) <= 0 ||
+        original_len != decoded_len ||
+        CRYPTO_memcmp(original, decoded, original_len) != 0)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "BIGN public-only decoder exposed private key or failed\n");
+    OPENSSL_cleanse(original, sizeof(original));
+    OPENSSL_cleanse(decoded, sizeof(decoded));
+    EVP_PKEY_free(public_key);
+    BIO_free(input);
+    BIO_free(output);
+    OSSL_DECODER_CTX_free(decoder);
+    OSSL_ENCODER_CTX_free(encoder);
+    return ok;
+}
+
 static int same_private_key(EVP_PKEY *left, EVP_PKEY *right)
 {
     unsigned char first[128], second[128];
@@ -149,6 +196,8 @@ int main(int argc, char **argv)
     for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         key = generate_key(names[i]);
         if (!key)
+            goto cleanup;
+        if (!check_public_only_decoding(key))
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {
             if (!check_serialization(key, formats[j], 0) ||

@@ -111,6 +111,85 @@ end:
     return ok;
 }
 
+static int check_belt_cipher(void)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, "belt-cbc256", "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    unsigned char key[32] = {0}, iv[16] = {0};
+    unsigned int padding = 0, actual = 0;
+    size_t wrong_key_len = 16;
+    OSSL_PARAM bad[] = {
+        OSSL_PARAM_uint(OSSL_CIPHER_PARAM_PADDING, &padding),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &wrong_key_len),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM get[] = {
+        OSSL_PARAM_uint(OSSL_CIPHER_PARAM_PADDING, &actual),
+        OSSL_PARAM_END
+    };
+    int ok = cipher && ctx &&
+             EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL) > 0 &&
+             EVP_CIPHER_CTX_set_params(ctx, bad) <= 0 &&
+             EVP_CIPHER_CTX_get_params(ctx, get) > 0 && actual == 1;
+
+    if (!ok)
+        fprintf(stderr, "Rejected BELT padding batch changed the context\n");
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
+    return ok;
+}
+
+static int check_bash_prgae(void)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, "bash-prg-ae1281", "provider=bee2");
+    EVP_CIPHER_CTX *enc = EVP_CIPHER_CTX_new(), *dec = EVP_CIPHER_CTX_new();
+    unsigned char key[16] = {0}, iv[16] = {0}, plain[17] = {0};
+    unsigned char ciphertext[17], recovered[17], tag[16], wrong_tag[16];
+    size_t wrong_iv_len = 3;
+    int len = 0, fin = 0, out = 0, ok = 0;
+    OSSL_PARAM gettag[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, sizeof(tag)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM good[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, sizeof(tag)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM bad[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, wrong_tag, sizeof(wrong_tag)),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &wrong_iv_len),
+        OSSL_PARAM_END
+    };
+
+    if (!cipher || !enc || !dec ||
+        EVP_EncryptInit_ex2(enc, cipher, key, iv, NULL) <= 0 ||
+        EVP_EncryptUpdate(enc, ciphertext, &len, plain, sizeof(plain)) <= 0 ||
+        len != (int)sizeof(plain) ||
+        EVP_EncryptFinal_ex(enc, ciphertext + len, &fin) <= 0 ||
+        EVP_CIPHER_CTX_get_params(enc, gettag) <= 0)
+        goto cleanup;
+
+    memcpy(wrong_tag, tag, sizeof(tag));
+    wrong_tag[0] ^= 1;
+    if (EVP_DecryptInit_ex2(dec, cipher, key, iv, NULL) <= 0 ||
+        EVP_CIPHER_CTX_set_params(dec, good) <= 0 ||
+        EVP_CIPHER_CTX_set_params(dec, bad) > 0 ||
+        EVP_DecryptUpdate(dec, recovered, &out, ciphertext, sizeof(ciphertext)) <= 0 ||
+        out != (int)sizeof(recovered) ||
+        EVP_DecryptFinal_ex(dec, recovered + out, &fin) <= 0 ||
+        CRYPTO_memcmp(plain, recovered, sizeof(plain)) != 0)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "Rejected BASH-PRGAE tag/IV batch changed the context\n");
+    EVP_CIPHER_CTX_free(enc);
+    EVP_CIPHER_CTX_free(dec);
+    EVP_CIPHER_free(cipher);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *def = NULL, *bee2 = NULL;
@@ -124,7 +203,8 @@ int main(int argc, char **argv)
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
     if (def == NULL || bee2 == NULL)
         goto end;
-    ok = check_hmac() && check_pbkdf() && check_bign_digest();
+    ok = check_hmac() && check_pbkdf() && check_bign_digest() &&
+         check_belt_cipher() && check_bash_prgae();
 end:
     OSSL_PROVIDER_unload(bee2);
     OSSL_PROVIDER_unload(def);
