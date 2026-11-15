@@ -60,6 +60,7 @@ typedef struct {
     int enc; /* 1 = encrypt, 0 = decrypt */
     int data_started;
 
+    size_t iv_len;
     size_t key_len;
 
     octet tag[32]; /* max mac_size across all variants = 32 bytes */
@@ -93,6 +94,7 @@ static void *bash_prgae_newctx_for_variant(void *provctx, const bash_prgae_varia
     if (!c)
         return NULL;
     c->variant = variant;
+    c->iv_len = variant->iv_size;
     c->key_len = variant->min_key_size;
     return c;
 }
@@ -162,6 +164,7 @@ static int bash_prgae_init(void *vctx,
             return 0;
         memcpy(c->backend_state.iv, iv, ivlen);
         c->backend_state.iv_len = ivlen;
+        c->iv_len = ivlen;
         c->backend_state.iv_set = 1;
     }
 
@@ -346,6 +349,7 @@ static const OSSL_PARAM bee2_bash_prgae_ctx_gettable[] = {
     OSSL_PARAM_END};
 
 static const OSSL_PARAM bee2_bash_prgae_ctx_settable[] = {
+    OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, NULL, 0),
     OSSL_PARAM_END};
@@ -371,7 +375,7 @@ static int bash_prgae_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
         return 0;
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_IVLEN);
-    if (p && !OSSL_PARAM_set_size_t(p, c->variant->iv_size))
+    if (p && !OSSL_PARAM_set_size_t(p, c->iv_len))
         return 0;
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_AEAD_TAGLEN);
@@ -420,6 +424,21 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
             return 0;
         memcpy(c->tag, tag, tag_len);
         c->tag_set = 1;
+
+    p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_IVLEN);
+    if (p != NULL) {
+        size_t ivlen;
+
+        if (!OSSL_PARAM_get_size_t(p, &ivlen) || ivlen < 4u ||
+            ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u ||
+            c->data_started)
+            return 0;
+        if (c->backend_state.iv_set && c->backend_state.iv_len != ivlen) {
+            OPENSSL_cleanse(c->backend_state.iv, sizeof(c->backend_state.iv));
+            c->backend_state.iv_set = 0;
+        }
+        c->iv_len = ivlen;
+    }
     }
     return 1;
 }

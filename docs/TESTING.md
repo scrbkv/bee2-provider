@@ -18,8 +18,10 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The tests use public OpenSSL APIs. They exercise known-answer vectors,
-provider exports, cipher round trips and negative authentication checks,
+The tests use public OpenSSL APIs. The native `bee2_stb_kat` executable
+checks published STB answers for BELT, BASH, HMAC-HBELT, key wrapping,
+PBKDF and BIGN transport. The test suite also exercises provider exports,
+cipher round trips and negative authentication checks,
 BIGN key operations, BRNG and independent library contexts.
 
 When using a custom OpenSSL, pass its installation prefix and executable:

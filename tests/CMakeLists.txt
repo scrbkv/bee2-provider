@@ -7,39 +7,17 @@ find_program(BEE2_OPENSSL_EXECUTABLE NAMES openssl REQUIRED)
 
 option(BEE2_PROVIDER_ENABLE_INTEROP "Register bee2evp engine interoperability tests" OFF)
 
-add_test(
-    NAME bee2_bee2evp_export_parity
-    COMMAND
-        ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/openssl_exports.py
-        --provider-path $<TARGET_FILE_DIR:bee2_provider>
-        --openssl ${BEE2_OPENSSL_EXECUTABLE}
-)
-set_property(TEST bee2_bee2evp_export_parity APPEND PROPERTY LABELS parity regression)
+add_executable(bee2_provider_algorithms provider_algorithms.c)
+target_link_libraries(bee2_provider_algorithms PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_algorithms
+    COMMAND bee2_provider_algorithms $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_algorithms PROPERTIES LABELS "crypto;registration;native")
 
-set(BEE2_OPENSSL_KAT_GROUPS
-    belt-block
-    belt-mac
-    belt-hash
-    hmac-hbelt
-    belt-keyexpand
-    bash-hash
-)
+add_executable(bee2_stb_kat stb_kat.c)
+target_link_libraries(bee2_stb_kat PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_stb_kat COMMAND bee2_stb_kat $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_stb_kat PROPERTIES LABELS "stb;known_answer;crypto;native")
 
-foreach(group IN LISTS BEE2_OPENSSL_KAT_GROUPS)
-    string(REPLACE "-" "_" group_id "${group}")
-    set(test_name "bee2_openssl_kat_${group_id}")
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_kat.py
-            --provider-path $<TARGET_FILE_DIR:bee2_provider>
-            --group ${group}
-            --openssl ${BEE2_OPENSSL_EXECUTABLE}
-    )
-    set_property(TEST ${test_name} APPEND PROPERTY LABELS regression openssl_kat ${group_id})
-endforeach()
 
 if(BEE2_PROVIDER_ENABLE_INTEROP)
 set(BEE2_INTEROP_PROVIDER_OPENSSL "$ENV{BEE2_INTEROP_PROVIDER_OPENSSL}" CACHE STRING
@@ -436,15 +414,7 @@ target_link_libraries(bee2_provider_isolation PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_provider_isolation
     COMMAND bee2_provider_isolation $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_provider_isolation PROPERTIES LABELS "regression;provider;libctx;bign")
-
-# Independent STB appendix checks and provider boundary regressions.
-add_test(
-    NAME bee2_stb_extended_kat
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/stb_extended_kat.py
-        --provider-path $<TARGET_FILE_DIR:bee2_provider>
-        --openssl ${BEE2_OPENSSL_EXECUTABLE}
-)
-set_tests_properties(bee2_stb_extended_kat PROPERTIES LABELS "stb;known_answer;regression")
+# Appendix KATs for BELT and BASH are exercised by bee2_stb_kat above.
 
 add_executable(bee2_belt_aead_stb belt_aead_stb.c)
 target_link_libraries(bee2_belt_aead_stb PRIVATE OpenSSL::Crypto)
@@ -533,3 +503,28 @@ target_link_libraries(bee2_bign_codec_crypto PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bign_codec_crypto
     COMMAND bee2_bign_codec_crypto $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_codec_crypto PROPERTIES LABELS "bign;codec;crypto;native")
+add_executable(bee2_hmac_bash_crypto hmac_bash_crypto.c)
+target_link_libraries(bee2_hmac_bash_crypto PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_hmac_bash_crypto
+    COMMAND bee2_hmac_bash_crypto $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_hmac_bash_crypto PROPERTIES LABELS "crypto;hmac;bash;native")
+
+add_executable(bee2_bign_bake_crypto bign_bake_crypto.c)
+target_include_directories(bee2_bign_bake_crypto SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_bign_bake_crypto PRIVATE bee2_static OpenSSL::Crypto)
+add_test(NAME bee2_bign_bake_crypto
+    COMMAND bee2_bign_bake_crypto $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_bake_crypto PROPERTIES LABELS "crypto;interop;bign;bake;native")
+
+add_executable(bee2_bign_digest_algorithms bign_digest_algorithms.c)
+target_link_libraries(bee2_bign_digest_algorithms PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_digest_algorithms
+    COMMAND bee2_bign_digest_algorithms $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_digest_algorithms PROPERTIES LABELS "crypto;bign;signature;native")
+
+add_executable(bee2_bash_prgae_evp_stb bash_prgae_evp_stb.c)
+target_link_libraries(bee2_bash_prgae_evp_stb PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bash_prgae_evp_stb
+    COMMAND bee2_bash_prgae_evp_stb $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bash_prgae_evp_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
+
