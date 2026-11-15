@@ -133,7 +133,10 @@ static int test_no_padding(EVP_CIPHER *cipher, const unsigned char *key,
             return 0;
         }
     }
-    for (i = 0; i < BLOCK_SIZE; i++) {
+    /* EVP permits an empty no-op; Bee2's CTS minimum applies to nonempty data. */
+    if (!crypt(cipher, 1, 0, 0, key, iv, input, 0, whole, &clen) || clen != 0)
+        return 0;
+    for (i = 1; i < BLOCK_SIZE; i++) {
         if (crypt(cipher, 1, 0, 1, key, iv, input, i, whole, &clen) ||
             crypt(cipher, 0, 0, 1, key, iv, input, i, decoded, &plen)) {
             fprintf(stderr, "short unpadded ECB/CBC input accepted at length %zu\n", i);
