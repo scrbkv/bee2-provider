@@ -229,11 +229,30 @@ static int bign_validate(const void *vkey, int selection, int checktype) {
     return 1;
 }
 
+/* Derive missing public data into a caller-local buffer. Key queries and
+ * exports must not mutate an EVP_PKEY that other threads may be reading. */
+static int bign_public_bytes(const bee2_bign_key_t *key,
+                             unsigned char derived[BEE2_BIGN_MAX_WORDS * 16],
+                             const unsigned char **pub)
+{
+    if (key->has_pub) {
+        *pub = key->pub;
+        return 1;
+    }
+    if (!key->has_priv ||
+        !bee2_bign_derive_pubkey(key->variant, derived, key->priv))
+        return 0;
+    *pub = derived;
+    return 1;
+}
+
 static int bign_get_params(void *vkey, OSSL_PARAM params[]) {
-    bee2_bign_key_t *key = vkey;
-    OSSL_PARAM *p;
-    size_t priv_len;
-    size_t pub_len;
+    const bee2_bign_key_t *key = vkey;
+    OSSL_PARAM *p, *public_param, *encoded_param;
+    const unsigned char *pub = NULL;
+    unsigned char derived[BEE2_BIGN_MAX_WORDS * 16] = {0};
+    size_t priv_len, pub_len;
+    int ok = 0;
 
     if (!key || !key->variant)
         return 0;
@@ -242,55 +261,48 @@ static int bign_get_params(void *vkey, OSSL_PARAM params[]) {
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
     if (p && !OSSL_PARAM_set_utf8_string(p, key->variant->curve_oid))
-        return 0;
+        goto cleanup;
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS);
     if (p && !OSSL_PARAM_set_int(p, (int)key->variant->bits))
-        return 0;
+        goto cleanup;
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_SECURITY_BITS);
     if (p && !OSSL_PARAM_set_int(p, (int)key->variant->security_bits))
-        return 0;
+        goto cleanup;
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_MAX_SIZE);
     if (p && !OSSL_PARAM_set_size_t(p, bee2_bign_sig_len(key->variant)))
-        return 0;
+        goto cleanup;
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_DEFAULT_DIGEST);
     if (p && !OSSL_PARAM_set_utf8_string(p, key->variant->default_digest))
-        return 0;
+        goto cleanup;
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_PRIV_KEY);
-    if (p) {
-        if (!key->has_priv)
-            return 0;
-        if (!OSSL_PARAM_set_octet_string(p, key->priv, priv_len))
-            return 0;
-    }
+    if (p && (!key->has_priv || !OSSL_PARAM_set_octet_string(p, key->priv, priv_len)))
+        goto cleanup;
 
-    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_PUB_KEY);
-    if (p) {
-        if (!bee2_bign_key_ensure_public(key))
-            return 0;
-        if (!OSSL_PARAM_set_octet_string(p, key->pub, pub_len))
-            return 0;
-    }
-
-    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY);
-    if (p) {
-        if (!bee2_bign_key_ensure_public(key))
-            return 0;
-        if (!OSSL_PARAM_set_octet_string(p, key->pub, pub_len))
-            return 0;
+    public_param = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_PUB_KEY);
+    encoded_param = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY);
+    if (public_param || encoded_param) {
+        if (!bign_public_bytes(key, derived, &pub))
+            goto cleanup;
+        if ((public_param && !OSSL_PARAM_set_octet_string(public_param, pub, pub_len)) ||
+            (encoded_param && !OSSL_PARAM_set_octet_string(encoded_param, pub, pub_len)))
+            goto cleanup;
     }
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_EC_ENCODING);
     if (p && !OSSL_PARAM_set_utf8_string(p,
                                          key->encode_explicit ? OSSL_PKEY_EC_ENCODING_EXPLICIT
                                                               : OSSL_PKEY_EC_ENCODING_GROUP))
-        return 0;
+        goto cleanup;
+    ok = 1;
 
-    return 1;
+cleanup:
+    OPENSSL_cleanse(derived, sizeof(derived));
+    return ok;
 }
 
 static const OSSL_PARAM *bign_gettable_params(void *provctx) {
@@ -405,16 +417,15 @@ static const OSSL_PARAM *bign_import_types_ex(void *provctx, int selection) {
 #endif
 
 static int bign_export(void *vkey, int selection, OSSL_CALLBACK *param_cb, void *cbarg) {
-    bee2_bign_key_t *key = vkey;
+    const bee2_bign_key_t *key = vkey;
     OSSL_PARAM params[6];
-    size_t n = 0;
-    size_t priv_len;
-    size_t pub_len;
+    unsigned char derived[BEE2_BIGN_MAX_WORDS * 16] = {0};
+    const unsigned char *pub = NULL;
+    size_t n = 0, priv_len, pub_len;
     char *encoding;
+    int ok = 0;
 
-    if (!key || !param_cb)
-        return 0;
-    if (!key->variant)
+    if (!key || !param_cb || !key->variant)
         return 0;
     priv_len = bee2_bign_priv_len(key->variant);
     pub_len = bee2_bign_pub_len(key->variant);
@@ -428,22 +439,27 @@ static int bign_export(void *vkey, int selection, OSSL_CALLBACK *param_cb, void 
         params[n++] = OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_EC_ENCODING, encoding, 0);
 
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
-        if (!bee2_bign_key_ensure_public(key))
-            return 0;
-        params[n++] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY, key->pub, pub_len);
+        if (!bign_public_bytes(key, derived, &pub))
+            goto cleanup;
+        params[n++] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                                        (void *)pub, pub_len);
         params[n++] = OSSL_PARAM_construct_octet_string(
-            OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, key->pub, pub_len);
+            OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, (void *)pub, pub_len);
     }
 
     if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
         if (!key->has_priv)
-            return 0;
+            goto cleanup;
         params[n++] =
             OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, key->priv, priv_len);
     }
 
     params[n] = OSSL_PARAM_construct_end();
-    return param_cb(params, cbarg);
+    ok = param_cb(params, cbarg);
+
+cleanup:
+    OPENSSL_cleanse(derived, sizeof(derived));
+    return ok;
 }
 
 static const OSSL_PARAM *bign_export_types(int selection) {
