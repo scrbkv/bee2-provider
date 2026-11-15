@@ -14,6 +14,7 @@ typedef struct {
     const char *alg;
     size_t priv_len;
     size_t sig_len;
+    const char *digest;
 } bign_case_t;
 
 static void fill_priv(unsigned char *priv, size_t len, unsigned char seed) {
@@ -161,6 +162,82 @@ cleanup:
     return ok;
 }
 
+static int run_digest_streaming_case(const bign_case_t *tc, unsigned char seed) {
+    static const unsigned char first[] = "BIGN streaming: first part";
+    static const unsigned char second[] = " and second part";
+    unsigned char priv[64];
+    unsigned char reference_sig[96];
+    unsigned char streaming_sig[96];
+    unsigned int deterministic = 1;
+    char other_digest[] = "belt-hash";
+    OSSL_PARAM deterministic_param[] = {
+        OSSL_PARAM_uint(OSSL_SIGNATURE_PARAM_DETERMINISTIC, &deterministic),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM digest_param[] = {
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, other_digest, 0),
+        OSSL_PARAM_END
+    };
+    EVP_PKEY *key = NULL;
+    EVP_MD_CTX *reference = NULL, *streaming = NULL, *verify = NULL;
+    EVP_PKEY_CTX *reference_pctx = NULL, *streaming_pctx = NULL;
+    size_t reference_len = sizeof(reference_sig);
+    size_t streaming_len = sizeof(streaming_sig);
+    int ok = 0;
+
+    fill_priv(priv, tc->priv_len, seed);
+    if (tc->priv_len == 32u)
+        OPENSSL_strlcpy(other_digest, "bash256", sizeof(other_digest));
+    key = build_private_key(tc, priv);
+    reference = EVP_MD_CTX_new();
+    streaming = EVP_MD_CTX_new();
+    verify = EVP_MD_CTX_new();
+    if (!key || !reference || !streaming || !verify)
+        goto cleanup;
+
+    /* Reference: set deterministic mode before any message bytes. */
+    if (EVP_DigestSignInit_ex(reference, &reference_pctx, tc->digest, NULL,
+                              "provider=bee2", key, NULL) <= 0 ||
+        EVP_PKEY_CTX_set_params(reference_pctx, deterministic_param) <= 0 ||
+        EVP_DigestSignUpdate(reference, first, sizeof(first) - 1u) <= 0 ||
+        EVP_DigestSignUpdate(reference, second, sizeof(second) - 1u) <= 0 ||
+        EVP_DigestSignFinal(reference, reference_sig, &reference_len) <= 0)
+        goto cleanup;
+
+    /* Changing the signature mode must preserve the in-progress digest. */
+    if (EVP_DigestSignInit_ex(streaming, &streaming_pctx, tc->digest, NULL,
+                              "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSignUpdate(streaming, first, sizeof(first) - 1u) <= 0 ||
+        EVP_PKEY_CTX_set_params(streaming_pctx, digest_param) > 0 ||
+        EVP_PKEY_CTX_set_params(streaming_pctx, deterministic_param) <= 0 ||
+        EVP_DigestSignUpdate(streaming, second, sizeof(second) - 1u) <= 0 ||
+        EVP_DigestSignFinal(streaming, streaming_sig, &streaming_len) <= 0 ||
+        streaming_len != reference_len ||
+        CRYPTO_memcmp(streaming_sig, reference_sig, reference_len) != 0)
+        goto cleanup;
+
+    if (EVP_DigestVerifyInit_ex(verify, NULL, tc->digest, NULL,
+                                "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerifyUpdate(verify, first, sizeof(first) - 1u) <= 0 ||
+        EVP_DigestVerifyUpdate(verify, second, sizeof(second) - 1u) <= 0 ||
+        EVP_DigestVerifyFinal(verify, streaming_sig, streaming_len) <= 0)
+        goto cleanup;
+
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "[FAIL] BIGN digest streaming parameters for %s\n", tc->alg);
+    EVP_MD_CTX_free(verify);
+    EVP_MD_CTX_free(streaming);
+    EVP_MD_CTX_free(reference);
+    EVP_PKEY_free(key);
+    OPENSSL_cleanse(priv, sizeof(priv));
+    OPENSSL_cleanse(reference_sig, sizeof(reference_sig));
+    OPENSSL_cleanse(streaming_sig, sizeof(streaming_sig));
+    return ok;
+}
+
 static int should_run_alg(const char *selected_alg, const char *alg_name) {
     return selected_alg == NULL || strcmp(selected_alg, alg_name) == 0;
 }
@@ -172,7 +249,9 @@ int main(int argc, char **argv) {
     OSSL_PROVIDER *default_prov = NULL;
     OSSL_PROVIDER *bee2_prov = NULL;
     static const bign_case_t cases[] = {
-        {"bign-256", 32u, 48u}, {"bign-384", 48u, 72u}, {"bign-512", 64u, 96u}};
+        {"bign-256", 32u, 48u, "belt-hash"},
+        {"bign-384", 48u, 72u, "bash384"},
+        {"bign-512", 64u, 96u, "bash512"}};
     size_t i;
 
     if (argc != 2 && argc != 3) {
@@ -197,7 +276,8 @@ int main(int argc, char **argv) {
         if (!should_run_alg(selected_alg, cases[i].alg))
             continue;
         ran = 1;
-        if (!run_sign_verify_case(&cases[i], (unsigned char)(0x21u + i * 0x11u)))
+        if (!run_sign_verify_case(&cases[i], (unsigned char)(0x21u + i * 0x11u)) ||
+            !run_digest_streaming_case(&cases[i], (unsigned char)(0x21u + i * 0x11u)))
             goto cleanup;
     }
     if (!ran) {

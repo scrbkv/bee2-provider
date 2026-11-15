@@ -343,6 +343,12 @@ static int run_aead_roundtrip(const aead_case_t *tc, unsigned char seed) {
         fprintf(stderr, "[FAIL] EVP_EncryptInit_ex2(%s)\n", tc->name);
         goto cleanup;
     }
+    set_tag[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, tc->tag_len);
+    set_tag[1] = OSSL_PARAM_construct_end();
+    if (EVP_CIPHER_CTX_set_params(enc, set_tag) > 0) {
+        fprintf(stderr, "[FAIL] encryption accepted an expected tag for %s\n", tc->name);
+        goto cleanup;
+    }
     if (EVP_EncryptUpdate(enc, NULL, &outl, aad, (int)sizeof(aad)) != 1) {
         fprintf(stderr, "[FAIL] EVP_EncryptUpdate(AAD, %s)\n", tc->name);
         goto cleanup;
@@ -372,6 +378,10 @@ static int run_aead_roundtrip(const aead_case_t *tc, unsigned char seed) {
         fprintf(stderr, "[FAIL] EVP_DecryptInit_ex2(%s)\n", tc->name);
         goto cleanup;
     }
+    if (EVP_CIPHER_CTX_get_params(dec, get_tag) > 0) {
+        fprintf(stderr, "[FAIL] decryption exposed its expected tag for %s\n", tc->name);
+        goto cleanup;
+    }
     if (EVP_DecryptUpdate(dec, NULL, &outl, aad, (int)sizeof(aad)) != 1) {
         fprintf(stderr, "[FAIL] EVP_DecryptUpdate(AAD, %s)\n", tc->name);
         goto cleanup;
@@ -390,6 +400,10 @@ static int run_aead_roundtrip(const aead_case_t *tc, unsigned char seed) {
 
     if (rt_len != (int)sizeof(pt) || CRYPTO_memcmp(rt, pt, sizeof(pt)) != 0) {
         fprintf(stderr, "[FAIL] roundtrip mismatch for %s\n", tc->name);
+        goto cleanup;
+    }
+    if (EVP_CIPHER_CTX_set_params(dec, set_tag) > 0) {
+        fprintf(stderr, "[FAIL] decryption accepted a tag after final for %s\n", tc->name);
         goto cleanup;
     }
 

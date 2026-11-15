@@ -195,11 +195,13 @@ static int hmac_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     param = OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_KEY);
     if (param) {
         if (!OSSL_PARAM_get_octet_string_ptr(param, &key, &key_len) ||
-            key == NULL || key_len == 0)
+            (key == NULL && key_len != 0))
             return 0;
-        new_key = OPENSSL_memdup(key, key_len);
-        if (!new_key)
-            return 0;
+        if (key_len != 0) {
+            new_key = OPENSSL_memdup(key, key_len);
+            if (!new_key)
+                return 0;
+        }
         change_key = 1;
     }
 
@@ -222,12 +224,14 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     unsigned char digest[BEE2_HMAC_MAX_DIGEST_SIZE];
     unsigned char pad[BEE2_HMAC_MAX_BLOCK_SIZE];
     bee2_backend_state_t temporary_state;
+    static const unsigned char empty_key = 0;
     size_t i;
 
     if (!ctx || !ctx->key_set)
         return 0;
     if (!ctx->bash_digest) {
-        beltHMACStart(&ctx->backend_state, ctx->key, ctx->key_len);
+        beltHMACStart(&ctx->backend_state,
+                      ctx->key_len ? ctx->key : &empty_key, ctx->key_len);
         ctx->initialized = 1;
         return 1;
     }
@@ -242,7 +246,7 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
         bashHashStepH(ctx->key, ctx->key_len, &temporary_state);
         bashHashStepG(digest, ctx->bash_digest->digest_size, &temporary_state);
         memcpy(key_block, digest, ctx->bash_digest->digest_size);
-    } else {
+    } else if (ctx->key_len != 0) {
         memcpy(key_block, ctx->key, ctx->key_len);
     }
 
@@ -271,7 +275,7 @@ hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM
     if (!ctx || !hmac_set_ctx_params(ctx, params))
         return 0;
     if (key) {
-        if (key_len == 0u || !bee2_secret_replace(&ctx->key, &ctx->key_len, key, key_len))
+        if (!bee2_secret_replace(&ctx->key, &ctx->key_len, key, key_len))
             return 0;
         ctx->key_set = 1;
     }

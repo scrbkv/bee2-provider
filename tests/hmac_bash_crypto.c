@@ -78,7 +78,7 @@ static int test_digest(const digest_case_t *test)
     EVP_MAC_CTX *ctx = EVP_MAC_CTX_new(mac);
     char digest_name[16];
     OSSL_PARAM params[2];
-    size_t key_lengths[] = {1, test->size, test->block_size - 1,
+    size_t key_lengths[] = {0, 1, test->size, test->block_size - 1,
                             test->block_size, test->block_size + 1, 257};
     size_t i, j, actual_len;
     unsigned int expected_len;

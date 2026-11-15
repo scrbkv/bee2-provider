@@ -25,6 +25,14 @@ Bee2 Provider implements:
 - `bign-256`, `bign-384` and `bign-512` key generation, signatures,
   Diffie--Hellman key agreement, key transport and PEM/DER encoding.
 
+For BIGN signatures, `bign-with-hspec` uses an explicitly selected digest,
+not a default digest. The digest must have a registered OID and produce 32,
+48 or 64 bytes, matching the BIGN curve. Bee2 receives the DER-encoded
+**digest OID**. The hSpec signature AlgorithmIdentifier carries this OID
+as an ASN.1 OBJECT parameter. Selecting a compatible non-STB digest (for example, SHA-256
+with `bign-256`) also selects the hSpec signature identifier. Digests with
+fixed BIGN signature identifiers continue to use those identifiers.
+
 BIGN keys in PKCS#8 and SPKI PEM/DER formats use the standard OpenSSL
 `file:` store loader and this provider's key decoders. Load both the `default`
 and `bee2_provider` providers when using `openssl storeutl`. The separate

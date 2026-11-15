@@ -36,6 +36,9 @@ typedef struct {
     unsigned char aid_buf[256];
     size_t aid_len;
     unsigned int deterministic;
+    int hspec;
+    char hash_oid[96];
+    int md_started;
 } bee2_bign_sig_ctx_t;
 
 typedef struct {
@@ -100,9 +103,35 @@ static const char *bign_sig_mdname_to_hash_oid(const char *mdname) {
     return NULL;
 }
 
+/* Bee2 signs the DER OID of the hash function, not of the signature scheme. */
+static int bign_sig_resolve_hash_oid(const EVP_MD *md, const char *mdname,
+                                     char *oid, size_t size) {
+    const char *known;
+    const ASN1_OBJECT *obj;
+    ASN1_OBJECT *parsed = NULL;
+    int nid, length;
+
+    known = bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(md));
+    if (known)
+        return bign_str_copy(oid, size, known);
+    nid = EVP_MD_get_type(md);
+    obj = nid == NID_undef ? NULL : OBJ_nid2obj(nid);
+    if (!obj)
+        obj = parsed = OBJ_txt2obj(mdname, 1);
+    if (!obj)
+        return 0;
+    length = OBJ_obj2txt(oid, (int)size, obj, 1);
+    ASN1_OBJECT_free(parsed);
+    return length > 0 && (size_t)length < size;
+}
+
 static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
     if (!ctx)
         return NULL;
+    if (ctx->hspec)
+        return ctx->md && ctx->hash_oid[0] != '\0' ? ctx->hash_oid : NULL;
+    if (ctx->hash_oid[0] != '\0')
+        return ctx->hash_oid;
     if (ctx->md)
         return bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(ctx->md));
     if (ctx->mdname[0] != '\0')
@@ -115,6 +144,8 @@ static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
 static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
     if (!ctx)
         return NULL;
+    if (ctx->hspec)
+        return BEE2_OID_BIGN_WITH_HSPEC;
     if (ctx->md) {
         if (EVP_MD_is_a(ctx->md, "belt-hash"))
             return BEE2_OID_BIGN_WITH_HBELT;
@@ -124,7 +155,8 @@ static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
             return BEE2_OID_BIGN_WITH_BASH384;
         if (EVP_MD_is_a(ctx->md, "bash512"))
             return BEE2_OID_BIGN_WITH_BASH512;
-        return bign_sig_mdname_to_oid(EVP_MD_get0_name(ctx->md));
+        /* An identified, externally selected digest is bign-with-hspec. */
+        return ctx->hash_oid[0] != '\0' ? BEE2_OID_BIGN_WITH_HSPEC : NULL;
     }
     if (ctx->mdname[0] != '\0')
         return bign_sig_mdname_to_oid(ctx->mdname);
@@ -136,9 +168,11 @@ static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
 }
 
 static int
-bign_sig_build_algid(const char *oid, unsigned char *buf, size_t buf_len, size_t *out_len) {
+bign_sig_build_algid(const char *oid, const char *hash_oid,
+                     unsigned char *buf, size_t buf_len, size_t *out_len) {
     X509_ALGOR *alg = NULL;
     ASN1_OBJECT *obj = NULL;
+    ASN1_OBJECT *hash_obj = NULL;
     unsigned char *p = NULL;
     int len;
     int ok = 0;
@@ -154,9 +188,12 @@ bign_sig_build_algid(const char *oid, unsigned char *buf, size_t buf_len, size_t
     if (!alg)
         goto cleanup;
 
-    if (!X509_ALGOR_set0(alg, obj, V_ASN1_NULL, NULL))
+    if (hash_oid && (hash_obj = OBJ_txt2obj(hash_oid, 1)) == NULL)
+        goto cleanup;
+    if (!X509_ALGOR_set0(alg, obj, hash_obj ? V_ASN1_OBJECT : V_ASN1_NULL, hash_obj))
         goto cleanup;
     obj = NULL;
+    hash_obj = NULL;
 
     len = i2d_X509_ALGOR(alg, NULL);
     if (len <= 0 || (size_t)len > buf_len)
@@ -171,8 +208,8 @@ bign_sig_build_algid(const char *oid, unsigned char *buf, size_t buf_len, size_t
     ok = 1;
 
 cleanup:
-    if (obj)
-        ASN1_OBJECT_free(obj);
+    ASN1_OBJECT_free(obj);
+    ASN1_OBJECT_free(hash_obj);
     X509_ALGOR_free(alg);
     return ok;
 }
@@ -183,10 +220,13 @@ static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
     if (!ctx)
         return 0;
     ctx->aid_len = 0;
+    if (ctx->hspec && (ctx->md == NULL || ctx->hash_oid[0] == '\0'))
+        return 0;
     oid = bign_sig_md_to_oid(ctx);
     if (!oid)
         return 0;
-    return bign_sig_build_algid(oid, ctx->aid_buf, sizeof(ctx->aid_buf), &ctx->aid_len);
+    return bign_sig_build_algid(oid, ctx->hspec ? ctx->hash_oid : NULL,
+                                ctx->aid_buf, sizeof(ctx->aid_buf), &ctx->aid_len);
 }
 
 static void bign_sig_reset_md(bee2_bign_sig_ctx_t *ctx, int keep_algorithm) {
@@ -199,6 +239,7 @@ static void bign_sig_reset_md(bee2_bign_sig_ctx_t *ctx, int keep_algorithm) {
         ctx->md = NULL;
         ctx->mdname[0] = '\0';
         ctx->mdprops[0] = '\0';
+        ctx->hash_oid[0] = '\0';
         ctx->aid_len = 0;
     }
 }
@@ -222,9 +263,17 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
         EVP_MD_free(md);
         return 0;
     }
+    if (ctx->variant && EVP_MD_get_size(md) != (int)bee2_bign_priv_len(ctx->variant)) {
+        EVP_MD_free(md);
+        return 0;
+    }
 
     candidate = *ctx;
     candidate.md = md;
+    if (!bign_sig_resolve_hash_oid(md, mdname, candidate.hash_oid, sizeof(candidate.hash_oid))) {
+        EVP_MD_free(md);
+        return 0;
+    }
     if (!bign_str_copy(candidate.mdname, sizeof(candidate.mdname), mdname) ||
         !bign_str_copy(candidate.mdprops, sizeof(candidate.mdprops),
                        mdprops != NULL ? mdprops : "") ||
@@ -237,6 +286,7 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
     ctx->md = md;
     memcpy(ctx->mdname, candidate.mdname, sizeof(ctx->mdname));
     memcpy(ctx->mdprops, candidate.mdprops, sizeof(ctx->mdprops));
+    memcpy(ctx->hash_oid, candidate.hash_oid, sizeof(ctx->hash_oid));
     ctx->aid_len = candidate.aid_len;
     memcpy(ctx->aid_buf, candidate.aid_buf, candidate.aid_len);
     return 1;
@@ -257,19 +307,24 @@ static void bign_sig_openssl_rng(void *buf, size_t count, void *state) {
 
 static int bign_sig_assign_key(bee2_bign_sig_ctx_t *ctx, void *vkey, int for_sign) {
     bee2_bign_key_t *key = vkey;
+    const bee2_bign_variant_t *variant;
+
     if (!ctx || !key)
         return 0;
-    if (!ctx->variant)
-        ctx->variant = key->variant;
-    if (key->variant != ctx->variant)
+    variant = ctx->variant ? ctx->variant : key->variant;
+    if (!variant || key->variant != variant)
+        return 0;
+    if (ctx->md && EVP_MD_get_size(ctx->md) != (int)bee2_bign_priv_len(variant))
         return 0;
     if (for_sign && !key->has_priv)
         return 0;
     if (!for_sign && !bee2_bign_key_validate_public(key))
         return 0;
+    ctx->variant = variant;
     ctx->key = key;
     ctx->mode = for_sign ? BEE2_BIGN_SIG_SIGN : BEE2_BIGN_SIG_VERIFY;
     bign_sig_reset_md(ctx, 1);
+    ctx->md_started = 0;
     return 1;
 }
 
@@ -424,8 +479,12 @@ static int bign_sig_digest_init_common(bee2_bign_sig_ctx_t *ctx,
         if (!bign_sig_set_md(ctx, mdname, ctx->mdprops))
             return 0;
     } else if (!ctx->md) {
-        const char *digest = ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest;
+        const char *digest;
 
+        /* hSpec has no implicit hash algorithm: it must be selected. */
+        if (ctx->hspec)
+            return 0;
+        digest = ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest;
         if (!bign_sig_set_md(ctx, digest, NULL))
             return 0;
     }
@@ -460,6 +519,15 @@ BIGN_SIG_NEWCTX(bign384_bash384_sig_newctx, bee2_bign_variant_384(), "bash384")
 BIGN_SIG_NEWCTX(bign512_bash512_sig_newctx, bee2_bign_variant_512(), "bash512")
 BIGN_SIG_NEWCTX(bign_sig_newctx, NULL, NULL)
 
+static void *bign_hspec_sig_newctx(void *provctx, const char *propq) {
+    bee2_bign_sig_ctx_t *ctx = bign_sig_newctx_common(provctx, NULL, NULL);
+
+    (void)propq;
+    if (ctx)
+        ctx->hspec = 1;
+    return ctx;
+}
+
 static void bign_sig_freectx(void *vctx) {
     bee2_bign_sig_ctx_t *ctx = vctx;
     if (!ctx)
@@ -485,6 +553,9 @@ static void *bign_sig_dupctx(void *vctx) {
     dst->key = src->key;
     dst->mode = src->mode;
     dst->deterministic = src->deterministic;
+    dst->hspec = src->hspec;
+    memcpy(dst->hash_oid, src->hash_oid, sizeof(dst->hash_oid));
+    dst->md_started = src->md_started;
     if (!bign_str_copy(dst->mdname, sizeof(dst->mdname), src->mdname))
         goto err;
     if (!bign_str_copy(dst->mdprops, sizeof(dst->mdprops), src->mdprops))
@@ -571,7 +642,10 @@ static int bign_sig_digest_sign_update(void *vctx, const unsigned char *data, si
         return 0;
     if (datalen == 0)
         return 1;
-    return EVP_DigestUpdate(ctx->mdctx, data, datalen);
+    if (!EVP_DigestUpdate(ctx->mdctx, data, datalen))
+        return 0;
+    ctx->md_started = 1;
+    return 1;
 }
 
 static int bign_sig_digest_verify_update(void *vctx, const unsigned char *data, size_t datalen) {
@@ -580,7 +654,10 @@ static int bign_sig_digest_verify_update(void *vctx, const unsigned char *data, 
         return 0;
     if (datalen == 0)
         return 1;
-    return EVP_DigestUpdate(ctx->mdctx, data, datalen);
+    if (!EVP_DigestUpdate(ctx->mdctx, data, datalen))
+        return 0;
+    ctx->md_started = 1;
+    return 1;
 }
 
 static int
@@ -654,7 +731,8 @@ static int bign_sig_digest_sign(void *vctx,
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN)
         return 0;
     if (!ctx->md) {
-        if (!bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
+        if (ctx->hspec ||
+            !bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
             return 0;
     }
 
@@ -676,7 +754,8 @@ static int bign_sig_digest_verify(
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
     if (!ctx->md) {
-        if (!bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
+        if (ctx->hspec ||
+            !bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
             return 0;
     }
 
@@ -735,6 +814,12 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         goto cleanup;
     }
 
+    /* Changing the digest cannot discard data already fed to DigestUpdate. */
+    if (ctx->md_started && (mdname || mdprops)) {
+        ok = 0;
+        goto cleanup;
+    }
+
     if (mdname) {
         const char *props = mdprops ? mdprops : ctx->mdprops;
         ok = bign_sig_set_md(ctx, mdname, props);
@@ -744,11 +829,11 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     if (!ok)
         goto cleanup;
 
-    if (ctx->mdctx && ctx->md) {
-        if (!EVP_DigestInit_ex2(ctx->mdctx, ctx->md, NULL)) {
-            ok = 0;
-            goto cleanup;
-        }
+    /* Only a digest/property change requires restarting an empty digest. */
+    if ((mdname || mdprops) && ctx->mdctx && ctx->md &&
+        !bign_sig_reset_mdctx(ctx)) {
+        ok = 0;
+        goto cleanup;
     }
     ctx->deterministic = new_deterministic;
 
@@ -871,4 +956,5 @@ BEE2_BIGN_SIG_DISPATCH(256_hbelt, bign256_hbelt_sig_newctx, bign_sig_query_key_t
 BEE2_BIGN_SIG_DISPATCH(256_bash256, bign256_bash256_sig_newctx, bign_sig_query_key_types_256);
 BEE2_BIGN_SIG_DISPATCH(384_bash384, bign384_bash384_sig_newctx, bign_sig_query_key_types_384);
 BEE2_BIGN_SIG_DISPATCH(512_bash512, bign512_bash512_sig_newctx, bign_sig_query_key_types_512);
+BEE2_BIGN_SIG_DISPATCH(hspec, bign_hspec_sig_newctx, bign_sig_query_key_types);
 BEE2_BIGN_SIG_DISPATCH(generic, bign_sig_newctx, bign_sig_query_key_types);

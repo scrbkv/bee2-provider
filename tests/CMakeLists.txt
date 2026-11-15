@@ -522,6 +522,13 @@ add_test(NAME bee2_bign_digest_algorithms
     COMMAND bee2_bign_digest_algorithms $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_digest_algorithms PROPERTIES LABELS "crypto;bign;signature;native")
 
+add_executable(bee2_bign_hspec_interop bign_hspec_interop.c)
+target_include_directories(bee2_bign_hspec_interop SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_bign_hspec_interop PRIVATE bee2_static OpenSSL::Crypto)
+add_test(NAME bee2_bign_hspec_interop
+    COMMAND bee2_bign_hspec_interop $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_hspec_interop PROPERTIES LABELS "interop;crypto;bign;hspec")
+
 add_executable(bee2_bash_prgae_evp_stb bash_prgae_evp_stb.c)
 target_link_libraries(bee2_bash_prgae_evp_stb PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bash_prgae_evp_stb

@@ -384,7 +384,7 @@ static int bash_prgae_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_AEAD_TAG);
     if (p != NULL) {
-        if (!c->tag_set)
+        if (!c->enc || !c->finalized || !c->tag_set)
             return 0;
         if (!OSSL_PARAM_set_octet_string(p, c->tag, c->variant->mac_size))
             return 0;
@@ -420,7 +420,7 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         size_t tag_len = 0;
         if (!OSSL_PARAM_get_octet_string_ptr(p, &tag, &tag_len))
             return 0;
-        if (tag == NULL || tag_len != c->variant->mac_size)
+        if (c->enc || c->finalized || tag == NULL || tag_len != c->variant->mac_size)
             return 0;
         memcpy(c->tag, tag, tag_len);
         c->tag_set = 1;

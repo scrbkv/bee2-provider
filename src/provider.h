@@ -128,6 +128,7 @@ extern const OSSL_DISPATCH bee2_bign_256_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_384_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_512_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_generic_signature_functions[];
+extern const OSSL_DISPATCH bee2_bign_hspec_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_256_hbelt_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_256_bash256_signature_functions[];
 extern const OSSL_DISPATCH bee2_bign_384_bash384_signature_functions[];

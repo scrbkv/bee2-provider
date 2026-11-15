@@ -584,7 +584,7 @@ static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len
     *out_len = 0;
     OPENSSL_cleanse(password, sizeof(password));
     if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
-        password_len > INT_MAX)
+        password_len > sizeof(password) || password_len > INT_MAX)
         goto cleanup;
 
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
@@ -684,7 +684,7 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
 
     OPENSSL_cleanse(password, sizeof(password));
     if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
-        password_len > INT_MAX)
+        password_len > sizeof(password) || password_len > INT_MAX)
         goto clear_password;
     p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
     if (p8)
