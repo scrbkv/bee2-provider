@@ -202,7 +202,7 @@ static void belt_process_block(bee2_belt_ctx_t *c, const octet *in, octet *out) 
  * must be completed in Update, as in OpenSSL's built-in CTS ciphers. */
 static void belt_process_tail(bee2_belt_ctx_t *c, const octet *input,
                               size_t count, octet *output) {
-    size_t last_block = ((count - 1u) / BELT_BLOCK_SIZE) * BELT_BLOCK_SIZE;
+    size_t last_block = (count / BELT_BLOCK_SIZE - 1u) * BELT_BLOCK_SIZE;
 
     if (c->mode == &belt_cbc_mode && !c->enc)
         memcpy(c->updated_iv, input + last_block, BELT_BLOCK_SIZE);
