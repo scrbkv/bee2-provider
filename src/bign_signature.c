@@ -225,7 +225,9 @@ static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
     oid = bign_sig_md_to_oid(ctx);
     if (!oid)
         return 0;
-    return bign_sig_build_algid(oid, ctx->hspec ? ctx->hash_oid : NULL,
+    return bign_sig_build_algid(oid,
+                                strcmp(oid, BEE2_OID_BIGN_WITH_HSPEC) == 0
+                                    ? bign_sig_hash_oid(ctx) : NULL,
                                 ctx->aid_buf, sizeof(ctx->aid_buf), &ctx->aid_len);
 }
 
