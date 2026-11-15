@@ -26,6 +26,7 @@ typedef enum {
 typedef struct {
     OSSL_LIB_CTX *libctx;
     const bee2_bign_variant_t *variant;
+    const char *fixed_digest;
     bee2_bign_key_t *key;
     bee2_bign_sig_mode_t mode;
     EVP_MD *md;
@@ -106,6 +107,8 @@ static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
         return bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(ctx->md));
     if (ctx->mdname[0] != '\0')
         return bign_sig_mdname_to_hash_oid(ctx->mdname);
+    if (ctx->fixed_digest)
+        return bign_sig_mdname_to_hash_oid(ctx->fixed_digest);
     return ctx->variant ? bign_sig_mdname_to_hash_oid(ctx->variant->default_digest) : NULL;
 }
 
@@ -125,6 +128,8 @@ static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
     }
     if (ctx->mdname[0] != '\0')
         return bign_sig_mdname_to_oid(ctx->mdname);
+    if (ctx->fixed_digest)
+        return bign_sig_mdname_to_oid(ctx->fixed_digest);
     if (ctx->variant && ctx->variant->default_digest)
         return bign_sig_mdname_to_oid(ctx->variant->default_digest);
     return NULL;
@@ -205,12 +210,18 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
     if (ctx == NULL)
         return 0;
     if (mdname == NULL || mdname[0] == '\0') {
+        if (ctx->fixed_digest)
+            return 0;
         bign_sig_reset_md(ctx, 0);
         return 1;
     }
     md = EVP_MD_fetch(ctx->libctx, mdname, (mdprops && mdprops[0] != '\0') ? mdprops : NULL);
     if (md == NULL)
         return 0;
+    if (ctx->fixed_digest && !EVP_MD_is_a(md, ctx->fixed_digest)) {
+        EVP_MD_free(md);
+        return 0;
+    }
 
     candidate = *ctx;
     candidate.md = md;
@@ -413,41 +424,41 @@ static int bign_sig_digest_init_common(bee2_bign_sig_ctx_t *ctx,
         if (!bign_sig_set_md(ctx, mdname, ctx->mdprops))
             return 0;
     } else if (!ctx->md) {
-        if (!bign_sig_set_md(ctx, ctx->variant->default_digest, NULL))
+        const char *digest = ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest;
+
+        if (!bign_sig_set_md(ctx, digest, NULL))
             return 0;
     }
 
     return bign_sig_reset_mdctx(ctx);
 }
 
-static void *bign_sig_newctx_common(void *provctx, const bee2_bign_variant_t *variant) {
+static void *bign_sig_newctx_common(void *provctx,
+                                    const bee2_bign_variant_t *variant,
+                                    const char *fixed_digest) {
     bee2_bign_sig_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
         return NULL;
     ctx->libctx = bee2_provider_libctx(provctx);
     ctx->variant = variant;
+    ctx->fixed_digest = fixed_digest;
     return ctx;
 }
 
-static void *bign256_sig_newctx(void *provctx, const char *propq) {
-    (void)propq;
-    return bign_sig_newctx_common(provctx, bee2_bign_variant_256());
-}
+#define BIGN_SIG_NEWCTX(NAME, VARIANT, DIGEST) \
+    static void *NAME(void *provctx, const char *propq) { \
+        (void)propq; \
+        return bign_sig_newctx_common(provctx, VARIANT, DIGEST); \
+    }
 
-static void *bign384_sig_newctx(void *provctx, const char *propq) {
-    (void)propq;
-    return bign_sig_newctx_common(provctx, bee2_bign_variant_384());
-}
-
-static void *bign512_sig_newctx(void *provctx, const char *propq) {
-    (void)propq;
-    return bign_sig_newctx_common(provctx, bee2_bign_variant_512());
-}
-
-static void *bign_sig_newctx(void *provctx, const char *propq) {
-    (void)propq;
-    return bign_sig_newctx_common(provctx, NULL);
-}
+BIGN_SIG_NEWCTX(bign256_sig_newctx, bee2_bign_variant_256(), NULL)
+BIGN_SIG_NEWCTX(bign384_sig_newctx, bee2_bign_variant_384(), NULL)
+BIGN_SIG_NEWCTX(bign512_sig_newctx, bee2_bign_variant_512(), NULL)
+BIGN_SIG_NEWCTX(bign256_hbelt_sig_newctx, bee2_bign_variant_256(), "belt-hash")
+BIGN_SIG_NEWCTX(bign256_bash256_sig_newctx, bee2_bign_variant_256(), "bash256")
+BIGN_SIG_NEWCTX(bign384_bash384_sig_newctx, bee2_bign_variant_384(), "bash384")
+BIGN_SIG_NEWCTX(bign512_bash512_sig_newctx, bee2_bign_variant_512(), "bash512")
+BIGN_SIG_NEWCTX(bign_sig_newctx, NULL, NULL)
 
 static void bign_sig_freectx(void *vctx) {
     bee2_bign_sig_ctx_t *ctx = vctx;
@@ -470,6 +481,7 @@ static void *bign_sig_dupctx(void *vctx) {
 
     dst->libctx = src->libctx;
     dst->variant = src->variant;
+    dst->fixed_digest = src->fixed_digest;
     dst->key = src->key;
     dst->mode = src->mode;
     dst->deterministic = src->deterministic;
@@ -642,7 +654,7 @@ static int bign_sig_digest_sign(void *vctx,
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN)
         return 0;
     if (!ctx->md) {
-        if (!bign_sig_set_md(ctx, ctx->variant->default_digest, NULL))
+        if (!bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
             return 0;
     }
 
@@ -664,7 +676,7 @@ static int bign_sig_digest_verify(
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
     if (!ctx->md) {
-        if (!bign_sig_set_md(ctx, ctx->variant->default_digest, NULL))
+        if (!bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
             return 0;
     }
 
@@ -770,15 +782,15 @@ static int bign_sig_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     }
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_DIGEST);
-    if (p && ctx->md) {
-        const char *name = (ctx->mdname[0] != '\0') ? ctx->mdname : EVP_MD_get0_name(ctx->md);
+    if (p && (ctx->md || ctx->fixed_digest)) {
+        const char *name = ctx->md ? EVP_MD_get0_name(ctx->md) : ctx->fixed_digest;
         if (!OSSL_PARAM_set_utf8_string(p, name))
             return 0;
     }
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_DIGEST_SIZE);
-    if (p && ctx->md) {
-        md_size = EVP_MD_get_size(ctx->md);
+    if (p && (ctx->md || ctx->fixed_digest)) {
+        md_size = ctx->md ? EVP_MD_get_size(ctx->md) : (int)bee2_bign_priv_len(ctx->variant);
         if (md_size <= 0)
             return 0;
         if (!OSSL_PARAM_set_size_t(p, (size_t)md_size))
@@ -855,4 +867,8 @@ static const char **bign_sig_query_key_types(void) {
 BEE2_BIGN_SIG_DISPATCH(256, bign256_sig_newctx, bign_sig_query_key_types_256);
 BEE2_BIGN_SIG_DISPATCH(384, bign384_sig_newctx, bign_sig_query_key_types_384);
 BEE2_BIGN_SIG_DISPATCH(512, bign512_sig_newctx, bign_sig_query_key_types_512);
+BEE2_BIGN_SIG_DISPATCH(256_hbelt, bign256_hbelt_sig_newctx, bign_sig_query_key_types_256);
+BEE2_BIGN_SIG_DISPATCH(256_bash256, bign256_bash256_sig_newctx, bign_sig_query_key_types_256);
+BEE2_BIGN_SIG_DISPATCH(384_bash384, bign384_bash384_sig_newctx, bign_sig_query_key_types_384);
+BEE2_BIGN_SIG_DISPATCH(512_bash512, bign512_bash512_sig_newctx, bign_sig_query_key_types_512);
 BEE2_BIGN_SIG_DISPATCH(generic, bign_sig_newctx, bign_sig_query_key_types);

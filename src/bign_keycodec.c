@@ -17,6 +17,7 @@
 #include <string.h>
 
 #define BIGN_PEM_LABEL "PRIVATE KEY"
+#define BIGN_ENCRYPTED_PEM_LABEL "ENCRYPTED PRIVATE KEY"
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
 
 static int bign_asn1_string_length(const ASN1_STRING *str) {
@@ -118,6 +119,7 @@ ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT)
     const bee2_bign_variant_t *variant;
     OSSL_LIB_CTX *libctx;
     int output_pem;
+    EVP_CIPHER *cipher;
 } bee2_bign_encoder_ctx_t;
 
 typedef struct {
@@ -564,59 +566,135 @@ err:
     return NULL;
 }
 
-static int decode_pkcs8_der(const unsigned char *buf,
-                            size_t len,
-                            const bee2_bign_variant_t *expected,
-                            bee2_bign_key_t *key) {
-    const unsigned char *p = buf;
+
+static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len,
+                                        const EVP_CIPHER *cipher, OSSL_LIB_CTX *libctx,
+                                        OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,
+                                        size_t *out_len) {
+    const unsigned char *p = der;
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
+    X509_SIG *encrypted = NULL;
+    unsigned char *out = NULL;
+    char password[PEM_BUFSIZE];
+    size_t password_len = 0;
+    int length;
+
+    if (!cipher || !cb || !out_len || der_len > LONG_MAX)
+        return NULL;
+    *out_len = 0;
+    OPENSSL_cleanse(password, sizeof(password));
+    if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
+        password_len > INT_MAX)
+        goto cleanup;
+
+    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
+    if (!p8 || p != der + der_len)
+        goto cleanup;
+    encrypted = PKCS8_encrypt_ex(-1, cipher, password, (int)password_len, NULL, 0, 0,
+                                 p8, libctx, NULL);
+    if (!encrypted)
+        goto cleanup;
+    length = i2d_X509_SIG(encrypted, &out);
+    if (length <= 0) {
+        OPENSSL_free(out);
+        out = NULL;
+    } else {
+        *out_len = (size_t)length;
+    }
+
+cleanup:
+    OPENSSL_cleanse(password, sizeof(password));
+    X509_SIG_free(encrypted);
+    PKCS8_PRIV_KEY_INFO_free(p8);
+    return out;
+}
+
+static int decode_pkcs8_info(PKCS8_PRIV_KEY_INFO *p8,
+                             const bee2_bign_variant_t *expected, bee2_bign_key_t *key) {
     const ASN1_OBJECT *alg = NULL;
     const unsigned char *priv = NULL;
-    int priv_len = 0;
     const X509_ALGOR *palg = NULL;
-    int ptype = 0;
     const void *pval = NULL;
-    const bee2_bign_variant_t *variant = NULL;
-    size_t need = 0;
+    const bee2_bign_variant_t *variant;
+    int priv_len = 0, ptype = 0;
+    size_t need;
 
-    if (!key || !bign_der_sequence_body(buf, len, &p))
+    if (!p8 || !key || !PKCS8_pkey_get0(&alg, &priv, &priv_len, &palg, p8) ||
+        !oid_equals(alg, BEE2_OID_BIGN_PUBKEY))
         return 0;
-
-    p = buf;
-    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
-    if (!p8)
-        return 0;
-    if (p != buf + len)
-        goto err;
-
-    if (!PKCS8_pkey_get0(&alg, &priv, &priv_len, &palg, p8)) {
-        goto err;
-    }
-    if (!oid_equals(alg, BEE2_OID_BIGN_PUBKEY))
-        goto err;
-
     X509_ALGOR_get0(NULL, &ptype, &pval, palg);
     variant = variant_from_alg_params(ptype, pval, &key->encode_explicit, &key->encode_cofactor);
     if (!variant || (expected && variant != expected))
-        goto err;
-
+        return 0;
     need = bee2_bign_priv_len(variant);
-    if (priv_len != (int)need)
-        goto err;
+    if (priv == NULL || priv_len != (int)need)
+        return 0;
 
     key->variant = variant;
     memcpy(key->priv, priv, need);
     key->has_priv = 1;
-    if (!bee2_bign_derive_pubkey(key->variant, key->pub, key->priv))
-        goto err;
+    if (!bee2_bign_derive_pubkey(variant, key->pub, key->priv))
+        return 0;
     key->has_pub = 1;
-
-    PKCS8_PRIV_KEY_INFO_free(p8);
     return 1;
+}
 
-err:
+static int decode_pkcs8_der(const unsigned char *buf, size_t len,
+                            const bee2_bign_variant_t *expected, bee2_bign_key_t *key) {
+    const unsigned char *p = buf;
+    PKCS8_PRIV_KEY_INFO *p8;
+    int ok = 0;
+
+    if (!key || !bign_der_sequence_body(buf, len, &p))
+        return 0;
+    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
+    if (!p8)
+        return 0;
+    if (p == buf + len)
+        ok = decode_pkcs8_info(p8, expected, key);
     PKCS8_PRIV_KEY_INFO_free(p8);
-    return 0;
+    return ok;
+}
+
+static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
+                                      const bee2_bign_variant_t *expected,
+                                      bee2_bign_key_t *key, OSSL_LIB_CTX *libctx,
+                                      OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,
+                                      int *recognized) {
+    const unsigned char *p = buf;
+    X509_SIG *encrypted = NULL;
+    PKCS8_PRIV_KEY_INFO *p8 = NULL;
+    char password[PEM_BUFSIZE];
+    size_t password_len = 0;
+    int ok = 0;
+
+    *recognized = 0;
+    if (!bign_der_sequence_body(buf, len, &p))
+        return 0;
+    p = buf;
+    ERR_set_mark();
+    encrypted = d2i_X509_SIG(NULL, &p, (long)len);
+    ERR_pop_to_mark();
+    if (!encrypted || p != buf + len)
+        goto cleanup;
+    *recognized = 1;
+    if (!cb)
+        goto cleanup;
+
+    OPENSSL_cleanse(password, sizeof(password));
+    if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
+        password_len > INT_MAX)
+        goto clear_password;
+    p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
+    if (p8)
+        ok = decode_pkcs8_info(p8, expected, key);
+
+clear_password:
+    OPENSSL_cleanse(password, sizeof(password));
+cleanup:
+    PKCS8_PRIV_KEY_INFO_free(p8);
+    X509_SIG_free(encrypted);
+    return ok;
 }
 
 static int read_all(BIO *in, unsigned char **out, size_t *out_len) {
@@ -860,7 +938,45 @@ static void *bign_encoder_newctx_common(const bee2_bign_variant_t *variant,
 }
 
 static void bign_encoder_freectx(void *vctx) {
-    OPENSSL_free(vctx);
+    bee2_bign_encoder_ctx_t *ctx = vctx;
+
+    if (ctx) {
+        EVP_CIPHER_free(ctx->cipher);
+        OPENSSL_free(ctx);
+    }
+}
+
+static const OSSL_PARAM bee2_bign_encoder_settable[] = {
+    OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_CIPHER, NULL, 0),
+    OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_PROPERTIES, NULL, 0),
+    OSSL_PARAM_END};
+
+static const OSSL_PARAM *bign_encoder_settable_ctx_params(void *provctx) {
+    (void)provctx;
+    return bee2_bign_encoder_settable;
+}
+
+static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
+    bee2_bign_encoder_ctx_t *ctx = vctx;
+    const OSSL_PARAM *param, *properties;
+    const char *cipher_name = NULL;
+    const char *propq = NULL;
+    EVP_CIPHER *cipher = NULL;
+
+    if (!ctx)
+        return 0;
+    if (!params || (param = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_CIPHER)) == NULL)
+        return 1;
+    if (!OSSL_PARAM_get_utf8_string_ptr(param, &cipher_name))
+        return 0;
+    properties = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_PROPERTIES);
+    if (properties && !OSSL_PARAM_get_utf8_string_ptr(properties, &propq))
+        return 0;
+    if (cipher_name && (cipher = EVP_CIPHER_fetch(ctx->libctx, cipher_name, propq)) == NULL)
+        return 0;
+    EVP_CIPHER_free(ctx->cipher);
+    ctx->cipher = cipher;
+    return 1;
 }
 
 static int bign_encoder_does_selection(void *provctx, int selection) {
@@ -882,8 +998,6 @@ static int bign_encoder_encode(void *vctx,
                                OSSL_PASSPHRASE_CALLBACK *cb,
                                void *cbarg) {
     (void)obj_abstract;
-    (void)cb;
-    (void)cbarg;
 
     if (!(selection & (OSSL_KEYMGMT_SELECT_PRIVATE_KEY | OSSL_KEYMGMT_SELECT_PUBLIC_KEY))) {
         ERR_raise_data(ERR_LIB_PROV,
@@ -921,6 +1035,17 @@ static int bign_encoder_encode(void *vctx,
         }
         der = encode_pkcs8_der(key, &der_len);
         label = BIGN_PEM_LABEL;
+        if (der && ctx->cipher) {
+            unsigned char *encrypted;
+            size_t encrypted_len = 0;
+
+            encrypted = encrypt_pkcs8_der(der, der_len, ctx->cipher, ctx->libctx,
+                                          cb, cbarg, &encrypted_len);
+            OPENSSL_clear_free(der, der_len);
+            der = encrypted;
+            der_len = encrypted_len;
+            label = BIGN_ENCRYPTED_PEM_LABEL;
+        }
     } else if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
         der = encode_spki_der(key, &der_len);
         label = BIGN_PUB_PEM_LABEL;
@@ -1088,8 +1213,6 @@ static int bign_decoder_decode(void *vctx,
                                OSSL_PASSPHRASE_CALLBACK *pw_cb,
                                void *pw_cbarg) {
     (void)selection;
-    (void)pw_cb;
-    (void)pw_cbarg;
 
     bee2_bign_decoder_ctx_t *ctx = vctx;
     if (!ctx || !data_cb)
@@ -1132,17 +1255,23 @@ static int bign_decoder_decode(void *vctx,
     }
 
     int decoded = 0;
+    int recognized = 0;
     if (pem_name) {
         if (strcmp(pem_name, BIGN_PEM_LABEL) == 0) {
             decoded = decode_pkcs8_der(der, der_len, ctx->variant, key);
+        } else if (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) == 0) {
+            decoded = decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
+                                                 ctx->libctx, pw_cb, pw_cbarg, &recognized);
         } else if (strcmp(pem_name, BIGN_PUB_PEM_LABEL) == 0) {
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
         }
     } else {
         decoded = decode_pkcs8_der(der, der_len, ctx->variant, key);
-        if (!decoded) {
+        if (!decoded)
+            decoded = decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
+                                                 ctx->libctx, pw_cb, pw_cbarg, &recognized);
+        if (!decoded && !recognized)
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
-        }
     }
 
     if (!decoded) {
@@ -1151,7 +1280,7 @@ static int bign_decoder_decode(void *vctx,
             OPENSSL_clear_free(der, der_len);
         OPENSSL_clear_free(buf, len);
         OPENSSL_free(pem_name);
-        return 1;
+        return recognized ? 0 : 1;
     }
 
     int obj_type = OSSL_OBJECT_PKEY;
@@ -1219,6 +1348,9 @@ static void *bign_der_encoder_newctx(void *provctx) {
     const OSSL_DISPATCH bee2_bign_##BITS##_##FORMAT##_encoder_functions[] = { \
         {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign##BITS##_##FORMAT##_encoder_newctx}, \
         {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx}, \
+        {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params}, \
+        {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, \
+         (void (*)(void))bign_encoder_settable_ctx_params}, \
         {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection}, \
         {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode}, \
         {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object}, \
@@ -1235,6 +1367,8 @@ BIGN_ENCODER_DISPATCH(512, der)
 const OSSL_DISPATCH bee2_bign_pem_encoder_functions[] = {
     {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign_pem_encoder_newctx},
     {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},
+    {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params},
+    {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_encoder_settable_ctx_params},
     {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection},
     {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
     {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},
@@ -1244,6 +1378,8 @@ const OSSL_DISPATCH bee2_bign_pem_encoder_functions[] = {
 const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
     {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign_der_encoder_newctx},
     {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},
+    {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params},
+    {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_encoder_settable_ctx_params},
     {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection},
     {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
     {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},

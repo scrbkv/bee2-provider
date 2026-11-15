@@ -302,25 +302,24 @@ static const OSSL_ALGORITHM bee2_keyexchanges[] = {{BEE2_ALG_BIGN,
                                                     "BIGN-512 Diffie--Hellman key agreement"},
                                                    {NULL, NULL, NULL, NULL}};
 
-static const OSSL_ALGORITHM bee2_signatures[] = {{BEE2_ALG_BIGN,
-                                                  "provider=bee2",
-                                                  bee2_bign_generic_signature_functions,
-                                                  "BIGN signature for encoded keys"},
-                                                 {BEE2_ALG_BIGN_256 ":" BEE2_ALG_BIGN_WITH_HSPEC
-                                                                    ":" BEE2_ALG_BIGN_WITH_HBELT
-                                                                    ":" BEE2_ALG_BIGN_WITH_BASH256,
-                                                  "provider=bee2",
-                                                  bee2_bign_256_signature_functions,
-                                                  "BIGN signature on 256-bit curve"},
-                                                 {BEE2_ALG_BIGN_384 ":" BEE2_ALG_BIGN_WITH_BASH384,
-                                                  "provider=bee2",
-                                                  bee2_bign_384_signature_functions,
-                                                  "BIGN signature on 384-bit curve"},
-                                                 {BEE2_ALG_BIGN_512 ":" BEE2_ALG_BIGN_WITH_BASH512,
-                                                  "provider=bee2",
-                                                  bee2_bign_512_signature_functions,
-                                                  "BIGN signature on 512-bit curve"},
-                                                 {NULL, NULL, NULL, NULL}};
+static const OSSL_ALGORITHM bee2_signatures[] = {
+    {BEE2_ALG_BIGN, "provider=bee2", bee2_bign_generic_signature_functions,
+     "BIGN signature for encoded keys"},
+    {BEE2_ALG_BIGN_256, "provider=bee2", bee2_bign_256_signature_functions,
+     "BIGN-256 signature"},
+    {BEE2_ALG_BIGN_384, "provider=bee2", bee2_bign_384_signature_functions,
+     "BIGN-384 signature"},
+    {BEE2_ALG_BIGN_512, "provider=bee2", bee2_bign_512_signature_functions,
+     "BIGN-512 signature"},
+    {BEE2_ALG_BIGN_WITH_HBELT, "provider=bee2", bee2_bign_256_hbelt_signature_functions,
+     "BIGN-256 with BELT-Hash"},
+    {BEE2_ALG_BIGN_WITH_BASH256, "provider=bee2",
+     bee2_bign_256_bash256_signature_functions, "BIGN-256 with BASH-256"},
+    {BEE2_ALG_BIGN_WITH_BASH384, "provider=bee2",
+     bee2_bign_384_bash384_signature_functions, "BIGN-384 with BASH-384"},
+    {BEE2_ALG_BIGN_WITH_BASH512, "provider=bee2",
+     bee2_bign_512_bash512_signature_functions, "BIGN-512 with BASH-512"},
+    {NULL, NULL, NULL, NULL}};
 
 static const OSSL_ALGORITHM bee2_encoders[] = {
     {BEE2_ALG_BIGN_KEY,
