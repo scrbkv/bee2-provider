@@ -324,7 +324,8 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
     priv_len = bee2_bign_priv_len(candidate.variant);
     pub_len = bee2_bign_pub_len(candidate.variant);
 
-    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PRIV_KEY);
+    p = (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
+            ? OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PRIV_KEY) : NULL;
     if (p) {
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
             goto cleanup;
@@ -335,8 +336,9 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
         have_priv_in = 1;
     }
 
-    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
-    if (!p)
+    p = (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+            ? OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY) : NULL;
+    if (!p && (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY))
         p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY);
     if (p) {
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))

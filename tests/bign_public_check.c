@@ -44,17 +44,15 @@ static int test_invalid_public_key(const char *alg, size_t keylen)
     return ok;
 }
 
-static int test_generated_key(const char *alg)
+static int test_generated_key(const char *alg, const char *curve_name,
+                              const char *curve_oid)
 {
+    const char *groups[] = {alg, curve_name, curve_oid};
     EVP_PKEY_CTX *genctx = NULL, *checkctx = NULL, *impctx = NULL;
     EVP_PKEY *key = NULL, *imported = NULL;
-    unsigned char pub[128];
-    size_t pub_len = 0;
-    OSSL_PARAM params[] = {
-        OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, (char *)alg, 0),
-        OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY, pub, sizeof(pub)),
-        OSSL_PARAM_construct_end()
-    };
+    unsigned char pub[128], priv[64], recovered[128], unexpected[64];
+    size_t pub_len = 0, priv_len = 0, recovered_len = 0;
+    size_t i;
     int ok = 0;
 
     genctx = EVP_PKEY_CTX_new_from_name(NULL, alg, "provider=bee2");
@@ -66,25 +64,55 @@ static int test_generated_key(const char *alg)
         EVP_PKEY_public_check_quick(checkctx) != 1 ||
         EVP_PKEY_pairwise_check(checkctx) != 1)
         goto end;
+    EVP_PKEY_CTX_free(checkctx);
+    checkctx = NULL;
 
     if (EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
-                                        pub, sizeof(pub), &pub_len) != 1)
+                                        pub, sizeof(pub), &pub_len) != 1 ||
+        EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        priv, sizeof(priv), &priv_len) != 1)
         goto end;
-    params[1] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
-                                                   pub, pub_len);
+
     impctx = EVP_PKEY_CTX_new_from_name(NULL, alg, "provider=bee2");
-    if (impctx == NULL || EVP_PKEY_fromdata_init(impctx) != 1 ||
-        EVP_PKEY_fromdata(impctx, &imported, EVP_PKEY_PUBLIC_KEY, params) != 1)
+    if (impctx == NULL || EVP_PKEY_fromdata_init(impctx) != 1)
         goto end;
-    EVP_PKEY_CTX_free(checkctx);
-    checkctx = EVP_PKEY_CTX_new_from_pkey(NULL, imported, "provider=bee2");
-    if (checkctx == NULL || EVP_PKEY_public_check(checkctx) != 1)
-        goto end;
+    for (i = 0; i < sizeof(groups) / sizeof(groups[0]); i++) {
+        OSSL_PARAM params[] = {
+            OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
+                                              (char *)groups[i], 0),
+            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                               pub, pub_len),
+            /* A public-only import must not retain this private component. */
+            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
+                                               priv, priv_len),
+            OSSL_PARAM_construct_end()
+        };
+        EVP_PKEY_free(imported);
+        imported = NULL;
+        if (EVP_PKEY_fromdata(impctx, &imported, EVP_PKEY_PUBLIC_KEY, params) != 1 ||
+            EVP_PKEY_get_octet_string_param(imported, OSSL_PKEY_PARAM_PRIV_KEY,
+                                            unexpected, sizeof(unexpected),
+                                            &recovered_len) > 0 ||
+            EVP_PKEY_get_octet_string_param(imported, OSSL_PKEY_PARAM_PUB_KEY,
+                                            recovered, sizeof(recovered),
+                                            &recovered_len) != 1 ||
+            recovered_len != pub_len ||
+            CRYPTO_memcmp(recovered, pub, pub_len) != 0)
+            goto end;
+
+        checkctx = EVP_PKEY_CTX_new_from_pkey(NULL, imported, "provider=bee2");
+        if (checkctx == NULL || EVP_PKEY_public_check(checkctx) != 1)
+            goto end;
+        EVP_PKEY_CTX_free(checkctx);
+        checkctx = NULL;
+    }
     ok = 1;
 
- end:
+end:
     if (!ok)
-        fprintf(stderr, "%s: generated key did not pass validation\n", alg);
+        fprintf(stderr, "%s: key import, group alias or selection failed\n", alg);
+    OPENSSL_cleanse(priv, sizeof(priv));
+    OPENSSL_cleanse(unexpected, sizeof(unexpected));
     EVP_PKEY_CTX_free(checkctx);
     EVP_PKEY_CTX_free(genctx);
     EVP_PKEY_CTX_free(impctx);
@@ -111,13 +139,16 @@ int main(int argc, char **argv)
         goto end;
     }
     if (!test_invalid_public_key("bign-256", 32) ||
-        !test_generated_key("bign-256"))
+        !test_generated_key("bign-256", "bign-curve256v1",
+                            "1.2.112.0.2.0.34.101.45.3.1"))
         ok = 0;
     if (!test_invalid_public_key("bign-384", 48) ||
-        !test_generated_key("bign-384"))
+        !test_generated_key("bign-384", "bign-curve384v1",
+                            "1.2.112.0.2.0.34.101.45.3.2"))
         ok = 0;
     if (!test_invalid_public_key("bign-512", 64) ||
-        !test_generated_key("bign-512"))
+        !test_generated_key("bign-512", "bign-curve512v1",
+                            "1.2.112.0.2.0.34.101.45.3.3"))
         ok = 0;
 
  end:

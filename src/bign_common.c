@@ -35,10 +35,13 @@ int bee2_bign_variant_matches(const bee2_bign_variant_t *variant, const char *na
 const bee2_bign_variant_t *bee2_bign_variant_from_name(const char *name) {
     const bee2_bign_variant_t *variants[] = {
         &bee2_bign_var_256, &bee2_bign_var_384, &bee2_bign_var_512};
+    const char *curve_names[] = {
+        BEE2_NAME_BIGN_CURVE256, BEE2_NAME_BIGN_CURVE384, BEE2_NAME_BIGN_CURVE512};
     size_t i;
 
     for (i = 0; i < sizeof(variants) / sizeof(variants[0]); ++i) {
-        if (bee2_bign_variant_matches(variants[i], name))
+        if (bee2_bign_variant_matches(variants[i], name) ||
+            (name && strcmp(name, curve_names[i]) == 0))
             return variants[i];
     }
     return NULL;

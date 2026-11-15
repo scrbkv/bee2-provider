@@ -14,9 +14,9 @@ typedef struct {
 
 static const bee2_oid_definition_t bee2_oid_definitions[] = {
     {BEE2_OID_BIGN_PUBKEY, "bign-pubkey"},
-    {BEE2_OID_BIGN_CURVE256, "bign-curve256v1"},
-    {BEE2_OID_BIGN_CURVE384, "bign-curve384v1"},
-    {BEE2_OID_BIGN_CURVE512, "bign-curve512v1"},
+    {BEE2_OID_BIGN_CURVE256, BEE2_NAME_BIGN_CURVE256},
+    {BEE2_OID_BIGN_CURVE384, BEE2_NAME_BIGN_CURVE384},
+    {BEE2_OID_BIGN_CURVE512, BEE2_NAME_BIGN_CURVE512},
     {BEE2_OID_BIGN_PRIMEFIELD, "bign-primefield"},
     {BEE2_OID_BIGN_WITH_HSPEC, "bign-with-hspec"},
     {BEE2_OID_BIGN_WITH_HBELT, "bign-with-hbelt"},
