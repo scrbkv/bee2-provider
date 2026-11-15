@@ -451,7 +451,7 @@ static int bign_export(void *vkey, int selection, OSSL_CALLBACK *param_cb, void 
         if (!key->has_priv)
             goto cleanup;
         params[n++] =
-            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, key->priv, priv_len);
+            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, (void *)key->priv, priv_len);
     }
 
     params[n] = OSSL_PARAM_construct_end();
