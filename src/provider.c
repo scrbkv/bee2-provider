@@ -54,7 +54,6 @@ static const bee2_oid_definition_t bee2_oid_definitions[] = {
     {BEE2_OID_BELT_MAC128, "belt-mac128"},
     {BEE2_OID_BELT_MAC192, "belt-mac192"},
     {BEE2_OID_BELT_MAC, "belt-mac256"},
-    {BEE2_OID_BELT_PBKDF, "belt-pbkdf"},
     {BEE2_OID_HMAC_HBELT, "belt-hmac"},
     {BEE2_OID_BRNG_CTR_HBELT, "brng-ctr-hbelt"},
     {BEE2_OID_BRNG_HMAC_HBELT, "brng-hmac-hbelt"},

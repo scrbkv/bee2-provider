@@ -328,7 +328,7 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
     if (p) {
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
             goto cleanup;
-        if (len != priv_len)
+        if (buf == NULL || len != priv_len)
             goto cleanup;
         memcpy(candidate.priv, buf, priv_len);
         candidate.has_priv = 1;
@@ -341,7 +341,7 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
     if (p) {
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
             goto cleanup;
-        if (len != pub_len)
+        if (buf == NULL || len != pub_len)
             goto cleanup;
         memcpy(candidate.pub, buf, pub_len);
         candidate.has_pub = 1;

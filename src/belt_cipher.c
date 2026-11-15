@@ -106,6 +106,7 @@ typedef struct {
     int have_last;
     int padding;
     int started;
+    int finalized;
 } bee2_belt_ctx_t;
 
 /* ------------------------------------------------------------------ */
@@ -256,6 +257,7 @@ static int belt_init(void *vctx,
     c->buf_len = 0;
     c->have_last = 0;
     c->started = 0;
+    c->finalized = 0;
 
     if (params && !belt_set_ctx_params(c, params))
         return 0;
@@ -321,7 +323,8 @@ static int belt_update(void *vctx,
     int hold_last = !c->enc && c->padding;
 
     *outl = 0;
-    if (!c->backend_state.key_set || (c->mode->iv_size != 0 && !c->backend_state.iv_set) ||
+    if (c->finalized || !c->backend_state.key_set ||
+        (c->mode->iv_size != 0 && !c->backend_state.iv_set) ||
         (inl != 0 && (!in || !out)))
         return 0;
 
@@ -411,13 +414,20 @@ static int belt_final(void *vctx, unsigned char *out, size_t *outl, size_t outsi
     size_t i;
 
     *outl = 0;
-    if (!c->backend_state.key_set || (c->mode->iv_size != 0 && !c->backend_state.iv_set))
+    if (c->finalized || !c->backend_state.key_set ||
+        (c->mode->iv_size != 0 && !c->backend_state.iv_set))
         return 0;
 
-    if (c->mode->encrypt_bytes != NULL)
+    if (c->mode->encrypt_bytes != NULL) {
+        c->finalized = 1;
         return 1;
-    if (!c->padding)
-        return c->buf_len == 0;
+    }
+    if (!c->padding) {
+        if (c->buf_len != 0)
+            return 0;
+        c->finalized = 1;
+        return 1;
+    }
 
     if (c->enc) {
         if (!out || outsize < BELT_BLOCK_SIZE)
@@ -426,6 +436,7 @@ static int belt_final(void *vctx, unsigned char *out, size_t *outl, size_t outsi
         memset(c->buf + c->buf_len, (int)pad_len, pad_len);
         belt_process_block(c, c->buf, out);
         c->buf_len = 0;
+        c->finalized = 1;
         *outl = BELT_BLOCK_SIZE;
         return 1;
     }
@@ -442,12 +453,14 @@ static int belt_final(void *vctx, unsigned char *out, size_t *outl, size_t outsi
     length = BELT_BLOCK_SIZE - (pad_len <= BELT_BLOCK_SIZE ? pad_len : BELT_BLOCK_SIZE);
     if (mismatch != 0 || outsize < length || (length != 0 && !out)) {
         OPENSSL_cleanse(block, sizeof(block));
+        c->finalized = 1;
         return 0;
     }
     if (length != 0)
         memcpy(out, block, length);
     OPENSSL_cleanse(block, sizeof(block));
     c->have_last = 0;
+    c->finalized = 1;
     *outl = length;
     return 1;
 }

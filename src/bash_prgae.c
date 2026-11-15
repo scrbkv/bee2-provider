@@ -416,7 +416,7 @@ static int bash_prgae_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         size_t tag_len = 0;
         if (!OSSL_PARAM_get_octet_string_ptr(p, &tag, &tag_len))
             return 0;
-        if (tag_len != c->variant->mac_size)
+        if (tag == NULL || tag_len != c->variant->mac_size)
             return 0;
         memcpy(c->tag, tag, tag_len);
         c->tag_set = 1;

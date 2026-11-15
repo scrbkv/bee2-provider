@@ -389,7 +389,7 @@ static int belt_aead_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         size_t tag_len = 0;
         if (!OSSL_PARAM_get_octet_string_ptr(p, &tag, &tag_len))
             return 0;
-        if (tag_len != BELT_AEAD_TAG_SIZE)
+        if (tag == NULL || tag_len != BELT_AEAD_TAG_SIZE)
             return 0;
         memcpy(c->tag, tag, BELT_AEAD_TAG_SIZE);
         c->tag_set = 1;

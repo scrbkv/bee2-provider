@@ -987,7 +987,7 @@ static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PA
             goto err;
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
             goto err;
-        if (len != bee2_bign_priv_len(variant))
+        if (buf == NULL || len != bee2_bign_priv_len(variant))
             goto err;
         memcpy(key->priv, buf, len);
         key->has_priv = 1;
@@ -997,7 +997,7 @@ static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PA
     if (p) {
         if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
             goto err;
-        if (len != bee2_bign_pub_len(variant))
+        if (buf == NULL || len != bee2_bign_pub_len(variant))
             goto err;
         memcpy(key->pub, buf, len);
         key->has_pub = 1;
