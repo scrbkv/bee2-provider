@@ -99,6 +99,7 @@ typedef struct {
     octet updated_iv[BELT_IV_SIZE];
     u32 key_words[8];
     unsigned int num;
+    octet cfb_partial[BELT_BLOCK_SIZE];
 
     octet buf[BELT_BLOCK_SIZE]; /* partial-block input buffer               */
     size_t buf_len;             /* bytes currently in buf                   */
@@ -137,39 +138,49 @@ static void belt_reset_iv_state(bee2_belt_ctx_t *c) {
 }
 
 static void belt_update_cfb_state(bee2_belt_ctx_t *c,
-                                  const unsigned char *output,
+                                  const unsigned char *ciphertext,
                                   size_t length) {
-    u32 block[4];
-    size_t i;
+    size_t count;
 
-    for (i = 0; i < length; ++i) {
-        if (c->num == 0) {
-            u32From(block, c->updated_iv, sizeof(c->updated_iv));
-            beltBlockEncr2(block, c->key_words);
-            u32To(c->updated_iv, sizeof(c->updated_iv), block);
+    if (c->num != 0 && length != 0) {
+        count = BELT_BLOCK_SIZE - c->num;
+        if (count > length)
+            count = length;
+        memcpy(c->cfb_partial + c->num, ciphertext, count);
+        c->num += (unsigned int)count;
+        ciphertext += count;
+        length -= count;
+        if (c->num == BELT_BLOCK_SIZE) {
+            memcpy(c->updated_iv, c->cfb_partial, BELT_BLOCK_SIZE);
+            c->num = 0;
         }
-        if (c->enc)
-            c->updated_iv[c->num] = output[i];
-        else
-            c->updated_iv[c->num] ^= output[i];
-        c->num = (c->num + 1u) % BELT_BLOCK_SIZE;
     }
-    OPENSSL_cleanse(block, sizeof(block));
+    if (length >= BELT_BLOCK_SIZE) {
+        count = length / BELT_BLOCK_SIZE * BELT_BLOCK_SIZE;
+        memcpy(c->updated_iv, ciphertext + count - BELT_BLOCK_SIZE, BELT_BLOCK_SIZE);
+        ciphertext += count;
+        length -= count;
+    }
+    if (length != 0) {
+        memcpy(c->cfb_partial, ciphertext, length);
+        c->num = (unsigned int)length;
+    }
 }
 
 static void belt_update_ctr_state(bee2_belt_ctx_t *c, size_t length) {
+    size_t blocks = length / BELT_BLOCK_SIZE;
+    unsigned int remainder = (unsigned int)(length % BELT_BLOCK_SIZE);
     size_t i;
 
-    for (i = 0; i < length; ++i) {
-        if (c->num == 0) {
-            size_t j;
+    if (remainder != 0 &&
+        (c->num == 0 || c->num + remainder > BELT_BLOCK_SIZE))
+        ++blocks;
+    c->num = (c->num + remainder) % BELT_BLOCK_SIZE;
 
-            for (j = 0; j < sizeof(c->updated_iv); ++j) {
-                if (++c->updated_iv[j] != 0)
-                    break;
-            }
-        }
-        c->num = (c->num + 1u) % BELT_BLOCK_SIZE;
+    for (i = 0; i < sizeof(c->updated_iv) && blocks != 0; ++i) {
+        unsigned int sum = c->updated_iv[i] + (unsigned int)(blocks & 0xffu);
+        c->updated_iv[i] = (octet)sum;
+        blocks = (blocks >> 8) + (sum >> 8);
     }
 }
 
@@ -335,11 +346,15 @@ static int belt_update(void *vctx,
             return 0;
         if (inl != 0) {
             c->started = 1;
+            if (c->mode == &belt_cfb_mode && !c->enc)
+                belt_update_cfb_state(c, in, inl);
             crypt(&c->backend_state, in, inl, out);
-            if (c->mode == &belt_cfb_mode)
-                belt_update_cfb_state(c, out, inl);
-            else
+            if (c->mode == &belt_cfb_mode) {
+                if (c->enc)
+                    belt_update_cfb_state(c, out, inl);
+            } else {
                 belt_update_ctr_state(c, inl);
+            }
         }
         *outl = inl;
         return 1;
@@ -644,10 +659,25 @@ static int belt_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_UPDATED_IV);
     if (p) {
         if ((c->mode != &belt_cbc_mode && c->mode != &belt_cfb_mode &&
-             c->mode != &belt_ctr_mode) ||
-            !c->backend_state.iv_set ||
-            !OSSL_PARAM_set_octet_string(p, c->updated_iv, sizeof(c->updated_iv)))
+             c->mode != &belt_ctr_mode) || !c->backend_state.iv_set)
             return 0;
+        if (c->mode == &belt_cfb_mode && c->num != 0) {
+            u32 block[4];
+            octet iv[BELT_IV_SIZE];
+            int ok;
+
+            u32From(block, c->updated_iv, sizeof(c->updated_iv));
+            beltBlockEncr2(block, c->key_words);
+            u32To(iv, sizeof(iv), block);
+            memcpy(iv, c->cfb_partial, c->num);
+            ok = OSSL_PARAM_set_octet_string(p, iv, sizeof(iv));
+            OPENSSL_cleanse(block, sizeof(block));
+            OPENSSL_cleanse(iv, sizeof(iv));
+            if (!ok)
+                return 0;
+        } else if (!OSSL_PARAM_set_octet_string(p, c->updated_iv, sizeof(c->updated_iv))) {
+            return 0;
+        }
     }
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_NUM);

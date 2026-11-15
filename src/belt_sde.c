@@ -17,7 +17,7 @@
  * represents one complete sector. A second update is rejected. The output
  * length always equals the input length.
  *
- * OID (STB 34.101.31): 1.2.112.0.2.0.34.101.31.26
+ * OIDs (STB 34.101.31): .121/.122/.123 for BELT-SDE-128/192/256 respectively.
  */
 
 #include "bee2_backend.h"

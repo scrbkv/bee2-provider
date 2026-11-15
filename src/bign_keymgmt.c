@@ -418,11 +418,12 @@ static int bign_export(void *vkey, int selection, OSSL_CALLBACK *param_cb, void 
     pub_len = bee2_bign_pub_len(key->variant);
     encoding = key->encode_explicit ? OSSL_PKEY_EC_ENCODING_EXPLICIT : OSSL_PKEY_EC_ENCODING_GROUP;
 
-    if (selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS) {
+    if (selection & (OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS |
+                     OSSL_KEYMGMT_SELECT_PUBLIC_KEY | OSSL_KEYMGMT_SELECT_PRIVATE_KEY))
         params[n++] = OSSL_PARAM_construct_utf8_string(
             OSSL_PKEY_PARAM_GROUP_NAME, (char *)key->variant->curve_oid, 0);
+    if (selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS)
         params[n++] = OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_EC_ENCODING, encoding, 0);
-    }
 
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
         if (!bee2_bign_key_ensure_public(key))

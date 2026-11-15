@@ -291,27 +291,6 @@ cleanup:
     return ok;
 }
 
-static int bign_sig_prepare_hash(const bee2_bign_sig_ctx_t *ctx,
-                                 const unsigned char *tbs,
-                                 size_t tbslen,
-                                 const unsigned char **hash,
-                                 size_t *hashlen,
-                                 unsigned char md_buf[EVP_MAX_MD_SIZE]) {
-    if (!ctx || !hash || !hashlen)
-        return 0;
-    if (!ctx->md) {
-        if (tbslen > ULONG_MAX)
-            return 0;
-        *hash = tbs;
-        *hashlen = tbslen;
-        return 1;
-    }
-    if (!bign_sig_hash_oneshot(ctx->md, tbs, tbslen, md_buf, hashlen))
-        return 0;
-    *hash = md_buf;
-    return 1;
-}
-
 static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
                               unsigned char *sig,
                               size_t *siglen,
@@ -549,37 +528,19 @@ static int bign_sig_sign(void *vctx,
                          const unsigned char *tbs,
                          size_t tbslen) {
     bee2_bign_sig_ctx_t *ctx = vctx;
-    const unsigned char *hash = NULL;
-    size_t hashlen = 0;
-    unsigned char md_buf[EVP_MAX_MD_SIZE];
-    int ok;
 
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN)
         return 0;
-    OPENSSL_cleanse(md_buf, sizeof(md_buf));
-    if (!bign_sig_prepare_hash(ctx, tbs, tbslen, &hash, &hashlen, md_buf))
-        return 0;
-    ok = bign_sig_sign_hash(ctx, sig, siglen, sigsize, hash, hashlen);
-    bee2_bign_cleanse(md_buf, sizeof(md_buf));
-    return ok;
+    return bign_sig_sign_hash(ctx, sig, siglen, sigsize, tbs, tbslen);
 }
 
 static int bign_sig_verify(
     void *vctx, const unsigned char *sig, size_t siglen, const unsigned char *tbs, size_t tbslen) {
     bee2_bign_sig_ctx_t *ctx = vctx;
-    const unsigned char *hash = NULL;
-    size_t hashlen = 0;
-    unsigned char md_buf[EVP_MAX_MD_SIZE];
-    int ok;
 
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
-    OPENSSL_cleanse(md_buf, sizeof(md_buf));
-    if (!bign_sig_prepare_hash(ctx, tbs, tbslen, &hash, &hashlen, md_buf))
-        return 0;
-    ok = bign_sig_verify_hash(ctx, sig, siglen, hash, hashlen);
-    bee2_bign_cleanse(md_buf, sizeof(md_buf));
-    return ok;
+    return bign_sig_verify_hash(ctx, sig, siglen, tbs, tbslen);
 }
 
 static int

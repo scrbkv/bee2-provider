@@ -619,40 +619,36 @@ err:
     return 0;
 }
 
-static unsigned char *read_all(BIO *in, size_t *out_len) {
+static int read_all(BIO *in, unsigned char **out, size_t *out_len) {
     unsigned char *buf = NULL;
     size_t cap = 0;
     size_t used = 0;
     unsigned char tmp[4096];
 
-    if (!in) {
-        return NULL;
-    }
+    if (!in || !out || !out_len)
+        return 0;
+    *out = NULL;
+    *out_len = 0;
 
     for (;;) {
         size_t n = 0;
-        int ok = BIO_read_ex(in, tmp, sizeof(tmp), &n);
-        if (!ok) {
-            if (n == 0)
+        if (!BIO_read_ex(in, tmp, sizeof(tmp), &n) || n == 0) {
+            if (BIO_eof(in) == 1)
                 break;
-            OPENSSL_clear_free(buf, cap);
-            return NULL;
+            goto err;
         }
-        if (n == 0)
-            break;
-        if (n > BIGN_MAX_KEY_INPUT - used) {
-            OPENSSL_clear_free(buf, cap);
-            return NULL;
-        }
-        if (!append_bytes(&buf, &used, &cap, tmp, n)) {
-            OPENSSL_clear_free(buf, cap);
-            return NULL;
-        }
+        if (used > BIGN_MAX_KEY_INPUT || n > BIGN_MAX_KEY_INPUT - used ||
+            !append_bytes(&buf, &used, &cap, tmp, n))
+            goto err;
     }
 
-    if (out_len)
-        *out_len = used;
-    return buf;
+    *out = buf;
+    *out_len = used;
+    return 1;
+
+err:
+    OPENSSL_clear_free(buf, cap);
+    return 0;
 }
 
 static int is_pem_data(const unsigned char *buf, size_t len) {
@@ -1102,12 +1098,15 @@ static int bign_decoder_decode(void *vctx,
     BIO *bio = BIO_new_from_core_bio(ctx->libctx, in);
     size_t len = 0;
     unsigned char *buf;
+    int read_ok;
 
     if (bio == NULL)
         return 0;
-    buf = read_all(bio, &len);
+    read_ok = read_all(bio, &buf, &len);
     BIO_free(bio);
-    if (!buf || len == 0) {
+    if (!read_ok)
+        return 0;
+    if (len == 0) {
         OPENSSL_clear_free(buf, len);
         return 1;
     }
