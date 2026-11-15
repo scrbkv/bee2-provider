@@ -163,7 +163,11 @@ static int check_pbkdf2_params(const BUF_MEM *data)
     if (!pbkdf2 || !pbkdf2->salt || !pbkdf2->iter ||
         pbkdf2->salt->type != V_ASN1_OCTET_STRING ||
         ASN1_INTEGER_get(pbkdf2->iter) != 10000 ||
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+        ASN1_STRING_get_length(pbkdf2->salt->value.octet_string) != 16u)
+#else
         ASN1_STRING_length(pbkdf2->salt->value.octet_string) != 16)
+#endif
         goto cleanup;
     ok = 1;
 
