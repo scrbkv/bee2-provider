@@ -132,6 +132,74 @@ cleanup:
     return ok;
 }
 
+/* Check that decoding does not require EOF or swallow the next DER key. */
+static int check_der_stream(EVP_PKEY *key)
+{
+    OSSL_ENCODER_CTX *encoder = NULL;
+    OSSL_DECODER_CTX *decoder = NULL;
+    EVP_PKEY *decoded = NULL;
+    BIO *encoded = NULL, *input = NULL, *reader = NULL, *writer = NULL;
+    BUF_MEM *data = NULL;
+    int ok = 0;
+
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, "DER", "PrivateKeyInfo", "provider=bee2");
+    encoded = BIO_new(BIO_s_mem());
+    if (!encoder || !encoded || !OSSL_ENCODER_to_bio(encoder, encoded) ||
+        !BIO_get_mem_ptr(encoded, &data) || !data || data->length == 0 ||
+        data->length > INT_MAX)
+        goto cleanup;
+
+    input = BIO_new(BIO_s_mem());
+    if (!input ||
+        BIO_write(input, data->data, (int)data->length) != (int)data->length ||
+        BIO_write(input, data->data, (int)data->length) != (int)data->length)
+        goto cleanup;
+
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+    if (!decoder || OSSL_DECODER_from_bio(decoder, input) <= 0 ||
+        !decoded || !same_private_key(key, decoded) ||
+        BIO_ctrl_pending(input) != data->length)
+        goto cleanup;
+    OSSL_DECODER_CTX_free(decoder);
+    decoder = NULL;
+    EVP_PKEY_free(decoded);
+    decoded = NULL;
+
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+    if (!decoder || OSSL_DECODER_from_bio(decoder, input) <= 0 ||
+        !decoded || !same_private_key(key, decoded) || BIO_ctrl_pending(input) != 0)
+        goto cleanup;
+    OSSL_DECODER_CTX_free(decoder);
+    decoder = NULL;
+    EVP_PKEY_free(decoded);
+    decoded = NULL;
+
+    if (!BIO_new_bio_pair(&reader, 0, &writer, 0) ||
+        BIO_write(writer, data->data, (int)data->length) != (int)data->length)
+        goto cleanup;
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+    if (!decoder || OSSL_DECODER_from_bio(decoder, reader) <= 0 ||
+        !decoded || !same_private_key(key, decoded))
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok)
+        fprintf(stderr, "BIGN DER stream framing failed\n");
+    EVP_PKEY_free(decoded);
+    OSSL_DECODER_CTX_free(decoder);
+    BIO_free(writer);
+    BIO_free(reader);
+    BIO_free(input);
+    BIO_free(encoded);
+    OSSL_ENCODER_CTX_free(encoder);
+    return ok;
+}
+
 /* Verify the DER PBES2 parameters, independently of successful decryption. */
 static int check_pbkdf2_params(const BUF_MEM *data)
 {
@@ -311,7 +379,7 @@ int main(int argc, char **argv)
         key = generate_key(names[i]);
         if (!key)
             goto cleanup;
-        if (!check_public_only_decoding(key))
+        if (!check_public_only_decoding(key) || !check_der_stream(key))
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {
             if (!check_serialization(key, formats[j], 0) ||
