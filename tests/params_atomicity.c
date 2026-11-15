@@ -74,7 +74,7 @@ static int check_bign_digest(void)
 {
     EVP_PKEY_CTX *gen = NULL, *sign = NULL;
     EVP_PKEY *key = NULL;
-    char belt[] = "belt-hash", sha[] = "SHA256";
+    char belt[] = "belt-hash", sha[] = "SHA1";
     char digest[64] = {0};
     OSSL_PARAM good[] = {
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, belt, sizeof(belt)),
