@@ -1312,6 +1312,8 @@ static int bign_decoder_decode(void *vctx,
     if (bio == NULL)
         return 0;
     read_ok = read_one_object(bio, &buf, &len);
+    fprintf(stderr, "DEBUG: BIGN core BIO read=%d bytes=%zu eof=%d retry=%d\\n",
+            read_ok, len, BIO_eof(bio), BIO_should_retry(bio));
     BIO_free(bio);
     if (!read_ok)
         return 0;
