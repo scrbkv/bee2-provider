@@ -53,7 +53,8 @@ static int decode_key(EVP_PKEY **key, const char *format, const BUF_MEM *data,
         int direct_ok = direct && direct_input &&
             OSSL_DECODER_CTX_set_passphrase(direct, pass, passlen) &&
             OSSL_DECODER_from_bio(direct, direct_input) > 0;
-        fprintf(stderr, "BIGN PKCS#8 decoder diagnostic: provider-only=%d\\n", direct_ok);
+        fprintf(stderr, "BIGN PKCS#8 decoder diagnostic: provider-only=%d decoders=%d\n",
+                direct_ok, direct ? OSSL_DECODER_CTX_get_num_decoders(direct) : -1);
         EVP_PKEY_free(direct_key);
         BIO_free(direct_input);
         OSSL_DECODER_CTX_free(direct);

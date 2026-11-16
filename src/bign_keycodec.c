@@ -15,6 +15,7 @@
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #define BIGN_PEM_LABEL "PRIVATE KEY"
@@ -1299,6 +1300,7 @@ static int bign_decoder_decode(void *vctx,
                                OSSL_PASSPHRASE_CALLBACK *pw_cb,
                                void *pw_cbarg) {
     bee2_bign_decoder_ctx_t *ctx = vctx;
+    fprintf(stderr, "DEBUG: BIGN decoder called selection=%d\n", selection);
     if (!ctx || !data_cb)
         return 0;
 
@@ -1372,6 +1374,8 @@ static int bign_decoder_decode(void *vctx,
     }
 
     if (!decoded) {
+        fprintf(stderr, "DEBUG: BIGN decoder rejected input PEM=%d bytes=%zu\n",
+                is_pem, der_len);
         bee2_bign_key_free(key);
         if (der != buf)
             OPENSSL_clear_free(der, der_len);
