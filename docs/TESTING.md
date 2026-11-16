@@ -167,9 +167,8 @@ those legitimate tests would appear as uncovered implementation lines. The
 BIGN digest test now checks actual one-shot `EVP_DigestSign`/`EVP_DigestVerify`
 with the matching BELT/BASH digests and a modified-message rejection.
 
-The generic `bee2_provider_cipher_dispatch` test enumerates all exported
-ciphers through `OSSL_PROVIDER_query_operation`, invokes the registered
-one-shot function, duplicates initialized native contexts and compares the
-ciphertext and AEAD tag against the public EVP streaming API. It tests
-supported algorithm semantics without maintaining a second per-algorithm
-copy of the test matrix.
+Context-cloning checks are integrated into the owning contract tests rather
+than new redundant test binaries: BIGN raw/BAKE derived secret equality after
+`EVP_PKEY_CTX_dup`, BIGN key-transport header copy independence, a partially
+updated BELT-MAC copy via `EVP_MAC_CTX_dup`, and `EVP_KDF_reset` with required
+parameter reinstallation and deterministic repeatability.

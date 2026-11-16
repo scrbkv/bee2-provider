@@ -46,7 +46,9 @@ static int derive_secret(EVP_PKEY *local_key,
                          unsigned char **secret,
                          size_t *secret_length) {
     static unsigned char ukm[] = {0x42, 0x49, 0x47, 0x4e, 0x2d, 0x44, 0x48};
-    EVP_PKEY_CTX *ctx = NULL;
+    EVP_PKEY_CTX *ctx = NULL, *clone = NULL;
+    unsigned char *clone_secret = NULL;
+    size_t clone_length = 0;
     OSSL_PARAM params[5];
     char kdf_name[] = "bake-kdf";
     size_t kdf_length = 32u;
@@ -75,7 +77,14 @@ static int derive_secret(EVP_PKEY *local_key,
     if (!*secret)
         goto cleanup;
     *secret_length = required;
-    if (EVP_PKEY_derive(ctx, *secret, secret_length) <= 0)
+    clone = EVP_PKEY_CTX_dup(ctx);
+    clone_secret = OPENSSL_malloc(required);
+    clone_length = required;
+    if (clone == NULL || clone_secret == NULL ||
+        EVP_PKEY_derive(ctx, *secret, secret_length) <= 0 ||
+        EVP_PKEY_derive(clone, clone_secret, &clone_length) <= 0 ||
+        clone_length != *secret_length ||
+        CRYPTO_memcmp(clone_secret, *secret, clone_length) != 0)
         goto cleanup;
     {
         size_t invalid_length = 33;
@@ -90,6 +99,8 @@ static int derive_secret(EVP_PKEY *local_key,
     ok = 1;
 
 cleanup:
+    EVP_PKEY_CTX_free(clone);
+    OPENSSL_clear_free(clone_secret, clone_length);
     EVP_PKEY_CTX_free(ctx);
     if (!ok) {
         OPENSSL_clear_free(*secret, required);
