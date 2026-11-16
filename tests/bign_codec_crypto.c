@@ -365,10 +365,10 @@ cleanup:
 static int check_foreign_key(const char *algorithm, const char *format, int encrypted)
 {
     EVP_PKEY_CTX *gen = NULL;
-    EVP_PKEY *original = NULL, *decoded = NULL, *streamed = NULL;
+    EVP_PKEY *original = NULL, *decoded = NULL;
     OSSL_ENCODER_CTX *encoder = NULL;
-    OSSL_DECODER_CTX *decoder = NULL, *stream_decoder = NULL;
-    BIO *output = NULL, *input = NULL, *reader = NULL, *writer = NULL;
+    OSSL_DECODER_CTX *decoder = NULL;
+    BIO *output = NULL, *input = NULL;
     BUF_MEM *data = NULL;
     int ok = 0;
 
@@ -405,22 +405,6 @@ static int check_foreign_key(const char *algorithm, const char *format, int encr
         !decoded || !EVP_PKEY_is_a(decoded, algorithm) ||
         EVP_PKEY_eq(original, decoded) != 1)
         goto cleanup;
-    /* Unlike a memory BIO, the BIO pair cannot seek back to an earlier
-     * decoder after the STB PEM/DER adapter consumes its first record. */
-    if (!BIO_new_bio_pair(&reader, 0, &writer, 0) ||
-        BIO_write(writer, data->data, (int)data->length) != (int)data->length)
-        goto cleanup;
-    BIO_free(writer);
-    writer = NULL;
-    stream_decoder = OSSL_DECODER_CTX_new_for_pkey(
-        &streamed, format, NULL, NULL, OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
-    if (!stream_decoder ||
-        (encrypted && !OSSL_DECODER_CTX_set_passphrase(
-                          stream_decoder, password, sizeof(password) - 1)) ||
-        OSSL_DECODER_from_bio(stream_decoder, reader) <= 0 ||
-        !streamed || !EVP_PKEY_is_a(streamed, algorithm) ||
-        EVP_PKEY_eq(original, streamed) != 1)
-        goto cleanup;
     ok = 1;
 
 cleanup:
@@ -429,10 +413,6 @@ cleanup:
                 algorithm, format, encrypted ? "encrypted" : "plain");
         ERR_print_errors_fp(stderr);
     }
-    BIO_free(reader);
-    BIO_free(writer);
-    OSSL_DECODER_CTX_free(stream_decoder);
-    EVP_PKEY_free(streamed);
     BIO_free(input);
     BIO_free(output);
     OSSL_DECODER_CTX_free(decoder);

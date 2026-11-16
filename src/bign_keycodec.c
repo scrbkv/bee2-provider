@@ -1537,69 +1537,42 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         const ASN1_OBJECT *private_oid = NULL;
         ASN1_OBJECT *public_oid = NULL;
         const char *structure = NULL;
-        char *key_type = NULL;
-        char resolved_name[128];
-        char bign_name[] = "bign", rsa_name[] = "RSA", ec_name[] = "EC";
+        char bign_name[] = "bign";
 
-        /* Emit a new DER object for subsequent decoders: the original
-         * input BIO may not be seekable, even for non-BIGN keys. */
-        if (encrypted != NULL && p == payload + payload_len)
-            structure = "EncryptedPrivateKeyInfo";
+        /* The first DER-to-DER decoder may consume a nonseekable BIO.
+         * Recognised plain BIGN keys must therefore pass through here as
+         * well, without requiring another attempt to read the original BIO. */
         p = payload;
         ERR_set_mark();
         plain_p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)payload_len);
         ERR_pop_to_mark();
         if (plain_p8 != NULL && p == payload + payload_len &&
-            PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8)) {
+            PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8) &&
+            oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
             structure = "PrivateKeyInfo";
-            if (oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
-                key_type = bign_name;
-            } else if (OBJ_obj2txt(resolved_name, sizeof(resolved_name),
-                                   private_oid, 0) > 0) {
-                key_type = resolved_name;
-            }
         } else {
             p = payload;
             ERR_set_mark();
             pub = d2i_X509_PUBKEY(NULL, &p, (long)payload_len);
             ERR_pop_to_mark();
             if (pub != NULL && p == payload + payload_len &&
-                X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub)) {
+                X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub) &&
+                oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
                 structure = "SubjectPublicKeyInfo";
-                if (oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY)) {
-                    key_type = bign_name;
-                } else if (OBJ_obj2txt(resolved_name, sizeof(resolved_name),
-                                       public_oid, 0) > 0) {
-                    key_type = resolved_name;
-                }
-            }
-        }
-        if (structure == NULL && ctx->input_pem && pem_name != NULL) {
-            if (strcmp(pem_name, "RSA PRIVATE KEY") == 0) {
-                structure = "type-specific";
-                key_type = rsa_name;
-            } else if (strcmp(pem_name, "EC PRIVATE KEY") == 0) {
-                structure = "type-specific";
-                key_type = ec_name;
-            }
         }
         if (structure != NULL) {
-            OSSL_PARAM params[6];
-            size_t n = 0;
+            OSSL_PARAM params[] = {
+                OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, bign_name, 0),
+                OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0),
+                OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA,
+                                        (void *)payload, payload_len),
+                OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
+                OSSL_PARAM_END
+            };
 
-            if (key_type != NULL)
-                params[n++] = OSSL_PARAM_construct_utf8_string(
-                    OSSL_OBJECT_PARAM_DATA_TYPE, key_type, 0);
-            params[n++] = OSSL_PARAM_construct_utf8_string(
-                OSSL_OBJECT_PARAM_INPUT_TYPE, "DER", 0);
-            params[n++] = OSSL_PARAM_construct_utf8_string(
-                OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0);
-            params[n++] = OSSL_PARAM_construct_octet_string(
-                OSSL_OBJECT_PARAM_DATA, (void *)payload, payload_len);
-            params[n++] = OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &obj_type);
-            params[n] = OSSL_PARAM_construct_end();
             ok = data_cb(params, data_cbarg);
         } else {
+            /* Leave other key types and PBES2 schemes to OpenSSL. */
             ok = 1;
         }
         PKCS8_PRIV_KEY_INFO_free(plain_p8);
