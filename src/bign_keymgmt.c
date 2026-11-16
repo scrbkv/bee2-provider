@@ -485,7 +485,7 @@ static int bign_set_params(void *vkey, const OSSL_PARAM params[]) {
         selection |= OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
     if (selection == 0)
         return bign_apply_encoding_params(&key->encode_explicit, &key->encode_cofactor, params);
-    return bign_import(vkey, selection, params);
+    return bee2_bign_import_params(vkey, selection, params);
 }
 
 static const OSSL_PARAM *bign_settable_params(void *provctx) {
