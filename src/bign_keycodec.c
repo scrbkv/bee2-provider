@@ -1438,7 +1438,7 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     char password[PEM_BUFSIZE] = {0};
     char key_type[128];
     size_t password_len = 0, len = 0;
-    int plain_len, obj_type = OSSL_OBJECT_PKEY, recognised = 0;
+    int plain_len = 0, obj_type = OSSL_OBJECT_PKEY, recognised = 0;
     int ok = 0;
 
     (void)selection;
@@ -1458,8 +1458,50 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     ERR_pop_to_mark();
     if (encrypted == NULL || p != buf + len ||
         !bee2_stb_pbes2_is_stb(encrypted)) {
-        /* Let the ordinary OpenSSL decoders handle other key containers. */
-        ok = 1;
+        PKCS8_PRIV_KEY_INFO *plain_p8 = NULL;
+        X509_PUBKEY *pub = NULL;
+        const ASN1_OBJECT *private_oid = NULL;
+        ASN1_OBJECT *public_oid = NULL;
+        const char *structure = NULL;
+        char bign_name[] = "bign";
+
+        /* The first DER-to-DER decoder may consume a nonseekable BIO.
+         * Recognised plain BIGN keys must therefore pass through here as
+         * well, without requiring another attempt to read the original BIO. */
+        p = buf;
+        ERR_set_mark();
+        plain_p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
+        ERR_pop_to_mark();
+        if (plain_p8 != NULL && p == buf + len &&
+            PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8) &&
+            oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
+            structure = "PrivateKeyInfo";
+        } else {
+            p = buf;
+            ERR_set_mark();
+            pub = d2i_X509_PUBKEY(NULL, &p, (long)len);
+            ERR_pop_to_mark();
+            if (pub != NULL && p == buf + len &&
+                X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub) &&
+                oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
+                structure = "SubjectPublicKeyInfo";
+        }
+        if (structure != NULL) {
+            OSSL_PARAM params[] = {
+                OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, bign_name, 0),
+                OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0),
+                OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA, buf, len),
+                OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
+                OSSL_PARAM_END
+            };
+
+            ok = data_cb(params, data_cbarg);
+        } else {
+            /* Leave other key types and PBES2 schemes to OpenSSL. */
+            ok = 1;
+        }
+        PKCS8_PRIV_KEY_INFO_free(plain_p8);
+        X509_PUBKEY_free(pub);
         goto end;
     }
     if (pw_cb == NULL || !pw_cb(password, sizeof(password), &password_len,
