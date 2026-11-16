@@ -242,18 +242,27 @@ static int bash_prgae_update(void *vctx,
         /* AAD */
         if (c->data_started)
             return 0;
-        c->aad_started = 1;
-        bashPrgAbsorb(in, inl, &c->backend_state.state);
+        if (!c->aad_started) {
+            bashPrgAbsorbStart(&c->backend_state.state);
+            c->aad_started = 1;
+        }
+        bashPrgAbsorbStep(in, inl, &c->backend_state.state);
     } else {
         /* plaintext / ciphertext */
         if (outsize < inl)
             return 0;
-        c->data_started = 1;
+        if (!c->data_started) {
+            if (c->enc)
+                bashPrgEncrStart(&c->backend_state.state);
+            else
+                bashPrgDecrStart(&c->backend_state.state);
+            c->data_started = 1;
+        }
         memmove(out, in, inl);
         if (c->enc)
-            bashPrgEncr(out, inl, &c->backend_state.state);
+            bashPrgEncrStep(out, inl, &c->backend_state.state);
         else
-            bashPrgDecr(out, inl, &c->backend_state.state);
+            bashPrgDecrStep(out, inl, &c->backend_state.state);
         *outl = inl;
     }
     return 1;

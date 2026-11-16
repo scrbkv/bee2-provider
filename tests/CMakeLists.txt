@@ -434,6 +434,18 @@ add_test(NAME bee2_bash_prgae_stb
     COMMAND bee2_bash_prgae_stb $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bash_prgae_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
 
+add_executable(bee2_bash_prgae_streaming bash_prgae_streaming.c)
+target_link_libraries(bee2_bash_prgae_streaming PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bash_prgae_streaming
+    COMMAND bee2_bash_prgae_streaming $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bash_prgae_streaming PROPERTIES LABELS "regression;bash;aead;evp;native")
+
+add_executable(bee2_belt_reinit_padding belt_reinit_padding.c)
+target_link_libraries(bee2_belt_reinit_padding PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_belt_reinit_padding
+    COMMAND bee2_belt_reinit_padding $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_belt_reinit_padding PROPERTIES LABELS "regression;belt;evp;native")
+
 add_executable(bee2_bign_stb_verify bign_stb_verify.c)
 target_link_libraries(bee2_bign_stb_verify PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bign_stb_verify

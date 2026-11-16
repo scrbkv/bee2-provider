@@ -293,16 +293,21 @@ static int belt_init(void *vctx,
                      const OSSL_PARAM params[]) {
     bee2_belt_ctx_t *c = vctx;
 
-    if ((key != NULL && keylen != c->fixed_key_len) ||
-        (iv != NULL && ivlen != c->mode->iv_size) ||
-        (params != NULL && !belt_set_ctx_params(c, params))) {
-        c->finalized = 1;
+    if (c == NULL)
         return 0;
-    }
+    /* Failed reinitialization must not leave the previous operation usable. */
+    c->finalized = 1;
+    if ((key != NULL && keylen != c->fixed_key_len) ||
+        (iv != NULL && ivlen != c->mode->iv_size))
+        return 0;
+    /* Init starts a new operation. The padding restriction applies only
+     * between Init and Final, not to a previously completed operation. */
+    c->started = 0;
+    if (params != NULL && !belt_set_ctx_params(c, params))
+        return 0;
     c->enc = enc;
     c->buf_len = 0;
     c->have_last = 0;
-    c->started = 0;
     c->cts_done = 0;
     c->finalized = 0;
     if (key != NULL) {
