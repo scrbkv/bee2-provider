@@ -168,24 +168,37 @@ static int belt_aead_init(void *vctx,
                           int enc,
                           const OSSL_PARAM params[]) {
     bee2_belt_aead_ctx_t *c = vctx;
-    c->enc = enc;
+    bee2_belt_aead_ctx_t next = *c;
+    octet expected_tag[BELT_AEAD_TAG_SIZE];
+    int expected_tag_set;
 
-    if (key != NULL) {
-        if (keylen != c->fixed_key_len)
-            return 0;
-        c->algorithm->set_key(&c->backend_state, key, keylen);
+    next.enc = enc;
+    next.finalized = 0;
+    next.data_started = 0;
+    next.tag_set = 0;
+    OPENSSL_cleanse(next.tag, sizeof(next.tag));
+    if ((key != NULL && keylen != c->fixed_key_len) ||
+        (iv != NULL && ivlen != BELT_IV_SIZE) ||
+        (params != NULL && !belt_aead_set_ctx_params(&next, params))) {
+        c->finalized = 1;
+        return 0;
     }
-
-    if (iv != NULL) {
-        if (ivlen != BELT_IV_SIZE)
-            return 0;
-        c->algorithm->set_iv(&c->backend_state, iv, ivlen);
+    expected_tag_set = !enc && next.tag_set;
+    memcpy(expected_tag, next.tag, sizeof(expected_tag));
+    if (key != NULL)
+        next.algorithm->set_key(&next.backend_state, key, keylen);
+    if (iv != NULL)
+        next.algorithm->set_iv(&next.backend_state, iv, ivlen);
+    if (next.backend_state.key_set)
+        belt_aead_reinitialize(&next);
+    if (expected_tag_set) {
+        memcpy(next.tag, expected_tag, sizeof(expected_tag));
+        next.tag_set = 1;
     }
-
-    if (c->backend_state.key_set)
-        belt_aead_reinitialize(c);
-
-    return !params || belt_aead_set_ctx_params(c, params);
+    *c = next;
+    OPENSSL_cleanse(expected_tag, sizeof(expected_tag));
+    OPENSSL_cleanse(&next, sizeof(next));
+    return 1;
 }
 
 static int belt_aead_encrypt_init(void *vctx,

@@ -205,7 +205,8 @@ cleanup:
 }
 
 /* Verify the DER PBES2 parameters, independently of successful decryption. */
-static int check_pbkdf2_params(const BUF_MEM *data)
+static int check_pbkdf2_params(const BUF_MEM *data, const char *kwp_oid,
+                               size_t key_len)
 {
     const unsigned char *p = (const unsigned char *)data->data;
     const ASN1_OBJECT *oid = NULL;
@@ -234,13 +235,27 @@ static int check_pbkdf2_params(const BUF_MEM *data)
     pbkdf2 = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
     if (!pbkdf2 || !pbkdf2->salt || !pbkdf2->iter ||
         pbkdf2->salt->type != V_ASN1_OCTET_STRING ||
-        ASN1_INTEGER_get(pbkdf2->iter) != 10000 ||
+        ASN1_INTEGER_get(pbkdf2->iter) != 12000 ||
+        !pbkdf2->keylength || ASN1_INTEGER_get(pbkdf2->keylength) != (long)key_len ||
+        !pbkdf2->prf ||
 #if OPENSSL_VERSION_NUMBER >= 0x40100000L
-        ASN1_STRING_get_length(pbkdf2->salt->value.octet_string) != 16u)
+        ASN1_STRING_get_length(pbkdf2->salt->value.octet_string) != 24u)
 #else
-        ASN1_STRING_length(pbkdf2->salt->value.octet_string) != 16)
+        ASN1_STRING_length(pbkdf2->salt->value.octet_string) != 24)
 #endif
         goto cleanup;
+    {
+        char oid_text[80];
+
+        X509_ALGOR_get0(&oid, &type, &value, pbkdf2->prf);
+        if (OBJ_obj2txt(oid_text, sizeof(oid_text), oid, 1) <= 0 ||
+            strcmp(oid_text, "1.2.112.0.2.0.34.101.47.12") != 0)
+            goto cleanup;
+        X509_ALGOR_get0(&oid, &type, &value, pbes2->encryption);
+        if (OBJ_obj2txt(oid_text, sizeof(oid_text), oid, 1) <= 0 ||
+            strcmp(oid_text, kwp_oid) != 0 || type != V_ASN1_UNDEF)
+            goto cleanup;
+    }
     ok = 1;
 
 cleanup:
@@ -258,6 +273,25 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
     EVP_PKEY *decoded = NULL, *invalid = NULL;
     BIO *output = NULL;
     BUF_MEM *data = NULL;
+    int bits = EVP_PKEY_get_bits(key);
+    const char *cipher = bits == 256 ? "belt-kwp128" :
+                         bits == 384 ? "belt-kwp192" : "belt-kwp256";
+    const char *oid = bits == 256 ? "1.2.112.0.2.0.34.101.31.71" :
+                      bits == 384 ? "1.2.112.0.2.0.34.101.31.72" :
+                                    "1.2.112.0.2.0.34.101.31.73";
+    size_t key_len = bits == 256 ? 16u : bits == 384 ? 24u : 32u;
+    unsigned int iterations = 12000, too_few_iterations = 9999;
+    size_t salt_length = 24, too_short_salt = 7;
+    OSSL_PARAM settings[] = {
+        OSSL_PARAM_uint("stb-pbkdf2-iterations", &iterations),
+        OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &salt_length),
+        OSSL_PARAM_END};
+    OSSL_PARAM invalid_iter[] = {
+        OSSL_PARAM_uint("stb-pbkdf2-iterations", &too_few_iterations),
+        OSSL_PARAM_END};
+    OSSL_PARAM invalid_salt[] = {
+        OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &too_short_salt),
+        OSSL_PARAM_END};
     int ok = 0;
 
     encoder = OSSL_ENCODER_CTX_new_for_pkey(key, OSSL_KEYMGMT_SELECT_KEYPAIR,
@@ -266,13 +300,17 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
     if (encoder == NULL || output == NULL)
         goto cleanup;
     if (encrypted &&
-        (!OSSL_ENCODER_CTX_set_cipher(encoder, "AES-256-CBC", NULL) ||
+        (OSSL_ENCODER_CTX_set_params(encoder, invalid_iter) > 0 ||
+         OSSL_ENCODER_CTX_set_params(encoder, invalid_salt) > 0 ||
+         !OSSL_ENCODER_CTX_set_params(encoder, settings) ||
+         !OSSL_ENCODER_CTX_set_cipher(encoder, cipher, NULL) ||
          !OSSL_ENCODER_CTX_set_passphrase(encoder, password, sizeof(password) - 1)))
         goto cleanup;
     if (!OSSL_ENCODER_to_bio(encoder, output) || !BIO_get_mem_ptr(output, &data) ||
         data == NULL || data->length == 0)
         goto cleanup;
-    if ((encrypted && strcmp(format, "DER") == 0 && !check_pbkdf2_params(data)) ||
+    if ((encrypted && strcmp(format, "DER") == 0 &&
+         !check_pbkdf2_params(data, oid, key_len)) ||
         !decode_key(&decoded, format, data, password, sizeof(password) - 1) ||
         decoded == NULL || !same_private_key(key, decoded))
         goto cleanup;

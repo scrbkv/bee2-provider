@@ -101,6 +101,15 @@ static int check_bign_digest(void)
         EVP_PKEY_CTX_get_params(sign, query) <= 0 ||
         strcmp(digest, belt) != 0)
         goto end;
+    {
+        unsigned char hash[32] = {0}, signature[48];
+        size_t signature_len = sizeof(signature);
+
+        /* An unsuccessful new SignInit must not leave the old operation live. */
+        if (EVP_PKEY_sign_init_ex(sign, bad) > 0 ||
+            EVP_PKEY_sign(sign, signature, &signature_len, hash, sizeof(hash)) > 0)
+            goto end;
+    }
     ok = 1;
 end:
     if (!ok)

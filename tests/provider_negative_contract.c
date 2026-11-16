@@ -74,7 +74,12 @@ static int check_cipher(OSSL_PROVIDER *provider, const OSSL_ALGORITHM *algs,
         !update(ctx, output, &outlen, sizeof(output), key, 1) ||
         outlen != 1 || !final(ctx, output, &outlen, sizeof(output)) ||
         final(ctx, output, &outlen, sizeof(output)) ||
-        update(ctx, output, &outlen, sizeof(output), key, 1))
+        update(ctx, output, &outlen, sizeof(output), key, 1) ||
+        !encrypt_init(ctx, key, keylen, iv, ivlen, NULL) ||
+        encrypt_init(ctx, key, keylen, iv, ivlen + 1, NULL) ||
+        update(ctx, output, &outlen, sizeof(output), key, 1) ||
+        !encrypt_init(ctx, key, keylen, iv, ivlen, NULL) ||
+        !update(ctx, output, &outlen, sizeof(output), key, 1) || outlen != 1)
         goto end;
     ok = 1;
 end:
@@ -150,6 +155,7 @@ int main(int argc, char **argv)
         !check_cipher(bee2, algs, "bash-prg-ae2561", 32, 32, 1) ||
         !check_cipher(bee2, algs, "belt-che256", 32, 16, 0) ||
         !check_cipher(bee2, algs, "belt-dwp256", 32, 16, 0) ||
+        !check_cipher(bee2, algs, "belt-cfb256", 32, 16, 0) ||
         !check_mac() || !check_bign_private_key())
         goto end;
     ok = 1;

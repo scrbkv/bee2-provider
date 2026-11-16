@@ -33,11 +33,24 @@ as an ASN.1 OBJECT parameter. Selecting a compatible non-STB digest (for example
 with `bign-256`) also selects the hSpec signature identifier. Digests with
 fixed BIGN signature identifiers continue to use those identifiers.
 
-Encrypted BIGN PKCS#8 uses OpenSSL PBES2/PBKDF2 with 10,000 iterations and a
-random 16-byte salt, meeting the iteration/salt recommendations of STB
-34.101.45, Annex E. The PBES2 cipher and PRF are selected by OpenSSL; this
-does not claim the STB-specific HMAC-HBELT PBES2 profile. Older PBES2
-containers remain readable.
+Encrypted BIGN PKCS#8 uses PBES2 with PBKDF2-HMAC-HBELT (STB 34.101.45,
+Annex E) and authenticated BELT-KWP-128/192/256 (STB 34.101.31). It records
+the PBKDF2 salt, iteration count, derived-key length, HMAC-HBELT OID and
+BELT-KWP OID in the PKCS#8 EncryptedPrivateKeyInfo. KWP uses a zero header;
+no unauthenticated CBC padding is involved. Select one of `belt-kwp128`,
+`belt-kwp192`, `belt-kwp256` with `OSSL_ENCODER_CTX_set_cipher()` to protect
+a key. Other ciphers cannot be used to create encrypted BIGN PKCS#8 files.
+
+The encoder defaults to 10,000 iterations and a random 16-byte salt. Applications
+may set the `stb-pbkdf2-iterations` (uint) and `stb-pbkdf2-saltlen` (size_t)
+encoder context parameters via `OSSL_ENCODER_CTX_set_params()`. Values below
+10,000 iterations or 8 salt bytes are rejected when encrypting. These
+limits enforce the *recommendations* from STB Annex E as an output policy;
+Bee2's standalone `belt-pbkdf` primitive still supports all standard-defined
+inputs, including smaller test-vector parameters. Older OpenSSL-generated
+PBES2 containers remain readable, but new encrypted PKCS#8 files use the
+STB-algorithm profile. Interoperability with third-party PKCS#8 implementations
+requires support for these STB algorithm identifiers.
 
 BIGN keys in PKCS#8 and SPKI PEM/DER formats use the standard OpenSSL
 `file:` store loader and this provider's key decoders. Load both the `default`

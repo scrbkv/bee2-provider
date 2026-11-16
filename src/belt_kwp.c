@@ -105,26 +105,22 @@ static int belt_kwp_init_operation(void *vctx,
                                    int enc,
                                    const OSSL_PARAM params[]) {
     bee2_belt_kwp_ctx_t *c = vctx;
+
+    if ((key != NULL && keylen != c->fixed_key_len) ||
+        (iv != NULL && ivlen != BELT_KWP_HDR_SIZE) ||
+        (params != NULL && !belt_kwp_set_ctx_params(c, params))) {
+        c->finalized = 1;
+        return 0;
+    }
     c->enc = enc;
     c->processed = 0;
     c->finalized = 0;
-
-    if (params && !belt_kwp_set_ctx_params(c, params))
-        return 0;
-
     if (key != NULL) {
-        if (keylen != c->fixed_key_len)
-            return 0;
         bee2_belt_expand_key(key, keylen, c->key);
         c->key_set = 1;
     }
-
-    if (iv != NULL) {
-        if (ivlen != BELT_KWP_HDR_SIZE)
-            return 0;
+    if (iv != NULL)
         memcpy(c->hdr, iv, BELT_KWP_HDR_SIZE);
-    }
-
     return 1;
 }
 

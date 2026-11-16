@@ -149,31 +149,51 @@ static int bash_prgae_init(void *vctx,
                            int enc,
                            const OSSL_PARAM params[]) {
     bee2_bash_prgae_ctx_t *c = vctx;
-    c->enc = enc;
+    bee2_bash_prgae_ctx_t next = *c;
+    octet expected_tag[32];
+    int expected_tag_set;
 
+    next.enc = enc;
+    next.finalized = 0;
+    next.data_started = 0;
+    next.aad_started = 0;
+    next.tag_set = 0;
+    OPENSSL_cleanse(next.tag, sizeof(next.tag));
+    if ((key != NULL && (keylen < c->variant->min_key_size ||
+                         keylen > BASH_PRGAE_MAX_KEY_SIZE || keylen % 4u != 0u)) ||
+        (iv != NULL && (ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u))) {
+        c->finalized = 1;
+        return 0;
+    }
     if (key != NULL) {
-        if (keylen < c->variant->min_key_size || keylen > BASH_PRGAE_MAX_KEY_SIZE ||
-            keylen % 4u != 0u)
-            return 0;
-        memcpy(c->backend_state.key, key, keylen);
-        c->backend_state.key_len = keylen;
-        c->backend_state.key_set = 1;
-        c->key_len = keylen;
+        memcpy(next.backend_state.key, key, keylen);
+        next.backend_state.key_len = keylen;
+        next.backend_state.key_set = 1;
+        next.key_len = keylen;
     }
-
     if (iv != NULL) {
-        if (ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u)
-            return 0;
-        memcpy(c->backend_state.iv, iv, ivlen);
-        c->backend_state.iv_len = ivlen;
-        c->iv_len = ivlen;
-        c->backend_state.iv_set = 1;
+        memcpy(next.backend_state.iv, iv, ivlen);
+        next.backend_state.iv_len = ivlen;
+        next.iv_len = ivlen;
+        next.backend_state.iv_set = 1;
     }
-
-    if (c->backend_state.key_set && c->backend_state.iv_set)
-        bash_prgae_reinit(c);
-
-    return !params || bash_prgae_set_ctx_params(c, params);
+    if (params != NULL && !bash_prgae_set_ctx_params(&next, params)) {
+        c->finalized = 1;
+        OPENSSL_cleanse(&next, sizeof(next));
+        return 0;
+    }
+    expected_tag_set = !enc && next.tag_set;
+    memcpy(expected_tag, next.tag, sizeof(expected_tag));
+    if (next.backend_state.key_set && next.backend_state.iv_set)
+        bash_prgae_reinit(&next);
+    if (expected_tag_set) {
+        memcpy(next.tag, expected_tag, sizeof(expected_tag));
+        next.tag_set = 1;
+    }
+    *c = next;
+    OPENSSL_cleanse(expected_tag, sizeof(expected_tag));
+    OPENSSL_cleanse(&next, sizeof(next));
+    return 1;
 }
 
 static int bash_prgae_encrypt_init(void *vctx,

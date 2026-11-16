@@ -54,6 +54,7 @@ add_library(bee2_provider MODULE
     src/bign_signature.c
     src/bign_keytransport.c
     src/bign_keycodec.c
+    src/bign_stb_pbes2.c
 )
 
 target_include_directories(bee2_provider PRIVATE

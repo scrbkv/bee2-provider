@@ -103,6 +103,49 @@ end:
     return ok;
 }
 
+/* The signature's nested digest fetch must inherit the EVP property query. */
+static int check_inherited_properties(OSSL_PROVIDER *provider,
+                                      const OSSL_ALGORITHM *algs)
+{
+    const OSSL_ALGORITHM *alg;
+    const OSSL_DISPATCH *fn;
+    OSSL_FUNC_signature_newctx_fn *newctx = NULL;
+    OSSL_FUNC_signature_freectx_fn *freectx = NULL;
+    OSSL_FUNC_signature_set_ctx_params_fn *setctx = NULL;
+    char name[] = "belt-hash";
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, name, sizeof(name)),
+        OSSL_PARAM_END};
+    void *ctx = NULL;
+    int ok = 0;
+
+    for (alg = algs; alg->algorithm_names != NULL; ++alg)
+        if (contains_name(alg->algorithm_names, "bign-with-hbelt"))
+            break;
+    if (alg->algorithm_names == NULL)
+        return 0;
+    for (fn = alg->implementation; fn->function_id != 0; ++fn) {
+        if (fn->function_id == OSSL_FUNC_SIGNATURE_NEWCTX)
+            newctx = OSSL_FUNC_signature_newctx(fn);
+        else if (fn->function_id == OSSL_FUNC_SIGNATURE_FREECTX)
+            freectx = OSSL_FUNC_signature_freectx(fn);
+        else if (fn->function_id == OSSL_FUNC_SIGNATURE_SET_CTX_PARAMS)
+            setctx = OSSL_FUNC_signature_set_ctx_params(fn);
+    }
+    if (!newctx || !freectx || !setctx)
+        return 0;
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=default");
+    if (!ctx || setctx(ctx, params) > 0)
+        goto cleanup;
+    freectx(ctx);
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=bee2");
+    if (ctx && setctx(ctx, params) > 0)
+        ok = 1;
+cleanup:
+    freectx(ctx);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     const OSSL_ALGORITHM *algs = NULL, *alg;
@@ -129,6 +172,8 @@ int main(int argc, char **argv)
             !check_named_signature(alg, bee2, &fixed_algorithms[i]))
             goto end;
     }
+    if (!check_inherited_properties(bee2, algs))
+        goto end;
     ok = 1;
 end:
     if (algs != NULL)

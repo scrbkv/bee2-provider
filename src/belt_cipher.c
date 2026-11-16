@@ -292,40 +292,29 @@ static int belt_init(void *vctx,
                      int enc,
                      const OSSL_PARAM params[]) {
     bee2_belt_ctx_t *c = vctx;
+
+    if ((key != NULL && keylen != c->fixed_key_len) ||
+        (iv != NULL && ivlen != c->mode->iv_size) ||
+        (params != NULL && !belt_set_ctx_params(c, params))) {
+        c->finalized = 1;
+        return 0;
+    }
     c->enc = enc;
     c->buf_len = 0;
     c->have_last = 0;
     c->started = 0;
     c->cts_done = 0;
     c->finalized = 0;
-
-    if (params && !belt_set_ctx_params(c, params))
-        return 0;
-
     if (key != NULL) {
-        if (keylen != c->fixed_key_len)
-            return 0;
         c->mode->set_key(&c->backend_state, key, keylen);
         u32From(c->key_words, c->backend_state.key, sizeof(c->key_words));
     }
-
-    if (iv != NULL) {
-        if (c->mode->iv_size == 0) {
-            /* Some EVP callers pass a non-NULL IV pointer for ECB. Ignore it. */
-            if (ivlen != 0)
-                return 0;
-        } else {
-            if (ivlen != c->mode->iv_size)
-                return 0;
-            c->mode->set_iv(&c->backend_state, iv, ivlen);
-        }
-    }
-
+    if (iv != NULL && c->mode->iv_size != 0)
+        c->mode->set_iv(&c->backend_state, iv, ivlen);
     if (c->backend_state.key_set) {
         belt_reinit(c);
         belt_reset_iv_state(c);
     }
-
     return 1;
 }
 

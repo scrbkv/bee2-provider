@@ -33,6 +33,7 @@ typedef struct {
     EVP_MD_CTX *mdctx;
     char mdname[64];
     char mdprops[128];
+    char propq[128];
     unsigned char aid_buf[256];
     size_t aid_len;
     unsigned int deterministic;
@@ -258,7 +259,9 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
         bign_sig_reset_md(ctx, 0);
         return 1;
     }
-    md = EVP_MD_fetch(ctx->libctx, mdname, (mdprops && mdprops[0] != '\0') ? mdprops : NULL);
+    md = EVP_MD_fetch(ctx->libctx, mdname,
+                      mdprops && mdprops[0] != '\0' ? mdprops :
+                      (ctx->propq[0] != '\0' ? ctx->propq : NULL));
     if (md == NULL)
         return 0;
     if (ctx->fixed_digest && !EVP_MD_is_a(md, ctx->fixed_digest)) {
@@ -467,39 +470,29 @@ static int bign_sig_reset_mdctx(bee2_bign_sig_ctx_t *ctx) {
     return EVP_DigestInit_ex2(ctx->mdctx, ctx->md, NULL);
 }
 
+static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
+                          void *vkey, const OSSL_PARAM params[],
+                          int for_sign, int digest_operation);
+
 static int bign_sig_digest_init_common(bee2_bign_sig_ctx_t *ctx,
                                        const char *mdname,
                                        void *vkey,
                                        const OSSL_PARAM params[],
                                        int for_sign) {
-    if (!bign_sig_assign_key(ctx, vkey, for_sign))
-        return 0;
-    if (params && !bign_sig_set_ctx_params(ctx, params))
-        return 0;
-
-    if (mdname && mdname[0] != '\0') {
-        if (!bign_sig_set_md(ctx, mdname, ctx->mdprops))
-            return 0;
-    } else if (!ctx->md) {
-        const char *digest;
-
-        /* hSpec has no implicit hash algorithm: it must be selected. */
-        if (ctx->hspec)
-            return 0;
-        digest = ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest;
-        if (!bign_sig_set_md(ctx, digest, NULL))
-            return 0;
-    }
-
-    return bign_sig_reset_mdctx(ctx);
+    return bign_sig_begin(ctx, mdname, vkey, params, for_sign, 1);
 }
 
 static void *bign_sig_newctx_common(void *provctx,
                                     const bee2_bign_variant_t *variant,
-                                    const char *fixed_digest) {
+                                     const char *fixed_digest,
+                                     const char *propq) {
     bee2_bign_sig_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
         return NULL;
+    if (!bign_str_copy(ctx->propq, sizeof(ctx->propq), propq)) {
+        OPENSSL_free(ctx);
+        return NULL;
+    }
     ctx->libctx = bee2_provider_libctx(provctx);
     ctx->variant = variant;
     ctx->fixed_digest = fixed_digest;
@@ -508,8 +501,7 @@ static void *bign_sig_newctx_common(void *provctx,
 
 #define BIGN_SIG_NEWCTX(NAME, VARIANT, DIGEST) \
     static void *NAME(void *provctx, const char *propq) { \
-        (void)propq; \
-        return bign_sig_newctx_common(provctx, VARIANT, DIGEST); \
+        return bign_sig_newctx_common(provctx, VARIANT, DIGEST, propq); \
     }
 
 BIGN_SIG_NEWCTX(bign256_sig_newctx, bee2_bign_variant_256(), NULL)
@@ -522,9 +514,7 @@ BIGN_SIG_NEWCTX(bign512_bash512_sig_newctx, bee2_bign_variant_512(), "bash512")
 BIGN_SIG_NEWCTX(bign_sig_newctx, NULL, NULL)
 
 static void *bign_hspec_sig_newctx(void *provctx, const char *propq) {
-    bee2_bign_sig_ctx_t *ctx = bign_sig_newctx_common(provctx, NULL, NULL);
-
-    (void)propq;
+    bee2_bign_sig_ctx_t *ctx = bign_sig_newctx_common(provctx, NULL, NULL, propq);
     if (ctx)
         ctx->hspec = 1;
     return ctx;
@@ -558,6 +548,7 @@ static void *bign_sig_dupctx(void *vctx) {
     dst->hspec = src->hspec;
     memcpy(dst->hash_oid, src->hash_oid, sizeof(dst->hash_oid));
     dst->md_started = src->md_started;
+    memcpy(dst->propq, src->propq, sizeof(dst->propq));
     if (!bign_str_copy(dst->mdname, sizeof(dst->mdname), src->mdname))
         goto err;
     if (!bign_str_copy(dst->mdprops, sizeof(dst->mdprops), src->mdprops))
@@ -588,22 +579,53 @@ err:
     return NULL;
 }
 
-static int bign_sig_sign_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
-    bee2_bign_sig_ctx_t *ctx = vctx;
-    if (!bign_sig_assign_key(ctx, vkey, 1))
+static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
+                          void *vkey, const OSSL_PARAM params[],
+                          int for_sign, int digest_operation) {
+    bee2_bign_sig_ctx_t *next;
+
+    if (!ctx)
         return 0;
-    if (params && !bign_sig_set_ctx_params(ctx, params))
-        return 0;
+    next = bign_sig_dupctx(ctx);
+    if (next == NULL)
+        goto err;
+    if (!bign_sig_assign_key(next, vkey, for_sign) ||
+        (params != NULL && !bign_sig_set_ctx_params(next, params)))
+        goto err_next;
+    if (digest_operation) {
+        if (mdname && mdname[0] != '\0') {
+            if (!bign_sig_set_md(next, mdname, next->mdprops))
+                goto err_next;
+        } else if (!next->md) {
+            const char *digest;
+
+            if (next->hspec)
+                goto err_next;
+            digest = next->fixed_digest ? next->fixed_digest : next->variant->default_digest;
+            if (!bign_sig_set_md(next, digest, NULL))
+                goto err_next;
+        }
+        if (!bign_sig_reset_mdctx(next))
+            goto err_next;
+    }
+    bign_sig_reset_md(ctx, 0);
+    *ctx = *next;
+    OPENSSL_clear_free(next, sizeof(*next));
     return 1;
+
+err_next:
+    bign_sig_freectx(next);
+err:
+    ctx->mode = BEE2_BIGN_SIG_IDLE;
+    return 0;
+}
+
+static int bign_sig_sign_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
+    return bign_sig_begin(vctx, NULL, vkey, params, 1, 0);
 }
 
 static int bign_sig_verify_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
-    bee2_bign_sig_ctx_t *ctx = vctx;
-    if (!bign_sig_assign_key(ctx, vkey, 0))
-        return 0;
-    if (params && !bign_sig_set_ctx_params(ctx, params))
-        return 0;
-    return 1;
+    return bign_sig_begin(vctx, NULL, vkey, params, 0, 0);
 }
 
 static int bign_sig_sign(void *vctx,

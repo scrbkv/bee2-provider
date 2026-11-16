@@ -1,6 +1,7 @@
 #include "bee2_oids.h"
 #include "bign_common.h"
 #include "bign_der_frame.h"
+#include "bign_stb_pbes2.h"
 
 #include <limits.h>
 #include <openssl/asn1t.h>
@@ -20,10 +21,8 @@
 #define BIGN_ENCRYPTED_PEM_LABEL "ENCRYPTED PRIVATE KEY"
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
 
-/* STB 34.101.45, Annex E: PBKDF2 recommends >= 10000 iterations
- * and a salt of >= 8 octets. Retain interoperable OpenSSL PBES2. */
-#define BIGN_PKCS8_PBKDF2_ITER 10000
-#define BIGN_PKCS8_SALT_LEN 16
+/* STB Annex E password-based protection is implemented in bign_stb_pbes2.c.
+ * The OpenSSL PBES2 decoder remains available for older key containers. */
 
 static int bign_asn1_string_length(const ASN1_STRING *str) {
 #if OPENSSL_VERSION_NUMBER >= 0x40100000L
@@ -125,6 +124,8 @@ ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT)
     OSSL_LIB_CTX *libctx;
     int output_pem;
     EVP_CIPHER *cipher;
+    unsigned int pbkdf2_iterations;
+    size_t pbkdf2_salt_len;
 } bee2_bign_encoder_ctx_t;
 
 typedef struct {
@@ -320,10 +321,33 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
     }
 
     for (i = 0; i < sizeof(variants) / sizeof(variants[0]); ++i) {
-        if (variant_matches_params(variants[i], p_le, a_le, b_le, q_le, y_le, bytes)) {
-            variant = variants[i];
-            break;
+        bign_params standard;
+
+        if (!variant_matches_params(variants[i], p_le, a_le, b_le, q_le, y_le, bytes))
+            continue;
+        if (ecp->curve->seed != NULL) {
+            const ASN1_BIT_STRING *seed = ecp->curve->seed;
+            size_t seed_len;
+            int unused = 0;
+
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+            if (!ASN1_BIT_STRING_get_length(seed, &seed_len, &unused) || unused != 0)
+                continue;
+#else
+            int len = ASN1_STRING_length((const ASN1_STRING *)seed);
+            if (len < 0 || ((seed->flags & ASN1_STRING_FLAG_BITS_LEFT) != 0 &&
+                            (seed->flags & 7) != 0))
+                continue;
+            seed_len = (size_t)len;
+#endif
+            if (seed_len != 8 || !bee2_bign_curve_init_std(variants[i], &standard))
+                continue;
+            if (memcmp(ASN1_STRING_get0_data((const ASN1_STRING *)seed),
+                       standard.seed, sizeof(standard.seed)) != 0)
+                continue;
         }
+        variant = variants[i];
+        break;
     }
 
 cleanup:
@@ -573,45 +597,25 @@ err:
 
 
 static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len,
-                                        const EVP_CIPHER *cipher, OSSL_LIB_CTX *libctx,
+                                         const bee2_bign_encoder_ctx_t *ctx,
                                         OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,
                                         size_t *out_len) {
-    const unsigned char *p = der;
-    PKCS8_PRIV_KEY_INFO *p8 = NULL;
-    X509_SIG *encrypted = NULL;
     unsigned char *out = NULL;
     char password[PEM_BUFSIZE];
     size_t password_len = 0;
-    int length;
+    size_t key_len;
 
-    if (!cipher || !cb || !out_len || der_len > LONG_MAX)
+    if (!ctx || !ctx->cipher || !cb || !out_len)
         return NULL;
     *out_len = 0;
+    key_len = (size_t)EVP_CIPHER_get_key_length(ctx->cipher);
     OPENSSL_cleanse(password, sizeof(password));
-    if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
-        password_len > sizeof(password) || password_len > INT_MAX)
-        goto cleanup;
-
-    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
-    if (!p8 || p != der + der_len)
-        goto cleanup;
-    encrypted = PKCS8_encrypt_ex(-1, cipher, password, (int)password_len,
-                                 NULL, BIGN_PKCS8_SALT_LEN, BIGN_PKCS8_PBKDF2_ITER,
-                                 p8, libctx, NULL);
-    if (!encrypted)
-        goto cleanup;
-    length = i2d_X509_SIG(encrypted, &out);
-    if (length <= 0) {
-        OPENSSL_free(out);
-        out = NULL;
-    } else {
-        *out_len = (size_t)length;
-    }
-
-cleanup:
+    if (cb(password, sizeof(password), &password_len, NULL, cbarg) &&
+        password_len <= sizeof(password))
+        out = bee2_stb_pbes2_encrypt(der, der_len, (const unsigned char *)password,
+                                     password_len, key_len, ctx->pbkdf2_iterations,
+                                     ctx->pbkdf2_salt_len, ctx->libctx, out_len);
     OPENSSL_cleanse(password, sizeof(password));
-    X509_SIG_free(encrypted);
-    PKCS8_PRIV_KEY_INFO_free(p8);
     return out;
 }
 
@@ -672,6 +676,7 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
     char password[PEM_BUFSIZE];
     size_t password_len = 0;
+    int recognised = 0;
     int ok = 0;
 
     if (!bign_der_sequence_body(buf, len, &p))
@@ -689,7 +694,10 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
     if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
         password_len > sizeof(password) || password_len > INT_MAX)
         goto clear_password;
-    p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
+    p8 = bee2_stb_pbes2_decrypt(encrypted, (const unsigned char *)password,
+                                password_len, &recognised);
+    if (!recognised && p8 == NULL)
+        p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
     if (p8)
         ok = decode_pkcs8_info(p8, expected, key);
 
@@ -788,7 +796,7 @@ static int read_one_object(BIO *bio, unsigned char **out, size_t *len) {
     *out = NULL;
     *len = 0;
     if (!BIO_read_ex(bio, &first, 1, &n) || n == 0)
-        return !BIO_should_retry(bio);
+        return !BIO_should_retry(bio) && BIO_eof(bio) > 0;
     if (first == 0x30)
         return read_der_object(bio, out, len);
     if (first == '\t' || first == '\r' || first == '\n' ||
@@ -989,6 +997,8 @@ static void *bign_encoder_newctx_common(const bee2_bign_variant_t *variant,
     ctx->variant = variant;
     ctx->libctx = bee2_provider_libctx(provctx);
     ctx->output_pem = output_pem;
+    ctx->pbkdf2_iterations = BEE2_STB_PBKDF2_MIN_ITER;
+    ctx->pbkdf2_salt_len = BEE2_STB_PBKDF2_DEFAULT_SALT;
     return ctx;
 }
 
@@ -1004,6 +1014,8 @@ static void bign_encoder_freectx(void *vctx) {
 static const OSSL_PARAM bee2_bign_encoder_settable[] = {
     OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_CIPHER, NULL, 0),
     OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_PROPERTIES, NULL, 0),
+    OSSL_PARAM_uint(BEE2_STB_PBKDF2_PARAM_ITER, NULL),
+    OSSL_PARAM_size_t(BEE2_STB_PBKDF2_PARAM_SALTLEN, NULL),
     OSSL_PARAM_END};
 
 static const OSSL_PARAM *bign_encoder_settable_ctx_params(void *provctx) {
@@ -1013,24 +1025,46 @@ static const OSSL_PARAM *bign_encoder_settable_ctx_params(void *provctx) {
 
 static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     bee2_bign_encoder_ctx_t *ctx = vctx;
-    const OSSL_PARAM *param, *properties;
+    const OSSL_PARAM *param, *properties, *iter_param, *salt_param;
     const char *cipher_name = NULL;
     const char *propq = NULL;
     EVP_CIPHER *cipher = NULL;
+    unsigned int iterations;
+    size_t salt_len;
 
     if (!ctx)
         return 0;
-    if (!params || (param = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_CIPHER)) == NULL)
+    if (!params)
         return 1;
-    if (!OSSL_PARAM_get_utf8_string_ptr(param, &cipher_name))
+    iterations = ctx->pbkdf2_iterations;
+    salt_len = ctx->pbkdf2_salt_len;
+    iter_param = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_ITER);
+    salt_param = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_SALTLEN);
+    if ((iter_param && (!OSSL_PARAM_get_uint(iter_param, &iterations) ||
+                        iterations < BEE2_STB_PBKDF2_MIN_ITER || iterations > INT_MAX)) ||
+        (salt_param && (!OSSL_PARAM_get_size_t(salt_param, &salt_len) ||
+                        salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX)))
         return 0;
-    properties = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_PROPERTIES);
-    if (properties && !OSSL_PARAM_get_utf8_string_ptr(properties, &propq))
-        return 0;
-    if (cipher_name && (cipher = EVP_CIPHER_fetch(ctx->libctx, cipher_name, propq)) == NULL)
-        return 0;
-    EVP_CIPHER_free(ctx->cipher);
-    ctx->cipher = cipher;
+    param = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_CIPHER);
+    if (param != NULL) {
+        if (!OSSL_PARAM_get_utf8_string_ptr(param, &cipher_name))
+            return 0;
+        properties = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_PROPERTIES);
+        if (properties && !OSSL_PARAM_get_utf8_string_ptr(properties, &propq))
+            return 0;
+        if (cipher_name && (cipher = EVP_CIPHER_fetch(ctx->libctx, cipher_name, propq)) == NULL)
+            return 0;
+        if (cipher != NULL && !EVP_CIPHER_is_a(cipher, "belt-kwp128") &&
+            !EVP_CIPHER_is_a(cipher, "belt-kwp192") &&
+            !EVP_CIPHER_is_a(cipher, "belt-kwp256")) {
+            EVP_CIPHER_free(cipher);
+            return 0;
+        }
+        EVP_CIPHER_free(ctx->cipher);
+        ctx->cipher = cipher;
+    }
+    ctx->pbkdf2_iterations = iterations;
+    ctx->pbkdf2_salt_len = salt_len;
     return 1;
 }
 
@@ -1094,7 +1128,7 @@ static int bign_encoder_encode(void *vctx,
             unsigned char *encrypted;
             size_t encrypted_len = 0;
 
-            encrypted = encrypt_pkcs8_der(der, der_len, ctx->cipher, ctx->libctx,
+            encrypted = encrypt_pkcs8_der(der, der_len, ctx,
                                           cb, cbarg, &encrypted_len);
             OPENSSL_clear_free(der, der_len);
             der = encrypted;

@@ -84,6 +84,11 @@ validation paths, multithreaded calls, every size boundary, or memory safety
 under malicious input. Fuzzing and additional property-based tests are release
 blockers, not optional polish.
 
+The native `bee2_bign_codec_crypto` test checks PBES2 with the HMAC-HBELT PRF
+OID, BELT-KWP-128/192/256 identifiers, caller-selected 12,000 iterations and
+24-byte salt, minimum-parameter rejections, and incorrect password rejection.
+Older OpenSSL PBES2 remains supported by the decoder for backwards compatibility.
+
 The mandatory `bee2_bign_codec_roundtrip` test covers PKCS#8 and SPKI PEM/DER
 round trips, explicit/cofactor domain parameters, and the OpenSSL standard
 `file:` STORE loader for all three BIGN curves (private and public keys).
