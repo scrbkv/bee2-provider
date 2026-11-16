@@ -2,6 +2,7 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 #include <openssl/params.h>
 #include <openssl/provider.h>
 #include <stdio.h>
@@ -162,6 +163,48 @@ cleanup:
     return ok;
 }
 
+
+/* This public EVP one-shot path is distinct from DigestSignUpdate/Final. */
+static int check_oneshot_signature(const char *curve, const char *digest)
+{
+    unsigned char message[257], signature[128];
+    EVP_PKEY_CTX *gen = NULL;
+    EVP_PKEY *key = NULL;
+    EVP_MD_CTX *sign = NULL, *verify = NULL;
+    size_t siglen = sizeof(signature);
+    size_t i;
+    int ok = 0;
+
+    for (i = 0; i < sizeof(message); ++i)
+        message[i] = (unsigned char)(i * 37u + 9u);
+    gen = EVP_PKEY_CTX_new_from_name(NULL, curve, "provider=bee2");
+    if (!gen || EVP_PKEY_keygen_init(gen) <= 0 ||
+        EVP_PKEY_keygen(gen, &key) <= 0)
+        goto done;
+    sign = EVP_MD_CTX_new();
+    verify = EVP_MD_CTX_new();
+    if (!sign || !verify ||
+        EVP_DigestSignInit_ex(sign, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSign(sign, signature, &siglen, message, sizeof(message)) <= 0 ||
+        EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, sizeof(message)) <= 0)
+        goto done;
+    message[0] ^= 0x80;
+    if (EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, sizeof(message)) > 0)
+        goto done;
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "BIGN one-shot signature failed: %s/%s\n", curve, digest);
+    EVP_MD_CTX_free(verify);
+    EVP_MD_CTX_free(sign);
+    EVP_PKEY_free(key);
+    EVP_PKEY_CTX_free(gen);
+    OPENSSL_cleanse(signature, sizeof(signature));
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     const OSSL_ALGORITHM *algs = NULL, *alg;
@@ -188,7 +231,11 @@ int main(int argc, char **argv)
             !check_named_signature(alg, bee2, &fixed_algorithms[i]))
             goto end;
     }
-    if (!check_digest_properties(bee2, algs))
+    if (!check_digest_properties(bee2, algs) ||
+        !check_oneshot_signature("bign-256", "belt-hash") ||
+        !check_oneshot_signature("bign-256", "bash256") ||
+        !check_oneshot_signature("bign-384", "bash384") ||
+        !check_oneshot_signature("bign-512", "bash512"))
         goto end;
     ok = 1;
 end:

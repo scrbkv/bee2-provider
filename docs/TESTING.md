@@ -160,3 +160,9 @@ the direct Bee2 matrix retains zero-length BASH inputs.
 Coverage uses GCC `-fprofile-update=atomic` because the native thread test
 shares an instrumented provider module across threads. Without atomic profile
 counters, gcov can report negative branch hits and mismeasure coverage.
+
+The coverage job also instruments the production ASN.1 sources compiled into
+`bee2_bign_der_framing` and `bee2_bign_legacy_pbkdf2_limit`; otherwise
+those legitimate tests would appear as uncovered implementation lines. The
+BIGN digest test now checks actual one-shot `EVP_DigestSign`/`EVP_DigestVerify`
+with the matching BELT/BASH digests and a modified-message rejection.

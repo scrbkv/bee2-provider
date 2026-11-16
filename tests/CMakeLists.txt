@@ -512,3 +512,13 @@ if(UNIX)
     set_tests_properties(bee2_provider_concurrent PROPERTIES
         LABELS "stress;concurrency;native;evp;bign")
 endif()
+
+# The ASN.1 implementation is intentionally linked into two unit tests.
+# Instrument those copies as well so their exercised production paths
+# are not omitted from the source coverage accounting.
+if(BEE2_PROVIDER_ENABLE_COVERAGE)
+    foreach(target IN ITEMS bee2_bign_der_framing bee2_bign_legacy_pbkdf2_limit)
+        target_compile_options(${target} PRIVATE --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(${target} PRIVATE --coverage)
+    endforeach()
+endif()
