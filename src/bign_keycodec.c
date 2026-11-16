@@ -327,23 +327,19 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
             continue;
         if (ecp->curve->seed != NULL) {
             const ASN1_BIT_STRING *seed = ecp->curve->seed;
-            size_t seed_len;
-            int unused = 0;
+            unsigned char *seed_der = NULL;
+            int der_len, valid;
 
-#if OPENSSL_VERSION_NUMBER >= 0x40100000L
-            if (!ASN1_BIT_STRING_get_length(seed, &seed_len, &unused) || unused != 0)
+            if (bign_asn1_string_length((const ASN1_STRING *)seed) != 8 ||
+                !bee2_bign_curve_init_std(variants[i], &standard))
                 continue;
-#else
-            int len = ASN1_STRING_length((const ASN1_STRING *)seed);
-            if (len < 0 || ((seed->flags & ASN1_STRING_FLAG_BITS_LEFT) != 0 &&
-                            (seed->flags & 7) != 0))
-                continue;
-            seed_len = (size_t)len;
-#endif
-            if (seed_len != 8 || !bee2_bign_curve_init_std(variants[i], &standard))
-                continue;
-            if (memcmp(ASN1_STRING_get0_data((const ASN1_STRING *)seed),
-                       standard.seed, sizeof(standard.seed)) != 0)
+            der_len = i2d_ASN1_BIT_STRING(seed, &seed_der);
+            valid = der_len == 11 && seed_der != NULL &&
+                    seed_der[0] == V_ASN1_BIT_STRING &&
+                    seed_der[1] == 9 && seed_der[2] == 0 &&
+                    memcmp(seed_der + 3, standard.seed, 8) == 0;
+            OPENSSL_free(seed_der);
+            if (!valid)
                 continue;
         }
         variant = variants[i];

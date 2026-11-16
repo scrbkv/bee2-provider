@@ -103,18 +103,23 @@ end:
     return ok;
 }
 
-/* The signature's nested digest fetch must inherit the EVP property query. */
-static int check_inherited_properties(OSSL_PROVIDER *provider,
-                                      const OSSL_ALGORITHM *algs)
+/* Explicit digest properties must be applied independently of the signature provider. */
+static int check_digest_properties(OSSL_PROVIDER *provider, const OSSL_ALGORITHM *algs)
 {
     const OSSL_ALGORITHM *alg;
     const OSSL_DISPATCH *fn;
     OSSL_FUNC_signature_newctx_fn *newctx = NULL;
     OSSL_FUNC_signature_freectx_fn *freectx = NULL;
     OSSL_FUNC_signature_set_ctx_params_fn *setctx = NULL;
-    char name[] = "belt-hash";
-    OSSL_PARAM params[] = {
-        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, name, sizeof(name)),
+    char digest[] = "belt-hash";
+    char allowed[] = "provider=bee2", rejected[] = "provider=default";
+    OSSL_PARAM negative[] = {
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, digest, sizeof(digest)),
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_PROPERTIES, rejected, sizeof(rejected)),
+        OSSL_PARAM_END};
+    OSSL_PARAM positive[] = {
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, digest, sizeof(digest)),
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_PROPERTIES, allowed, sizeof(allowed)),
         OSSL_PARAM_END};
     void *ctx = NULL;
     int ok = 0;
@@ -134,12 +139,12 @@ static int check_inherited_properties(OSSL_PROVIDER *provider,
     }
     if (!newctx || !freectx || !setctx)
         return 0;
-    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=default");
-    if (!ctx || setctx(ctx, params) > 0)
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=bee2");
+    if (!ctx || setctx(ctx, negative) > 0)
         goto cleanup;
     freectx(ctx);
     ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=bee2");
-    if (ctx && setctx(ctx, params) > 0)
+    if (ctx != NULL && setctx(ctx, positive) > 0)
         ok = 1;
 cleanup:
     freectx(ctx);
@@ -172,7 +177,7 @@ int main(int argc, char **argv)
             !check_named_signature(alg, bee2, &fixed_algorithms[i]))
             goto end;
     }
-    if (!check_inherited_properties(bee2, algs))
+    if (!check_digest_properties(bee2, algs))
         goto end;
     ok = 1;
 end:
