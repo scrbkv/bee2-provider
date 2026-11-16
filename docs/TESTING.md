@@ -172,3 +172,8 @@ than new redundant test binaries: BIGN raw/BAKE derived secret equality after
 `EVP_PKEY_CTX_dup`, BIGN key-transport header copy independence, a partially
 updated BELT-MAC copy via `EVP_MAC_CTX_dup`, and `EVP_KDF_reset` with required
 parameter reinstallation and deterministic repeatability.
+
+The key-management contract test also compares independently imported
+named-curve BIGN public keys using `EVP_PKEY_eq` and exercises the generic
+`bign` key-management import path with an explicit curve parameter. This
+checks the provider's public-key matching and generic-algorithm dispatch.
