@@ -90,6 +90,56 @@ end:
     return ok;
 }
 
+static int check_sde_failed_init(OSSL_PROVIDER *provider, const OSSL_ALGORITHM *algs)
+{
+    const OSSL_ALGORITHM *alg = find_cipher(algs, "belt-sde256");
+    const OSSL_DISPATCH *d;
+    OSSL_FUNC_cipher_newctx_fn *newctx = NULL;
+    OSSL_FUNC_cipher_freectx_fn *freectx = NULL;
+    OSSL_FUNC_cipher_encrypt_init_fn *encrypt_init = NULL;
+    OSSL_FUNC_cipher_update_fn *update = NULL;
+    unsigned char key[32] = {0}, iv[16] = {0};
+    unsigned char input[32] = {0}, output[32];
+    size_t written = 0;
+    void *ctx = NULL;
+    int ok = 0;
+
+    if (alg == NULL)
+        return 0;
+    for (d = alg->implementation; d->function_id != 0; ++d) {
+        switch (d->function_id) {
+        case OSSL_FUNC_CIPHER_NEWCTX:
+            newctx = OSSL_FUNC_cipher_newctx(d);
+            break;
+        case OSSL_FUNC_CIPHER_FREECTX:
+            freectx = OSSL_FUNC_cipher_freectx(d);
+            break;
+        case OSSL_FUNC_CIPHER_ENCRYPT_INIT:
+            encrypt_init = OSSL_FUNC_cipher_encrypt_init(d);
+            break;
+        case OSSL_FUNC_CIPHER_UPDATE:
+            update = OSSL_FUNC_cipher_update(d);
+            break;
+        }
+    }
+    if (!newctx || !freectx || !encrypt_init || !update)
+        return 0;
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider));
+    if (!ctx || !encrypt_init(ctx, key, sizeof(key), iv, sizeof(iv), NULL) ||
+        encrypt_init(ctx, key, sizeof(key), iv, sizeof(iv) - 1, NULL) ||
+        update(ctx, output, &written, sizeof(output), input, sizeof(input)) ||
+        !encrypt_init(ctx, key, sizeof(key), iv, sizeof(iv), NULL) ||
+        !update(ctx, output, &written, sizeof(output), input, sizeof(input)) ||
+        written != sizeof(input))
+        goto end;
+    ok = 1;
+end:
+    if (!ok)
+        fprintf(stderr, "BELT-SDE accepted Update after failed reinitialization\n");
+    freectx(ctx);
+    return ok;
+}
+
 static int check_mac(void)
 {
     unsigned char key[32] = {0}, output[8];
@@ -156,6 +206,7 @@ int main(int argc, char **argv)
         !check_cipher(bee2, algs, "belt-che256", 32, 16, 0) ||
         !check_cipher(bee2, algs, "belt-dwp256", 32, 16, 0) ||
         !check_cipher(bee2, algs, "belt-cfb256", 32, 16, 0) ||
+        !check_sde_failed_init(bee2, algs) ||
         !check_mac() || !check_bign_private_key())
         goto end;
     ok = 1;

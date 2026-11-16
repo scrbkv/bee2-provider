@@ -66,11 +66,14 @@ static int bign_keyexchange_init(void *vctx, void *vkey, const OSSL_PARAM params
     bee2_bign_keyexchange_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
 
-    if (!ctx || !key || !key->variant || !key->has_priv ||
+    if (!ctx)
+        return 0;
+    ctx->local_key = NULL;
+    ctx->peer_key = NULL;
+    if (!key || !key->variant || !key->has_priv ||
         !bign_keyexchange_set_ctx_params(ctx, params))
         return 0;
     ctx->local_key = key;
-    ctx->peer_key = NULL;
     return 1;
 }
 
@@ -78,7 +81,10 @@ static int bign_keyexchange_set_peer(void *vctx, void *vkey) {
     bee2_bign_keyexchange_ctx_t *ctx = vctx;
     bee2_bign_key_t *peer = vkey;
 
-    if (!ctx || !ctx->local_key || !peer || !peer->variant || !peer->has_pub ||
+    if (!ctx)
+        return 0;
+    ctx->peer_key = NULL;
+    if (!ctx->local_key || !peer || !peer->variant || !peer->has_pub ||
         peer->variant != ctx->local_key->variant || !bee2_bign_key_validate_public(peer))
         return 0;
     ctx->peer_key = peer;

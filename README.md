@@ -52,6 +52,15 @@ PBES2 containers remain readable, but new encrypted PKCS#8 files use the
 STB-algorithm profile. Interoperability with third-party PKCS#8 implementations
 requires support for these STB algorithm identifiers.
 
+STB PKCS#8 decoding limits PBKDF2 to 1,000,000 iterations by default to
+bound the work requested by untrusted containers. Applications needing a
+larger limit can set the `stb-pbkdf2-max-decode-iterations` (uint) decoder
+context parameter using `OSSL_DECODER_CTX_set_params()`; values from
+10,000 through `INT_MAX` are supported. This limit does not change the
+encoder's configurable iteration count or OpenSSL's handling of non-STB PBES2.
+The `bign-with-hspec` digest is selected independently of the signature
+provider query; set `OSSL_SIGNATURE_PARAM_PROPERTIES` to constrain its fetch.
+
 BIGN keys in PKCS#8 and SPKI PEM/DER formats use the standard OpenSSL
 `file:` store loader and this provider's key decoders. Load both the `default`
 and `bee2_provider` providers when using `openssl storeutl`. The separate

@@ -150,7 +150,7 @@ static int bash_prgae_init(void *vctx,
                            const OSSL_PARAM params[]) {
     bee2_bash_prgae_ctx_t *c = vctx;
     bee2_bash_prgae_ctx_t next = *c;
-    octet expected_tag[32];
+    octet expected_tag[32] = {0};
     int expected_tag_set;
 
     next.enc = enc;
@@ -162,8 +162,7 @@ static int bash_prgae_init(void *vctx,
     if ((key != NULL && (keylen < c->variant->min_key_size ||
                          keylen > BASH_PRGAE_MAX_KEY_SIZE || keylen % 4u != 0u)) ||
         (iv != NULL && (ivlen > BASH_PRGAE_MAX_IV_SIZE || ivlen % 4u != 0u))) {
-        c->finalized = 1;
-        return 0;
+        goto invalid;
     }
     if (key != NULL) {
         memcpy(next.backend_state.key, key, keylen);
@@ -177,11 +176,8 @@ static int bash_prgae_init(void *vctx,
         next.iv_len = ivlen;
         next.backend_state.iv_set = 1;
     }
-    if (params != NULL && !bash_prgae_set_ctx_params(&next, params)) {
-        c->finalized = 1;
-        OPENSSL_cleanse(&next, sizeof(next));
-        return 0;
-    }
+    if (params != NULL && !bash_prgae_set_ctx_params(&next, params))
+        goto invalid;
     expected_tag_set = !enc && next.tag_set;
     memcpy(expected_tag, next.tag, sizeof(expected_tag));
     if (next.backend_state.key_set && next.backend_state.iv_set)
@@ -194,6 +190,12 @@ static int bash_prgae_init(void *vctx,
     OPENSSL_cleanse(expected_tag, sizeof(expected_tag));
     OPENSSL_cleanse(&next, sizeof(next));
     return 1;
+
+invalid:
+    OPENSSL_cleanse(expected_tag, sizeof(expected_tag));
+    OPENSSL_cleanse(&next, sizeof(next));
+    c->finalized = 1;
+    return 0;
 }
 
 static int bash_prgae_encrypt_init(void *vctx,

@@ -33,6 +33,7 @@ typedef struct {
     EVP_MD_CTX *mdctx;
     char mdname[64];
     char mdprops[128];
+    char propq[128];
     unsigned char aid_buf[256];
     size_t aid_len;
     unsigned int deterministic;
@@ -249,6 +250,7 @@ static void bign_sig_reset_md(bee2_bign_sig_ctx_t *ctx, int keep_algorithm) {
 static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const char *mdprops) {
     EVP_MD *md;
     bee2_bign_sig_ctx_t candidate;
+    const char *properties;
 
     if (ctx == NULL)
         return 0;
@@ -258,8 +260,11 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
         bign_sig_reset_md(ctx, 0);
         return 1;
     }
-    md = EVP_MD_fetch(ctx->libctx, mdname,
-                      mdprops && mdprops[0] != '\0' ? mdprops : NULL);
+    properties = mdprops && mdprops[0] != '\0' ? mdprops : NULL;
+    if (properties == NULL && !ctx->hspec &&
+        bign_sig_mdname_to_oid(mdname) != NULL && ctx->propq[0] != '\0')
+        properties = ctx->propq;
+    md = EVP_MD_fetch(ctx->libctx, mdname, properties);
     if (md == NULL)
         return 0;
     if (ctx->fixed_digest && !EVP_MD_is_a(md, ctx->fixed_digest)) {
@@ -482,20 +487,24 @@ static int bign_sig_digest_init_common(bee2_bign_sig_ctx_t *ctx,
 
 static void *bign_sig_newctx_common(void *provctx,
                                     const bee2_bign_variant_t *variant,
-                                     const char *fixed_digest) {
+                                     const char *fixed_digest,
+                                     const char *propq) {
     bee2_bign_sig_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (!ctx)
         return NULL;
     ctx->libctx = bee2_provider_libctx(provctx);
     ctx->variant = variant;
     ctx->fixed_digest = fixed_digest;
+    if (!bign_str_copy(ctx->propq, sizeof(ctx->propq), propq)) {
+        OPENSSL_free(ctx);
+        return NULL;
+    }
     return ctx;
 }
 
 #define BIGN_SIG_NEWCTX(NAME, VARIANT, DIGEST) \
     static void *NAME(void *provctx, const char *propq) { \
-        (void)propq; \
-        return bign_sig_newctx_common(provctx, VARIANT, DIGEST); \
+        return bign_sig_newctx_common(provctx, VARIANT, DIGEST, propq); \
     }
 
 BIGN_SIG_NEWCTX(bign256_sig_newctx, bee2_bign_variant_256(), NULL)
@@ -508,8 +517,7 @@ BIGN_SIG_NEWCTX(bign512_bash512_sig_newctx, bee2_bign_variant_512(), "bash512")
 BIGN_SIG_NEWCTX(bign_sig_newctx, NULL, NULL)
 
 static void *bign_hspec_sig_newctx(void *provctx, const char *propq) {
-    bee2_bign_sig_ctx_t *ctx = bign_sig_newctx_common(provctx, NULL, NULL);
-    (void)propq;
+    bee2_bign_sig_ctx_t *ctx = bign_sig_newctx_common(provctx, NULL, NULL, propq);
     if (ctx)
         ctx->hspec = 1;
     return ctx;
@@ -543,6 +551,7 @@ static void *bign_sig_dupctx(void *vctx) {
     dst->hspec = src->hspec;
     memcpy(dst->hash_oid, src->hash_oid, sizeof(dst->hash_oid));
     dst->md_started = src->md_started;
+    memcpy(dst->propq, src->propq, sizeof(dst->propq));
     if (!bign_str_copy(dst->mdname, sizeof(dst->mdname), src->mdname))
         goto err;
     if (!bign_str_copy(dst->mdprops, sizeof(dst->mdprops), src->mdprops))

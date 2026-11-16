@@ -92,26 +92,23 @@ static int belt_sde_init_operation(void *vctx,
                                    int enc,
                                    const OSSL_PARAM params[]) {
     bee2_belt_sde_ctx_t *c = vctx;
+    if (c == NULL)
+        return 0;
+    /* Do not allow the preceding sector after a rejected reinitialization. */
+    c->finalized = 1;
+    if ((key != NULL && keylen != c->fixed_key_len) ||
+        (iv != NULL && ivlen != BELT_IV_SIZE) ||
+        (params != NULL && !belt_sde_set_ctx_params(c, params)))
+        return 0;
+
+    if (key != NULL)
+        belt_sde_set_key(&c->backend_state, key, keylen);
+    if (iv != NULL)
+        belt_sde_set_iv(&c->backend_state, iv, ivlen);
+    belt_sde_restart(&c->backend_state);
     c->enc = enc;
     c->processed = 0;
     c->finalized = 0;
-
-    if (params && !belt_sde_set_ctx_params(c, params))
-        return 0;
-
-    if (key != NULL) {
-        if (keylen != c->fixed_key_len)
-            return 0;
-        belt_sde_set_key(&c->backend_state, key, keylen);
-    }
-
-    if (iv != NULL) {
-        if (ivlen != BELT_IV_SIZE)
-            return 0;
-        belt_sde_set_iv(&c->backend_state, iv, ivlen);
-    }
-
-    belt_sde_restart(&c->backend_state);
     return 1;
 }
 

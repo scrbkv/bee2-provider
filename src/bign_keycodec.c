@@ -22,7 +22,8 @@
 #define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
 
 /* STB Annex E password-based protection is implemented in bign_stb_pbes2.c.
- * The OpenSSL PBES2 decoder remains available for older key containers. */
+ * The OpenSSL PBES2 decoder remains available for older key containers.
+ * The custom decoder enforces an application-adjustable PBKDF2 work limit. */
 
 static int bign_asn1_string_length(const ASN1_STRING *str) {
 #if OPENSSL_VERSION_NUMBER >= 0x40100000L
@@ -131,6 +132,7 @@ ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT)
 typedef struct {
     const bee2_bign_variant_t *variant;
     OSSL_LIB_CTX *libctx;
+    unsigned int max_pbkdf2_iterations;
     int input_pem;
 } bee2_bign_decoder_ctx_t;
 
@@ -667,6 +669,7 @@ static int decode_pkcs8_der(const unsigned char *buf, size_t len,
 static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
                                       const bee2_bign_variant_t *expected,
                                       bee2_bign_key_t *key, OSSL_LIB_CTX *libctx,
+                                      unsigned int max_pbkdf2_iterations,
                                       OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg) {
     const unsigned char *p = buf;
     X509_SIG *encrypted = NULL;
@@ -692,7 +695,7 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
         password_len > sizeof(password) || password_len > INT_MAX)
         goto clear_password;
     p8 = bee2_stb_pbes2_decrypt(encrypted, (const unsigned char *)password,
-                                password_len, &recognised);
+                                password_len, max_pbkdf2_iterations, &recognised);
     if (!recognised && p8 == NULL)
         p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
     if (p8)
@@ -759,26 +762,38 @@ static int read_pem_object(BIO *bio, unsigned char first,
     static const char end[] = "-----END ";
     unsigned char *buf = NULL, ch = first;
     size_t used = 0, capacity = 0;
-    int begun = 0, ending = 0;
+    int begun = 0, ending = 0, closed = 0;
 
-    /* Bytewise reads avoid read-ahead even for core BIOs lacking BIO_gets. */
+    /* Read one PEM record, including its line terminator, without read-ahead. */
     for (;;) {
         if (used == BIGN_MAX_KEY_INPUT ||
             !append_bytes(&buf, &used, &capacity, &ch, 1))
             break;
+        if (closed) {
+            if (ch == '\n') {
+                *out = buf;
+                *len = used;
+                return 1;
+            }
+            if (ch != '\r' && ch != ' ' && ch != '\t')
+                break;
+        }
         if (!begun && used >= sizeof(begin) - 1 &&
             memcmp(buf + used - (sizeof(begin) - 1), begin, sizeof(begin) - 1) == 0)
             begun = 1;
         if (begun && !ending && used >= sizeof(end) - 1 &&
             memcmp(buf + used - (sizeof(end) - 1), end, sizeof(end) - 1) == 0)
             ending = 1;
-        if (ending && used >= 5 && memcmp(buf + used - 5, "-----", 5) == 0) {
-            *out = buf;
-            *len = used;
-            return 1;
-        }
-        if (!read_exact(bio, &ch, 1))
+        if (ending && used >= 5 && memcmp(buf + used - 5, "-----", 5) == 0)
+            closed = 1;
+        if (!read_exact(bio, &ch, 1)) {
+            if (closed && !BIO_should_retry(bio) && BIO_eof(bio) > 0) {
+                *out = buf;
+                *len = used;
+                return 1;
+            }
             break;
+        }
     }
     OPENSSL_clear_free(buf, capacity);
     return 0;
@@ -1274,11 +1289,40 @@ static void *bign_decoder_newctx_common(const bee2_bign_variant_t *variant, void
         return NULL;
     ctx->variant = variant;
     ctx->libctx = bee2_provider_libctx(provctx);
+    ctx->max_pbkdf2_iterations = BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER;
     return ctx;
 }
 
 static void bign_decoder_freectx(void *vctx) {
     OPENSSL_free(vctx);
+}
+
+static const OSSL_PARAM bign_decoder_settable[] = {
+    OSSL_PARAM_uint(BEE2_STB_PBKDF2_PARAM_MAX_DECODE_ITER, NULL),
+    OSSL_PARAM_END};
+
+static const OSSL_PARAM *bign_decoder_settable_ctx_params(void *provctx) {
+    (void)provctx;
+    return bign_decoder_settable;
+}
+
+static int bign_decoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
+    bee2_bign_decoder_ctx_t *ctx = vctx;
+    const OSSL_PARAM *p;
+    unsigned int max_iterations;
+
+    if (ctx == NULL)
+        return 0;
+    if (params == NULL)
+        return 1;
+    p = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_MAX_DECODE_ITER);
+    if (p == NULL)
+        return 1;
+    if (!OSSL_PARAM_get_uint(p, &max_iterations) ||
+        max_iterations < BEE2_STB_PBKDF2_MIN_ITER || max_iterations > INT_MAX)
+        return 0;
+    ctx->max_pbkdf2_iterations = max_iterations;
+    return 1;
 }
 
 static int bign_decoder_does_selection(void *provctx, int selection) {
@@ -1348,7 +1392,8 @@ static int bign_decoder_decode(void *vctx,
             decoded = decode_pkcs8_der(der, der_len, ctx->variant, key);
         } else if (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) == 0) {
             decoded = decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
-                                                 ctx->libctx, pw_cb, pw_cbarg);
+                                                 ctx->libctx, ctx->max_pbkdf2_iterations,
+                                                 pw_cb, pw_cbarg);
         } else if (strcmp(pem_name, BIGN_PUB_PEM_LABEL) == 0) {
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
         }
@@ -1356,7 +1401,8 @@ static int bign_decoder_decode(void *vctx,
         decoded = decode_pkcs8_der(der, der_len, ctx->variant, key);
         if (!decoded)
             decoded = decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
-                                                 ctx->libctx, pw_cb, pw_cbarg);
+                                                 ctx->libctx, ctx->max_pbkdf2_iterations,
+                                                 pw_cb, pw_cbarg);
         if (!decoded)
             decoded = decode_spki_der(der, der_len, ctx->variant, key);
     }
@@ -1452,25 +1498,19 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         goto end;
 
     if (ctx->input_pem) {
-        char *header = NULL;
-        long decoded_len = 0;
-        int read_ok;
-
-        read_ok = PEM_read_bio(bio, &pem_name, &header,
-                               &converted, &decoded_len);
-        OPENSSL_free(header);
-        if (!read_ok || converted == NULL || decoded_len <= 0) {
+        if (!read_one_object(bio, &buf, &len))
+            goto end;
+        if (len == 0) {
             ok = 1;
             goto end;
         }
-        if (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) != 0 &&
-            strcmp(pem_name, BIGN_PEM_LABEL) != 0 &&
-            strcmp(pem_name, BIGN_PUB_PEM_LABEL) != 0) {
-            ok = 1;
+        if (buf[0] == 0x30)
             goto end;
-        }
+        converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
+        if (converted == NULL || payload_len == 0 ||
+            payload_len > BIGN_MAX_KEY_INPUT)
+            goto end;
         payload = converted;
-        payload_len = (size_t)decoded_len;
     } else {
         if (!read_one_object(bio, &buf, &len))
             goto end;
@@ -1493,42 +1533,58 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         const ASN1_OBJECT *private_oid = NULL;
         ASN1_OBJECT *public_oid = NULL;
         const char *structure = NULL;
-        char bign_name[] = "bign";
+        char *key_type = NULL;
+        char bign_name[] = "bign", rsa_name[] = "RSA", ec_name[] = "EC";
 
-        /* The first DER-to-DER decoder may consume a nonseekable BIO.
-         * Recognised plain BIGN keys must therefore pass through here as
-         * well, without requiring another attempt to read the original BIO. */
+        /* Emit a new DER object for subsequent decoders: the original
+         * input BIO may not be seekable, even for non-BIGN keys. */
+        if (encrypted != NULL && p == payload + payload_len)
+            structure = "EncryptedPrivateKeyInfo";
         p = payload;
         ERR_set_mark();
         plain_p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)payload_len);
         ERR_pop_to_mark();
         if (plain_p8 != NULL && p == payload + payload_len &&
-            PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8) &&
-            oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
+            PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8)) {
             structure = "PrivateKeyInfo";
+            if (oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY))
+                key_type = bign_name;
         } else {
             p = payload;
             ERR_set_mark();
             pub = d2i_X509_PUBKEY(NULL, &p, (long)payload_len);
             ERR_pop_to_mark();
             if (pub != NULL && p == payload + payload_len &&
-                X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub) &&
-                oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
+                X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub)) {
                 structure = "SubjectPublicKeyInfo";
+                if (oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
+                    key_type = bign_name;
+            }
+        }
+        if (structure == NULL && ctx->input_pem && pem_name != NULL) {
+            if (strcmp(pem_name, "RSA PRIVATE KEY") == 0) {
+                structure = "type-specific";
+                key_type = rsa_name;
+            } else if (strcmp(pem_name, "EC PRIVATE KEY") == 0) {
+                structure = "type-specific";
+                key_type = ec_name;
+            }
         }
         if (structure != NULL) {
-            OSSL_PARAM params[] = {
-                OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, bign_name, 0),
-                OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0),
-                OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA,
-                                        (void *)payload, payload_len),
-                OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
-                OSSL_PARAM_END
-            };
+            OSSL_PARAM params[5];
+            size_t n = 0;
 
+            if (key_type != NULL)
+                params[n++] = OSSL_PARAM_construct_utf8_string(
+                    OSSL_OBJECT_PARAM_DATA_TYPE, key_type, 0);
+            params[n++] = OSSL_PARAM_construct_utf8_string(
+                OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0);
+            params[n++] = OSSL_PARAM_construct_octet_string(
+                OSSL_OBJECT_PARAM_DATA, (void *)payload, payload_len);
+            params[n++] = OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &obj_type);
+            params[n] = OSSL_PARAM_construct_end();
             ok = data_cb(params, data_cbarg);
         } else {
-            /* Leave other key types and PBES2 schemes to OpenSSL. */
             ok = 1;
         }
         PKCS8_PRIV_KEY_INFO_free(plain_p8);
@@ -1541,7 +1597,8 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         goto end;
     p8 = bee2_stb_pbes2_decrypt(encrypted,
                                 (const unsigned char *)password,
-                                password_len, &recognised);
+                                password_len, ctx->max_pbkdf2_iterations,
+                                &recognised);
     if (!recognised || p8 == NULL ||
         !PKCS8_pkey_get0(&key_oid, NULL, NULL, NULL, p8) ||
         key_oid == NULL ||
@@ -1652,18 +1709,27 @@ const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
 
 const OSSL_DISPATCH bee2_stb_epki_decoder_functions[] = {
     {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
+    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
+    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
+     (void (*)(void))bign_decoder_settable_ctx_params},
     {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
     {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_stb_epki_decode},
     {0, NULL}};
 
 const OSSL_DISPATCH bee2_stb_pem_decoder_functions[] = {
     {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_stb_pem_newctx},
+    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
+    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
+     (void (*)(void))bign_decoder_settable_ctx_params},
     {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
     {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_stb_epki_decode},
     {0, NULL}};
 
 const OSSL_DISPATCH bee2_bign_decoder_functions[] = {
     {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
+    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
+    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
+     (void (*)(void))bign_decoder_settable_ctx_params},
     {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
     {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_decoder_does_selection},
     {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_decoder_decode},

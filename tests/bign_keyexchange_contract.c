@@ -77,6 +77,16 @@ static int derive_secret(EVP_PKEY *local_key,
     *secret_length = required;
     if (EVP_PKEY_derive(ctx, *secret, secret_length) <= 0)
         goto cleanup;
+    {
+        size_t invalid_length = 33;
+        OSSL_PARAM invalid[] = {
+            OSSL_PARAM_size_t(OSSL_EXCHANGE_PARAM_KDF_OUTLEN, &invalid_length),
+            OSSL_PARAM_END};
+
+        if (EVP_PKEY_derive_init_ex(ctx, invalid) > 0 ||
+            EVP_PKEY_derive(ctx, NULL, &required) > 0)
+            goto cleanup;
+    }
     ok = 1;
 
 cleanup:

@@ -88,6 +88,8 @@ The native `bee2_bign_codec_crypto` test checks PBES2 with the HMAC-HBELT PRF
 OID, BELT-KWP-128/192/256 identifiers, caller-selected 12,000 iterations and
 24-byte salt, minimum-parameter rejections, and incorrect password rejection.
 Older OpenSSL PBES2 remains supported by the decoder for backwards compatibility.
+The native test also checks the configurable PBKDF2 decode work limit, and
+`bee2_provider_negative_contract` checks failed BELT-SDE reinitialization.
 
 The mandatory `bee2_bign_codec_roundtrip` test covers PKCS#8 and SPKI PEM/DER
 round trips, explicit/cofactor domain parameters, and the OpenSSL standard

@@ -212,7 +212,8 @@ int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
 
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
                                             const unsigned char *password,
-                                            size_t password_len, int *recognised)
+                                            size_t password_len,
+                                            unsigned int max_iterations, int *recognised)
 {
     const X509_ALGOR *alg = NULL;
     const ASN1_OCTET_STRING *ciphertext = NULL;
@@ -272,6 +273,7 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     salt_len = asn_length(kdf->salt->value.octet_string);
     wrapped_len = asn_length(ciphertext);
     if (iter < BEE2_STB_PBKDF2_MIN_ITER || iter > INT_MAX ||
+        iter > (long)max_iterations ||
         salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX ||
         wrapped_len < 32 || wrapped_len > INT_MAX)
         goto end;

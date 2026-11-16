@@ -121,6 +121,9 @@ static int check_digest_properties(OSSL_PROVIDER *provider, const OSSL_ALGORITHM
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, digest, sizeof(digest)),
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_PROPERTIES, allowed, sizeof(allowed)),
         OSSL_PARAM_END};
+    OSSL_PARAM implicit[] = {
+        OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, digest, sizeof(digest)),
+        OSSL_PARAM_END};
     void *ctx = NULL;
     int ok = 0;
 
@@ -139,6 +142,14 @@ static int check_digest_properties(OSSL_PROVIDER *provider, const OSSL_ALGORITHM
     }
     if (!newctx || !freectx || !setctx)
         return 0;
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=default");
+    if (!ctx || setctx(ctx, implicit) > 0)
+        goto cleanup;
+    freectx(ctx);
+    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=bee2");
+    if (!ctx || setctx(ctx, implicit) <= 0)
+        goto cleanup;
+    freectx(ctx);
     ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider), "provider=bee2");
     if (!ctx || setctx(ctx, negative) > 0)
         goto cleanup;

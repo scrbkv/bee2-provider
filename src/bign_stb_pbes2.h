@@ -9,6 +9,8 @@
 #define BEE2_STB_PBKDF2_DEFAULT_SALT 16u
 #define BEE2_STB_PBKDF2_PARAM_ITER "stb-pbkdf2-iterations"
 #define BEE2_STB_PBKDF2_PARAM_SALTLEN "stb-pbkdf2-saltlen"
+#define BEE2_STB_PBKDF2_PARAM_MAX_DECODE_ITER "stb-pbkdf2-max-decode-iterations"
+#define BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER 1000000u
 
 /* Check the PBES2 encryption OID without requesting a password. */
 int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted);
@@ -23,6 +25,7 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
  * STB scheme or an incorrect password, and never fall back for the latter. */
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
                                             const unsigned char *password,
-                                            size_t password_len, int *recognised);
+                                            size_t password_len,
+                                            unsigned int max_iterations, int *recognised);
 
 #endif

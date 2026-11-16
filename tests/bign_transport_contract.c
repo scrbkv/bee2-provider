@@ -186,6 +186,16 @@ static int check_algorithm(const char *name)
     }
     if (!check_header(key))
         goto end;
+    {
+        OSSL_PARAM invalid[] = {
+            OSSL_PARAM_octet_string("header", input, 15),
+            OSSL_PARAM_END};
+        size_t required = 0;
+
+        if (EVP_PKEY_encrypt_init_ex(encrypt, invalid) > 0 ||
+            EVP_PKEY_encrypt(encrypt, NULL, &required, input, 16) > 0)
+            goto end;
+    }
     ok = 1;
 
 end:

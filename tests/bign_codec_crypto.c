@@ -28,8 +28,9 @@ static EVP_PKEY *generate_key(const char *name)
     return key;
 }
 
-static int decode_key(EVP_PKEY **key, const char *format, const BUF_MEM *data,
-                      const unsigned char *pass, size_t passlen)
+static int decode_key_limited(EVP_PKEY **key, const char *format, const BUF_MEM *data,
+                              const unsigned char *pass, size_t passlen,
+                              unsigned int max_iterations)
 {
     OSSL_DECODER_CTX *ctx = NULL;
     BIO *input = NULL;
@@ -43,12 +44,26 @@ static int decode_key(EVP_PKEY **key, const char *format, const BUF_MEM *data,
     if (ctx == NULL || input == NULL ||
         !OSSL_DECODER_CTX_set_passphrase(ctx, pass, passlen))
         goto cleanup;
+    if (max_iterations != 0) {
+        OSSL_PARAM limit[] = {
+            OSSL_PARAM_uint("stb-pbkdf2-max-decode-iterations", &max_iterations),
+            OSSL_PARAM_END};
+
+        if (!OSSL_DECODER_CTX_set_params(ctx, limit))
+            goto cleanup;
+    }
     ok = OSSL_DECODER_from_bio(ctx, input) > 0;
 
 cleanup:
     BIO_free(input);
     OSSL_DECODER_CTX_free(ctx);
     return ok;
+}
+
+static int decode_key(EVP_PKEY **key, const char *format, const BUF_MEM *data,
+                      const unsigned char *pass, size_t passlen)
+{
+    return decode_key_limited(key, format, data, pass, passlen, 0);
 }
 
 static int check_public_only_decoding(EVP_PKEY *key)
@@ -270,7 +285,7 @@ cleanup:
 static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
 {
     OSSL_ENCODER_CTX *encoder = NULL;
-    EVP_PKEY *decoded = NULL, *invalid = NULL;
+    EVP_PKEY *decoded = NULL, *invalid = NULL, *limited = NULL;
     BIO *output = NULL;
     BUF_MEM *data = NULL;
     int bits = EVP_PKEY_get_bits(key);
@@ -320,6 +335,14 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
                        sizeof(wrong_password) - 1) || invalid != NULL)
             goto cleanup;
         ERR_clear_error();
+        if (decode_key_limited(&limited, format, data, password,
+                               sizeof(password) - 1, iterations - 1) || limited != NULL)
+            goto cleanup;
+        ERR_clear_error();
+        if (!decode_key_limited(&limited, format, data, password,
+                                sizeof(password) - 1, iterations) ||
+            limited == NULL || !same_private_key(key, limited))
+            goto cleanup;
     }
     ok = 1;
 
@@ -329,6 +352,7 @@ cleanup:
                 encrypted ? "encrypted" : "plain", format);
         ERR_print_errors_fp(stderr);
     }
+    EVP_PKEY_free(limited);
     EVP_PKEY_free(invalid);
     EVP_PKEY_free(decoded);
     BIO_free(output);
@@ -341,10 +365,10 @@ cleanup:
 static int check_foreign_key(const char *algorithm, const char *format, int encrypted)
 {
     EVP_PKEY_CTX *gen = NULL;
-    EVP_PKEY *original = NULL, *decoded = NULL;
+    EVP_PKEY *original = NULL, *decoded = NULL, *streamed = NULL;
     OSSL_ENCODER_CTX *encoder = NULL;
-    OSSL_DECODER_CTX *decoder = NULL;
-    BIO *output = NULL, *input = NULL;
+    OSSL_DECODER_CTX *decoder = NULL, *stream_decoder = NULL;
+    BIO *output = NULL, *input = NULL, *reader = NULL, *writer = NULL;
     BUF_MEM *data = NULL;
     int ok = 0;
 
@@ -381,6 +405,22 @@ static int check_foreign_key(const char *algorithm, const char *format, int encr
         !decoded || !EVP_PKEY_is_a(decoded, algorithm) ||
         EVP_PKEY_eq(original, decoded) != 1)
         goto cleanup;
+    /* Unlike a memory BIO, the BIO pair cannot seek back to an earlier
+     * decoder after the STB PEM/DER adapter consumes its first record. */
+    if (!BIO_new_bio_pair(&reader, 0, &writer, 0) ||
+        BIO_write(writer, data->data, (int)data->length) != (int)data->length)
+        goto cleanup;
+    BIO_free(writer);
+    writer = NULL;
+    stream_decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &streamed, format, NULL, NULL, OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+    if (!stream_decoder ||
+        (encrypted && !OSSL_DECODER_CTX_set_passphrase(
+                          stream_decoder, password, sizeof(password) - 1)) ||
+        OSSL_DECODER_from_bio(stream_decoder, reader) <= 0 ||
+        !streamed || !EVP_PKEY_is_a(streamed, algorithm) ||
+        EVP_PKEY_eq(original, streamed) != 1)
+        goto cleanup;
     ok = 1;
 
 cleanup:
@@ -389,6 +429,10 @@ cleanup:
                 algorithm, format, encrypted ? "encrypted" : "plain");
         ERR_print_errors_fp(stderr);
     }
+    BIO_free(reader);
+    BIO_free(writer);
+    OSSL_DECODER_CTX_free(stream_decoder);
+    EVP_PKEY_free(streamed);
     BIO_free(input);
     BIO_free(output);
     OSSL_DECODER_CTX_free(decoder);
@@ -433,7 +477,9 @@ int main(int argc, char **argv)
         key = NULL;
     }
     for (i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i) {
-        if (!check_foreign_key("RSA", formats[i], 1) ||
+        if (!check_foreign_key("RSA", formats[i], 0) ||
+            !check_foreign_key("EC", formats[i], 0) ||
+            !check_foreign_key("RSA", formats[i], 1) ||
             !check_foreign_key("EC", formats[i], 1))
             goto cleanup;
     }
