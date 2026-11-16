@@ -173,7 +173,7 @@ than new redundant test binaries: BIGN raw/BAKE derived secret equality after
 updated BELT-MAC copy via `EVP_MAC_CTX_dup`, and `EVP_KDF_reset` with required
 parameter reinstallation and deterministic repeatability.
 
-The key-management contract test also compares independently imported
-named-curve BIGN public keys using `EVP_PKEY_eq` and exercises the generic
-`bign` key-management import path with an explicit curve parameter. This
-checks the provider's public-key matching and generic-algorithm dispatch.
+The BIGN engine interoperability script also cross-loads both generated
+PKCS#8 private keys in OpenSSL 1.1.1/3.x, signs using either backend with either
+key and verifies every signature with both implementations. The existing CSR,
+X.509 and explicit-parameter scenarios remain unchanged.

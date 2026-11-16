@@ -117,6 +117,20 @@ def main() -> int:
                      "-paramfile", str(bee2evp_params),
                      "-out", str(bee2evp_key)], bee2evp_env)
 
+        # Both OpenSSL implementations must read the other's private key.
+        # Existing certificate tests only exchanged public key/certificate
+        # material and did not verify this PKCS#8 interoperability.
+        for key in (provider_key, bee2evp_key):
+            for label, openssl, backend, env in (
+                ("provider", provider_openssl, provider_backend, None),
+                ("bee2evp", bee2evp_openssl, bee2evp_backend, bee2evp_env),
+            ):
+                exported = root / f"{key.stem}-{label}.pub"
+                run_checked([openssl, "pkey", *backend, "-in", str(key),
+                             "-pubout", "-out", str(exported)], env)
+                if b"BEGIN PUBLIC KEY" not in exported.read_bytes():
+                    raise RuntimeError(f"{label} failed to export public key from {key.name}")
+
         for openssl, backend, env, key, csr, subject in (
             (provider_openssl, provider_backend, None, provider_key, provider_csr,
              "/CN=bee2 provider"),
@@ -156,6 +170,27 @@ def main() -> int:
             ):
                 run_checked([openssl, "verify", *backend, "-CAfile", str(cert),
                              str(cert)], env)
+
+        # Sign with both implementations using keys generated on both sides,
+        # then verify using each implementation and the same private-key file.
+        sample = root / "cross_key_sample.bin"
+        sample.write_bytes(bytes(range(37)))
+        for key in (provider_key, bee2evp_key):
+            for sign_label, signer, sign_backend, sign_env in (
+                ("provider", provider_openssl, provider_backend, None),
+                ("bee2evp", bee2evp_openssl, bee2evp_backend, bee2evp_env),
+            ):
+                signature = root / f"{key.stem}-{sign_label}.sig"
+                run_checked([signer, "dgst", *sign_backend, f"-{digest}",
+                             "-sign", str(key), "-out", str(signature),
+                             str(sample)], sign_env)
+                for verifier, verify_backend, verify_env in (
+                    (provider_openssl, provider_backend, None),
+                    (bee2evp_openssl, bee2evp_backend, bee2evp_env),
+                ):
+                    run_checked([verifier, "dgst", *verify_backend, f"-{digest}",
+                                 "-prverify", str(key), "-signature",
+                                 str(signature), str(sample)], verify_env)
 
         message = root / "message.bin"
         message.write_bytes(bytes(range(64)))
