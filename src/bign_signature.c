@@ -1,6 +1,7 @@
 #include "bee2_backend.h"
 #include "bee2_oids.h"
 #include "bign_common.h"
+#include "bign_asn1.h"
 
 #include <limits.h>
 #include <openssl/core_names.h>
@@ -99,27 +100,6 @@ static const char *bign_sig_mdname_to_hash_oid(const char *mdname) {
 }
 
 /* Bee2 signs the DER OID of the hash function, not of the signature scheme. */
-static int bign_sig_resolve_hash_oid(const EVP_MD *md, const char *mdname,
-                                     char *oid, size_t size) {
-    const char *known;
-    const ASN1_OBJECT *obj;
-    ASN1_OBJECT *parsed = NULL;
-    int nid, length;
-
-    known = bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(md));
-    if (known)
-        return bign_str_copy(oid, size, known);
-    nid = EVP_MD_get_type(md);
-    obj = nid == NID_undef ? NULL : OBJ_nid2obj(nid);
-    if (!obj)
-        obj = parsed = OBJ_txt2obj(mdname, 1);
-    if (!obj)
-        return 0;
-    length = OBJ_obj2txt(oid, (int)size, obj, 1);
-    ASN1_OBJECT_free(parsed);
-    return length > 0 && (size_t)length < size;
-}
-
 static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
     if (!ctx)
         return NULL;
@@ -162,53 +142,6 @@ static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
     return NULL;
 }
 
-static int
-bign_sig_build_algid(const char *oid, const char *hash_oid,
-                     unsigned char *buf, size_t buf_len, size_t *out_len) {
-    X509_ALGOR *alg = NULL;
-    ASN1_OBJECT *obj = NULL;
-    ASN1_OBJECT *hash_obj = NULL;
-    unsigned char *p = NULL;
-    int len;
-    int ok = 0;
-
-    if (!oid || !buf || !out_len)
-        return 0;
-
-    obj = OBJ_txt2obj(oid, 1);
-    if (!obj)
-        goto cleanup;
-
-    alg = X509_ALGOR_new();
-    if (!alg)
-        goto cleanup;
-
-    if (hash_oid && (hash_obj = OBJ_txt2obj(hash_oid, 1)) == NULL)
-        goto cleanup;
-    if (!X509_ALGOR_set0(alg, obj, hash_obj ? V_ASN1_OBJECT : V_ASN1_NULL, hash_obj))
-        goto cleanup;
-    obj = NULL;
-    hash_obj = NULL;
-
-    len = i2d_X509_ALGOR(alg, NULL);
-    if (len <= 0 || (size_t)len > buf_len)
-        goto cleanup;
-
-    p = buf;
-    len = i2d_X509_ALGOR(alg, &p);
-    if (len <= 0)
-        goto cleanup;
-
-    *out_len = (size_t)len;
-    ok = 1;
-
-cleanup:
-    ASN1_OBJECT_free(obj);
-    ASN1_OBJECT_free(hash_obj);
-    X509_ALGOR_free(alg);
-    return ok;
-}
-
 static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
     const char *oid;
 
@@ -220,7 +153,7 @@ static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
     oid = bign_sig_md_to_oid(ctx);
     if (!oid)
         return 0;
-    return bign_sig_build_algid(oid,
+    return bee2_bign_asn1_build_algid(oid,
                                 strcmp(oid, BEE2_OID_BIGN_WITH_HSPEC) == 0
                                     ? bign_sig_hash_oid(ctx) : NULL,
                                 ctx->aid_buf, sizeof(ctx->aid_buf), &ctx->aid_len);
@@ -272,7 +205,9 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
 
     candidate = *ctx;
     candidate.md = md;
-    if (!bign_sig_resolve_hash_oid(md, mdname, candidate.hash_oid, sizeof(candidate.hash_oid))) {
+    if (!bee2_bign_asn1_resolve_hash_oid(md, mdname,
+                                        bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(md)),
+                                        candidate.hash_oid, sizeof(candidate.hash_oid))) {
         EVP_MD_free(md);
         return 0;
     }
@@ -635,9 +570,11 @@ bign_sig_digest_verify_init(void *vctx, const char *mdname, void *vkey, const OS
     return bign_sig_digest_init_common(vctx, mdname, vkey, params, 0);
 }
 
-static int bign_sig_digest_sign_update(void *vctx, const unsigned char *data, size_t datalen) {
+static int bign_sig_digest_update(void *vctx, const unsigned char *data,
+                                  size_t datalen, bee2_bign_sig_mode_t mode) {
     bee2_bign_sig_ctx_t *ctx = vctx;
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN || !ctx->mdctx)
+
+    if (!ctx || ctx->mode != mode || !ctx->mdctx)
         return 0;
     if (datalen == 0)
         return 1;
@@ -647,25 +584,33 @@ static int bign_sig_digest_sign_update(void *vctx, const unsigned char *data, si
     return 1;
 }
 
+static int bign_sig_digest_sign_update(void *vctx, const unsigned char *data, size_t datalen) {
+    return bign_sig_digest_update(vctx, data, datalen, BEE2_BIGN_SIG_SIGN);
+}
+
 static int bign_sig_digest_verify_update(void *vctx, const unsigned char *data, size_t datalen) {
-    bee2_bign_sig_ctx_t *ctx = vctx;
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY || !ctx->mdctx)
-        return 0;
-    if (datalen == 0)
-        return 1;
-    if (!EVP_DigestUpdate(ctx->mdctx, data, datalen))
-        return 0;
-    ctx->md_started = 1;
-    return 1;
+    return bign_sig_digest_update(vctx, data, datalen, BEE2_BIGN_SIG_VERIFY);
+}
+
+/* DigestFinal must not modify the saved state: callers can repeat Final. */
+static int bign_sig_digest_final_hash(const EVP_MD_CTX *ctx,
+                                      unsigned char out[EVP_MAX_MD_SIZE],
+                                      unsigned int *out_len) {
+    EVP_MD_CTX *tmp = EVP_MD_CTX_new();
+    int ok = tmp != NULL;
+
+    if (ok)
+        ok = EVP_MD_CTX_copy_ex(tmp, ctx) && EVP_DigestFinal_ex(tmp, out, out_len);
+    EVP_MD_CTX_free(tmp);
+    return ok;
 }
 
 static int
 bign_sig_digest_sign_final(void *vctx, unsigned char *sig, size_t *siglen, size_t sigsize) {
     bee2_bign_sig_ctx_t *ctx = vctx;
-    EVP_MD_CTX *tmp = NULL;
     unsigned char md_buf[EVP_MAX_MD_SIZE];
     unsigned int md_len = 0;
-    int ok = 0;
+    int ok;
 
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN || !ctx->mdctx || !siglen)
         return 0;
@@ -673,47 +618,38 @@ bign_sig_digest_sign_final(void *vctx, unsigned char *sig, size_t *siglen, size_
         *siglen = bee2_bign_sig_len(ctx->variant);
         return 1;
     }
-
-    OPENSSL_cleanse(md_buf, sizeof(md_buf));
-    tmp = EVP_MD_CTX_new();
-    if (!tmp)
-        goto cleanup;
-    if (!EVP_MD_CTX_copy_ex(tmp, ctx->mdctx))
-        goto cleanup;
-    if (!EVP_DigestFinal_ex(tmp, md_buf, &md_len))
-        goto cleanup;
-    ok = bign_sig_sign_hash(ctx, sig, siglen, sigsize, md_buf, (size_t)md_len);
-
-cleanup:
-    EVP_MD_CTX_free(tmp);
+    ok = bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len);
+    if (ok)
+        ok = bign_sig_sign_hash(ctx, sig, siglen, sigsize, md_buf, (size_t)md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));
     return ok;
 }
 
 static int bign_sig_digest_verify_final(void *vctx, const unsigned char *sig, size_t siglen) {
     bee2_bign_sig_ctx_t *ctx = vctx;
-    EVP_MD_CTX *tmp = NULL;
     unsigned char md_buf[EVP_MAX_MD_SIZE];
     unsigned int md_len = 0;
-    int ok = 0;
+    int ok;
 
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY || !ctx->mdctx)
         return 0;
-
-    OPENSSL_cleanse(md_buf, sizeof(md_buf));
-    tmp = EVP_MD_CTX_new();
-    if (!tmp)
-        goto cleanup;
-    if (!EVP_MD_CTX_copy_ex(tmp, ctx->mdctx))
-        goto cleanup;
-    if (!EVP_DigestFinal_ex(tmp, md_buf, &md_len))
-        goto cleanup;
-    ok = bign_sig_verify_hash(ctx, sig, siglen, md_buf, (size_t)md_len);
-
-cleanup:
-    EVP_MD_CTX_free(tmp);
+    ok = bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len);
+    if (ok)
+        ok = bign_sig_verify_hash(ctx, sig, siglen, md_buf, (size_t)md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));
     return ok;
+}
+
+static int bign_sig_digest_oneshot_hash(bee2_bign_sig_ctx_t *ctx,
+                                         const unsigned char *data, size_t len,
+                                         unsigned char out[EVP_MAX_MD_SIZE], size_t *out_len)
+{
+    if (!ctx->md &&
+        (ctx->hspec ||
+         !bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest :
+                          ctx->variant->default_digest, NULL)))
+        return 0;
+    return bign_sig_hash_oneshot(ctx->md, data, len, out, out_len);
 }
 
 static int bign_sig_digest_sign(void *vctx,
@@ -729,14 +665,7 @@ static int bign_sig_digest_sign(void *vctx,
 
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN)
         return 0;
-    if (!ctx->md) {
-        if (ctx->hspec ||
-            !bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
-            return 0;
-    }
-
-    OPENSSL_cleanse(md_buf, sizeof(md_buf));
-    if (!bign_sig_hash_oneshot(ctx->md, tbs, tbslen, md_buf, &md_len))
+    if (!bign_sig_digest_oneshot_hash(ctx, tbs, tbslen, md_buf, &md_len))
         return 0;
     ok = bign_sig_sign_hash(ctx, sigret, siglen, sigsize, md_buf, md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));
@@ -752,14 +681,7 @@ static int bign_sig_digest_verify(
 
     if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
-    if (!ctx->md) {
-        if (ctx->hspec ||
-            !bign_sig_set_md(ctx, ctx->fixed_digest ? ctx->fixed_digest : ctx->variant->default_digest, NULL))
-            return 0;
-    }
-
-    OPENSSL_cleanse(md_buf, sizeof(md_buf));
-    if (!bign_sig_hash_oneshot(ctx->md, tbs, tbslen, md_buf, &md_len))
+    if (!bign_sig_digest_oneshot_hash(ctx, tbs, tbslen, md_buf, &md_len))
         return 0;
     ok = bign_sig_verify_hash(ctx, sig, siglen, md_buf, md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));

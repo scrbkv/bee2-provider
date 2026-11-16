@@ -22,9 +22,7 @@ typedef enum {
 
 typedef struct {
     brng_mode_t mode;
-    int state;
     unsigned int strength;
-    size_t max_request;
     size_t ctr_unused;
     int instantiated;
     unsigned char *key;
@@ -40,7 +38,6 @@ static void brng_clear_backend(bee2_brng_ctx_t *c) {
     OPENSSL_cleanse(&c->backend, sizeof(c->backend));
     c->ctr_unused = 0;
     c->instantiated = 0;
-    c->state = EVP_RAND_STATE_UNINITIALISED;
 }
 
 static void *brng_newctx_common(brng_mode_t mode) {
@@ -48,9 +45,7 @@ static void *brng_newctx_common(brng_mode_t mode) {
     if (!c)
         return NULL;
     c->mode = mode;
-    c->state = EVP_RAND_STATE_UNINITIALISED;
     c->strength = BRNG_STRENGTH_BITS;
-    c->max_request = SIZE_MAX;
     return c;
 }
 
@@ -125,13 +120,14 @@ static int brng_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     unsigned char live_iv[BRNG_BLOCK_SIZE];
 
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STATE);
-    if (p && !OSSL_PARAM_set_int(p, c->state))
+    if (p && !OSSL_PARAM_set_int(p, c->instantiated ? EVP_RAND_STATE_READY
+                                                      : EVP_RAND_STATE_UNINITIALISED))
         return 0;
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_STRENGTH);
     if (p && !OSSL_PARAM_set_uint(p, c->strength))
         return 0;
     p = OSSL_PARAM_locate(params, OSSL_RAND_PARAM_MAX_REQUEST);
-    if (p && !OSSL_PARAM_set_size_t(p, c->max_request))
+    if (p && !OSSL_PARAM_set_size_t(p, SIZE_MAX))
         return 0;
     p = OSSL_PARAM_locate(params, BRNG_IV_PARAM);
     if (!p)
@@ -227,6 +223,10 @@ static int brng_instantiate(void *vctx,
     (void)pstr;
     /* These deterministic generators cannot source fresh entropy by themselves.
      * Never silently claim prediction resistance or personalization support. */
+    if (c == NULL)
+        return 0;
+    /* A failed Instantiate must invalidate the previous generator. */
+    brng_clear_backend(c);
     if (prediction_resistance || pstr_len != 0 || !brng_set_ctx_params(vctx, params))
         return 0;
     if (!c->have_key || c->key_len == 0)
@@ -250,7 +250,6 @@ static int brng_instantiate(void *vctx,
     }
     c->instantiated = 1;
     c->strength = max_strength;
-    c->state = EVP_RAND_STATE_READY;
     return 1;
 }
 
@@ -324,8 +323,7 @@ static int brng_generate(void *vctx,
                          size_t addin_len) {
     bee2_brng_ctx_t *c = vctx;
 
-    if (!c->instantiated || c->state != EVP_RAND_STATE_READY ||
-        strength > c->strength || outlen > c->max_request ||
+    if (!c->instantiated || strength > c->strength ||
         (outlen && !out) || (addin_len && !addin) || prediction_resistance)
         return 0;
     if (c->mode == BRNG_MODE_HMAC_HBELT) {

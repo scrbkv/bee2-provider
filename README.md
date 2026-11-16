@@ -33,13 +33,21 @@ as an ASN.1 OBJECT parameter. Selecting a compatible non-STB digest (for example
 with `bign-256`) also selects the hSpec signature identifier. Digests with
 fixed BIGN signature identifiers continue to use those identifiers.
 
-Encrypted BIGN PKCS#8 uses PBES2 with PBKDF2-HMAC-HBELT (STB 34.101.45,
-Annex E) and authenticated BELT-KWP-128/192/256 (STB 34.101.31). It records
-the PBKDF2 salt, iteration count, derived-key length, HMAC-HBELT OID and
-BELT-KWP OID in the PKCS#8 EncryptedPrivateKeyInfo. KWP uses a zero header;
-no unauthenticated CBC padding is involved. Select one of `belt-kwp128`,
-`belt-kwp192`, `belt-kwp256` with `OSSL_ENCODER_CTX_set_cipher()` to protect
-a key. Other ciphers cannot be used to create encrypted BIGN PKCS#8 files.
+Encrypted BIGN PKCS#8 supports two PBES2 profiles. The preferred STB profile
+uses PBKDF2-HMAC-HBELT (STB 34.101.45, Annex E) and authenticated
+BELT-KWP-128/192/256 (STB 34.101.31), with the KWP OID, HMAC-HBELT OID,
+derived-key length, salt and iteration count encoded in
+EncryptedPrivateKeyInfo. KWP uses an all-zero authentication header.
+Select `belt-kwp128`, `belt-kwp192`, `belt-kwp256` or `default` with
+`OSSL_ENCODER_CTX_set_cipher()`; `default` selects BELT-KWP-256.
+
+For interoperability with non-STB software, callers can explicitly select
+standard CBC ciphers such as `AES-256-CBC` or `AES-128-CBC`. Those keys are
+encrypted using OpenSSL's standard PBES2/PBKDF2 implementation, **not** the
+STB HMAC-HBELT profile. The requested cipher must support OpenSSL PBES2.
+As with OpenSSL's standard encoders, omitting the encryption request produces
+an **unencrypted** PKCS#8 key; the KWP default applies only when encryption
+is explicitly selected.
 
 The encoder defaults to 10,000 iterations and a random 16-byte salt. Applications
 may set the `stb-pbkdf2-iterations` (uint) and `stb-pbkdf2-saltlen` (size_t)
@@ -50,8 +58,9 @@ Bee2's standalone `belt-pbkdf` primitive still supports all standard-defined
 inputs, including smaller test-vector parameters. Older OpenSSL-generated
 PBES2/PBKDF2 containers remain readable through the provider's bounded legacy
 decoder; other legacy KDFs are handled, when supported, by OpenSSL's normal
-decoder chain. New encrypted PKCS#8 files use the STB-algorithm profile. Interoperability with third-party PKCS#8 implementations
-requires support for these STB algorithm identifiers.
+decoder chain. Encrypted files using BELT-KWP follow the STB profile and require support
+for its algorithm identifiers. OpenSSL-managed CBC encryption uses conventional
+PBES2 identifiers.
 
 STB PKCS#8 decoding limits PBKDF2 to 1,000,000 iterations by default to
 bound the work requested by untrusted containers. Applications needing a

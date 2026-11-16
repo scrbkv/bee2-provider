@@ -150,16 +150,13 @@ static int provider_belt_mac_get_params(OSSL_PARAM params[]) {
     return 1;
 }
 
-static const OSSL_PARAM bee2_bmac_ctx_gettable[] = {OSSL_PARAM_size_t(OSSL_MAC_PARAM_SIZE, NULL),
-                                                    OSSL_PARAM_END};
-
 static const OSSL_PARAM bee2_bmac_ctx_settable[] = {
     OSSL_PARAM_octet_string(OSSL_MAC_PARAM_KEY, NULL, 0), OSSL_PARAM_END};
 
 static const OSSL_PARAM *provider_belt_mac_gettable_ctx_params(void *mctx, void *pctx) {
     (void)mctx;
     (void)pctx;
-    return bee2_bmac_ctx_gettable;
+    return bee2_bmac_gettable_params;
 }
 
 static const OSSL_PARAM *provider_belt_mac_settable_ctx_params(void *mctx, void *pctx) {
@@ -169,12 +166,8 @@ static const OSSL_PARAM *provider_belt_mac_settable_ctx_params(void *mctx, void 
 }
 
 static int provider_belt_mac_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
-    OSSL_PARAM *p;
     (void)vctx;
-    p = OSSL_PARAM_locate(params, OSSL_MAC_PARAM_SIZE);
-    if (p && !OSSL_PARAM_set_size_t(p, BELT_MAC_OUTPUT_SIZE))
-        return 0;
-    return 1;
+    return provider_belt_mac_get_params(params);
 }
 
 static int provider_belt_mac_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
