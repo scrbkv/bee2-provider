@@ -151,3 +151,12 @@ ECB/CBC normative ciphertext-stealing vectors A.9-2, A.10-2, A.11-2 and
 A.12-2 (47/36-byte inputs) are kept alongside the 48-byte KATs in the
 native `stb_kat.c` test. Only one final partial block is passed per Update,
 matching the provider's documented CTS API contract.
+
+The legacy BASH-PRG-AE2561 engine's decryption path fails its own
+zero-plaintext case (tag-only payload); this is **not** a restriction of Bee2
+or the provider. The cross-version matrix excludes only that legacy failure;
+the direct Bee2 matrix retains zero-length BASH inputs.
+
+Coverage uses GCC `-fprofile-update=atomic` because the native thread test
+shares an instrumented provider module across threads. Without atomic profile
+counters, gcov can report negative branch hits and mismeasure coverage.

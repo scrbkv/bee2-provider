@@ -111,7 +111,7 @@ if(BEE2_PROVIDER_ENABLE_COVERAGE)
     if(NOT BEE2_PROVIDER_BUILD_TESTS)
         message(FATAL_ERROR "Coverage requires BEE2_PROVIDER_BUILD_TESTS=ON")
     endif()
-    target_compile_options(bee2_provider PRIVATE --coverage -O0 -g)
+    target_compile_options(bee2_provider PRIVATE --coverage -fprofile-update=atomic -O0 -g)
     target_link_options(bee2_provider PRIVATE --coverage)
 endif()
 

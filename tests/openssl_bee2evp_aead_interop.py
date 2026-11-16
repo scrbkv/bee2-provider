@@ -77,9 +77,14 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="bee2evp-extended-") as root:
         directory = Path(root)
         for algorithm in algorithms:
-            lengths = ((16, 17, 31, 32, 33, 64, 257)
-                       if algorithm.startswith("belt-kwp") else
-                       (0, 1, 15, 16, 17, 31, 32, 33, 64, 257))
+            # The historical engine cannot verify the tag after decrypting a
+            # zero-length BASH message. Bee2 direct interop covers that case.
+            if algorithm.startswith("belt-kwp"):
+                lengths = (16, 17, 31, 32, 33, 64, 257)
+            elif algorithm.startswith("bash-"):
+                lengths = (1, 15, 16, 17, 31, 32, 33, 64, 257)
+            else:
+                lengths = (0, 1, 15, 16, 17, 31, 32, 33, 64, 257)
             for length in lengths:
                 for profile in range(3):
                     try:
