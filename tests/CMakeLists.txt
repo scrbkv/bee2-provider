@@ -522,3 +522,12 @@ if(BEE2_PROVIDER_ENABLE_COVERAGE)
         target_link_options(${target} PRIVATE --coverage)
     endforeach()
 endif()
+
+# Direct provider cipher dispatch: one-shot callbacks and duplicated
+# initialized contexts must agree with normal EVP streaming for every cipher.
+add_executable(bee2_provider_cipher_dispatch provider_cipher_dispatch.c)
+target_link_libraries(bee2_provider_cipher_dispatch PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_cipher_dispatch
+    COMMAND bee2_provider_cipher_dispatch $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_cipher_dispatch PROPERTIES
+    LABELS "crypto;evp;dispatch;context;native")

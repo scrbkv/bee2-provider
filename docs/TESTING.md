@@ -166,3 +166,10 @@ The coverage job also instruments the production ASN.1 sources compiled into
 those legitimate tests would appear as uncovered implementation lines. The
 BIGN digest test now checks actual one-shot `EVP_DigestSign`/`EVP_DigestVerify`
 with the matching BELT/BASH digests and a modified-message rejection.
+
+The generic `bee2_provider_cipher_dispatch` test enumerates all exported
+ciphers through `OSSL_PROVIDER_query_operation`, invokes the registered
+one-shot function, duplicates initialized native contexts and compares the
+ciphertext and AEAD tag against the public EVP streaming API. It tests
+supported algorithm semantics without maintaining a second per-algorithm
+copy of the test matrix.
