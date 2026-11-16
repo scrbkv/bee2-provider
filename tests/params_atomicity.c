@@ -102,7 +102,7 @@ static int check_pbkdf(void)
              CRYPTO_memcmp(original, again, sizeof(original)) == 0;
 
     if (ok) {
-        EVP_KDF_reset(ctx);
+        EVP_KDF_CTX_reset(ctx);
         ok = EVP_KDF_derive(ctx, again, sizeof(again), NULL) <= 0 &&
              EVP_KDF_CTX_set_params(ctx, good) > 0 &&
              EVP_KDF_derive(ctx, again, sizeof(again), NULL) > 0 &&
