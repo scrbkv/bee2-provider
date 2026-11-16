@@ -178,3 +178,11 @@ BIGN signature and parameter-contract tests now exercise the generic
 verification, as well as key generation from an existing BIGN key's domain
 parameters. These exercise distinct provider dispatch paths rather than
 repeating fixed-curve KATs.
+
+The decoder object-reference test constructs a real BIGN key via the provider's
+KEYMGMT import callbacks, then invokes DECODER_EXPORT_OBJECT and compares its
+exported key material with an independently imported EVP key. The Linux-only
+ASN.1 fault-injection test uses a linker wrapper for PKCS8_pkey_set0 to test
+parameter cleanup on a failed ownership transfer for both named and explicit
+curve encodings. This avoids global allocation failure or arbitrary test-only
+hooks in production code.

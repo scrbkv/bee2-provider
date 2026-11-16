@@ -531,3 +531,34 @@ add_test(NAME bee2_provider_cipher_dispatch
     COMMAND bee2_provider_cipher_dispatch $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_provider_cipher_dispatch PROPERTIES
     LABELS "crypto;evp;dispatch;context;native")
+
+# The public decoder object-reference transfer path must preserve the full
+# provider-native BIGN key and reject malformed references.
+add_executable(bee2_bign_decoder_export bign_decoder_export.c)
+target_link_libraries(bee2_bign_decoder_export PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_decoder_export
+    COMMAND bee2_bign_decoder_export $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_decoder_export PROPERTIES
+    LABELS "bign;codec;native;dispatch;negative")
+
+# Simulate an ASN.1 ownership-transfer failure without triggering global
+# out-of-memory conditions or altering production allocation callbacks.
+if(UNIX AND NOT APPLE)
+    add_executable(bee2_bign_asn1_fault
+        bign_asn1_fault.c
+        ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
+        ${CMAKE_SOURCE_DIR}/src/bign_common.c
+        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+    target_include_directories(bee2_bign_asn1_fault PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(bee2_bign_asn1_fault SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+    target_link_libraries(bee2_bign_asn1_fault PRIVATE bee2_static OpenSSL::Crypto)
+    target_link_options(bee2_bign_asn1_fault PRIVATE "-Wl,--wrap=PKCS8_pkey_set0")
+    if(BEE2_PROVIDER_ENABLE_COVERAGE)
+        target_compile_options(bee2_bign_asn1_fault PRIVATE
+            --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(bee2_bign_asn1_fault PRIVATE --coverage)
+    endif()
+    add_test(NAME bee2_bign_asn1_fault COMMAND bee2_bign_asn1_fault)
+    set_tests_properties(bee2_bign_asn1_fault PROPERTIES
+        LABELS "bign;asn1;negative;fault_injection;native")
+endif()
