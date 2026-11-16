@@ -1481,7 +1481,6 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     {
         OSSL_PARAM params[] = {
             OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, key_type, 0),
-            OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_INPUT_TYPE, "DER", 0),
             OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, "PrivateKeyInfo", 0),
             OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA, plain_der, (size_t)plain_len),
             OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
