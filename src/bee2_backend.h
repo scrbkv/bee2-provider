@@ -99,7 +99,7 @@ static inline void belt_ecb_decrypt(belt_ecb_ctx_t *c, const void *in, size_t bl
     beltECBStepD(out, (size_t)blocks * 16u, &c->state);
 }
 
-#define BELT_IV_MODE(PFX, CAMEL, ENCSTEP, DECSTEP) \
+#define BELT_IV_STATE(PFX, CAMEL) \
     static inline void PFX##_restart(PFX##_ctx_t *c) { \
         if (c->key_set && c->iv_set) \
             CAMEL##Refresh(&c->state, c->iv); \
@@ -112,7 +112,10 @@ static inline void belt_ecb_decrypt(belt_ecb_ctx_t *c, const void *in, size_t bl
         (void)iv_len; \
         memcpy(c->iv, iv, 16); \
         c->iv_set = 1; \
-    } \
+    }
+
+#define BELT_IV_MODE(PFX, CAMEL, ENCSTEP, DECSTEP) \
+    BELT_IV_STATE(PFX, CAMEL) \
     static inline void PFX##_encrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) { \
         memmove(out, in, (size_t)blocks * 16u); \
         ENCSTEP(out, (size_t)blocks * 16u, &c->state); \
@@ -123,8 +126,8 @@ static inline void belt_ecb_decrypt(belt_ecb_ctx_t *c, const void *in, size_t bl
     }
 
 BELT_IV_MODE(belt_cbc, beltCBC, beltCBCStepE, beltCBCStepD)
-BELT_IV_MODE(belt_cfb, beltCFB, beltCFBStepE, beltCFBStepD)
-BELT_IV_MODE(belt_ctr, beltCTR, beltCTRStepE, beltCTRStepE)
+BELT_IV_STATE(belt_cfb, beltCFB)
+BELT_IV_STATE(belt_ctr, beltCTR)
 BELT_IV_MODE(belt_bde, beltBDE, beltBDEStepE, beltBDEStepD)
 
 /* Both Bee2 stream modes retain unused keystream between Step calls. */

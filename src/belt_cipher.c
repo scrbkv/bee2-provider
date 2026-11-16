@@ -77,10 +77,13 @@ static const belt_mode_descriptor_t belt_ecb_mode = {belt_ecb_restart,
                                                      NULL,
                                                      0};
 BELT_MODE_DESCRIPTOR(belt_cbc_mode, belt_cbc, BELT_IV_SIZE, NULL, NULL);
-BELT_MODE_DESCRIPTOR(belt_cfb_mode, belt_cfb, BELT_IV_SIZE,
-                     belt_cfb_encrypt_bytes, belt_cfb_decrypt_bytes);
-BELT_MODE_DESCRIPTOR(belt_ctr_mode, belt_ctr, BELT_IV_SIZE,
-                     belt_ctr_crypt_bytes, belt_ctr_crypt_bytes);
+/* Stream modes do not use the block-at-a-time dispatch callbacks. */
+static const belt_mode_descriptor_t belt_cfb_mode = {
+    belt_cfb_restart, belt_cfb_set_key, belt_cfb_set_iv,
+    NULL, NULL, belt_cfb_encrypt_bytes, belt_cfb_decrypt_bytes, BELT_IV_SIZE};
+static const belt_mode_descriptor_t belt_ctr_mode = {
+    belt_ctr_restart, belt_ctr_set_key, belt_ctr_set_iv,
+    NULL, NULL, belt_ctr_crypt_bytes, belt_ctr_crypt_bytes, BELT_IV_SIZE};
 BELT_MODE_DESCRIPTOR(belt_bde_mode, belt_bde, BELT_IV_SIZE, NULL, NULL);
 
 typedef struct {
