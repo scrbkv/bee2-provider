@@ -499,3 +499,16 @@ add_test(NAME bee2_bash_prgae_evp_stb
     COMMAND bee2_bash_prgae_evp_stb $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bash_prgae_evp_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
 
+
+# Exercise independent EVP contexts from multiple threads using a shared
+# OpenSSL library context, including context cloning and BIGN signatures.
+if(UNIX)
+    find_package(Threads REQUIRED)
+    add_executable(bee2_provider_concurrent provider_concurrent.c)
+    target_link_libraries(bee2_provider_concurrent PRIVATE
+        OpenSSL::Crypto Threads::Threads)
+    add_test(NAME bee2_provider_concurrent
+        COMMAND bee2_provider_concurrent $<TARGET_FILE_DIR:bee2_provider>)
+    set_tests_properties(bee2_provider_concurrent PROPERTIES
+        LABELS "stress;concurrency;native;evp;bign")
+endif()

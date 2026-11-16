@@ -138,3 +138,16 @@ both sides. It covers 128/192/256-bit BELT-DWP, BELT-CHE, BELT-KWP, and the
 legacy BASH-PRG-AE2561 profile (empty announcement), with zero, patterned,
 and deterministic pseudorandom inputs, boundary lengths, AAD and tag tampering.
 BELT-KWP uses the legacy engine's zero-header profile.
+
+## Multithreading and EVP context duplication
+
+The native `bee2_provider_concurrent` test uses eight threads that share an
+`OSSL_LIB_CTX` but independently create and duplicate digest/MAC contexts,
+then generate, sign and verify BIGN keys. It is included automatically in the
+sanitizer and coverage jobs. Production should never share a mutable EVP
+operation context between threads without its own synchronization.
+
+ECB/CBC normative ciphertext-stealing vectors A.9-2, A.10-2, A.11-2 and
+A.12-2 (47/36-byte inputs) are kept alongside the 48-byte KATs in the
+native `stb_kat.c` test. Only one final partial block is passed per Update,
+matching the provider's documented CTS API contract.

@@ -55,7 +55,7 @@ bee2evp share cryptographic implementation code.
 
 | Operation | STB known-answer evidence | Additional validation |
 | --- | --- | --- |
-| BELT ECB/CBC/CFB/CTR | 256-bit keys, STB 34.101.31 Appendix A; 128/192-bit key-expansion equivalence to the A.27 expanded key | Round-trips for all key lengths; bee2evp fixed/boundary/random inputs |
+| BELT ECB/CBC/CFB/CTR | 256-bit keys, STB 34.101.31 Appendix A, including ECB/CBC ciphertext stealing (A.9-2/A.10-2/A.11-2/A.12-2); 128/192-bit key-expansion equivalence to the A.27 expanded key | Round-trips for all key lengths; bee2evp fixed/boundary/random inputs |
 | BELT BDE/SDE | 256-bit keys, A.24 encryption and A.25 decryption | Round-trips for 128/192/256; no bee2evp counterpart |
 | BELT DWP/CHE | 256-bit keys, A.19-1/2 (ciphertext and authentication tag) | Round-trips and tag-rejection for all key lengths |
 | BELT KWP | 256-bit keys, A.21 encryption and A.22 decryption | Round-trips and tamper tests for all key lengths |

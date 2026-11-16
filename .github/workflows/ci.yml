@@ -252,7 +252,7 @@ jobs:
       - name: Run fixed, boundary and random interoperability tests
         run: |
           ctest --test-dir build-interop --output-on-failure --parallel 4 --timeout 240 \
-            -R '^(bee2_bee2evp_interop_|bee2_bee2evp_bign_cert_|bee2_interop_matrix_)' \
+            -R '^(bee2_bee2evp_bign_cert_|bee2_interop_matrix_|bee2_interop_aead_kwp$)' \
             --output-junit interoperability-tests.xml
 
       - name: Upload interoperability report
