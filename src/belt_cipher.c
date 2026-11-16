@@ -108,11 +108,6 @@ typedef struct {
 /*  Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Re-initialise the Bee2 context from saved key/IV. */
-static void belt_reinit(bee2_belt_ctx_t *c) {
-    c->mode->restart(&c->backend_state);
-}
-
 /* Keep the OpenSSL-facing IV state in step with Bee2's stream modes. */
 static void belt_reset_iv_state(bee2_belt_ctx_t *c) {
     u32 block[4];
@@ -307,7 +302,7 @@ static int belt_init(void *vctx,
     if (iv != NULL && c->mode->iv_size != 0)
         c->mode->set_iv(&c->backend_state, iv, ivlen);
     if (c->backend_state.key_set) {
-        belt_reinit(c);
+        c->mode->restart(&c->backend_state);
         belt_reset_iv_state(c);
     }
     return 1;

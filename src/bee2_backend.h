@@ -89,7 +89,6 @@ static inline void belt_ecb_restart(belt_ecb_ctx_t *c) {
 }
 static inline void belt_ecb_set_key(belt_ecb_ctx_t *c, const void *key, size_t key_len) {
     bee2_belt_mode_store_key(c, key, key_len);
-    belt_ecb_restart(c);
 }
 static inline void belt_ecb_encrypt(belt_ecb_ctx_t *c, const void *in, size_t blocks, void *out) {
     memmove(out, in, (size_t)blocks * 16u);
@@ -194,7 +193,6 @@ static inline void belt_mac_restart(belt_mac_ctx_t *c) {
 static inline void belt_mac_set_key(belt_mac_ctx_t *c, const void *key, size_t key_len) {
     bee2_belt_expand_key(key, key_len, c->key);
     c->key_set = 1;
-    belt_mac_restart(c);
 }
 static inline void belt_mac_update(belt_mac_ctx_t *c, const void *in, size_t n) {
     beltMACStepA(in, n, &c->state);
@@ -214,7 +212,6 @@ static inline void belt_sde_restart(belt_sde_ctx_t *c) {
 }
 static inline void belt_sde_set_key(belt_sde_ctx_t *c, const void *key, size_t key_len) {
     bee2_belt_mode_store_key(c, key, key_len);
-    belt_sde_restart(c);
 }
 static inline void belt_sde_set_iv(belt_sde_ctx_t *c, const void *iv, size_t iv_len) {
     (void)iv_len;

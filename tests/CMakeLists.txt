@@ -380,8 +380,14 @@ add_test(NAME bee2_bign_codec_roundtrip
         --openssl ${BEE2_OPENSSL_EXECUTABLE})
 set_tests_properties(bee2_bign_codec_roundtrip PROPERTIES LABELS "regression;bign;codec")
 
-add_executable(bee2_bign_der_framing bign_der_framing.c)
-target_link_libraries(bee2_bign_der_framing PRIVATE OpenSSL::Crypto)
+add_executable(bee2_bign_der_framing
+    bign_der_framing.c
+    ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
+    ${CMAKE_SOURCE_DIR}/src/bign_common.c
+    ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+target_include_directories(bee2_bign_der_framing PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(bee2_bign_der_framing SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_bign_der_framing PRIVATE bee2_static OpenSSL::Crypto)
 add_test(NAME bee2_bign_der_framing COMMAND bee2_bign_der_framing)
 set_tests_properties(bee2_bign_der_framing PROPERTIES LABELS "regression;bign;asn1")
 
@@ -511,7 +517,10 @@ endif()
 
 # BIGN PKCS#8/SPKI cryptographic key serialization in PEM and DER.
 add_executable(bee2_bign_legacy_pbkdf2_limit
-    bign_legacy_pbkdf2_limit.c ${CMAKE_SOURCE_DIR}/src/bign_stb_pbes2.c)
+    bign_legacy_pbkdf2_limit.c
+    ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
+    ${CMAKE_SOURCE_DIR}/src/bign_common.c
+    ${CMAKE_SOURCE_DIR}/src/provider_util.c)
 target_include_directories(bee2_bign_legacy_pbkdf2_limit PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
 target_include_directories(bee2_bign_legacy_pbkdf2_limit SYSTEM PRIVATE

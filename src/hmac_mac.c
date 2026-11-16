@@ -223,7 +223,6 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     unsigned char key_block[BEE2_HMAC_MAX_BLOCK_SIZE];
     unsigned char digest[BEE2_HMAC_MAX_DIGEST_SIZE];
     unsigned char pad[BEE2_HMAC_MAX_BLOCK_SIZE];
-    bee2_backend_state_t temporary_state;
     static const unsigned char empty_key = 0;
     size_t i;
 
@@ -239,9 +238,9 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     OPENSSL_cleanse(key_block, sizeof(key_block));
 
     if (ctx->key_len > ctx->bash_digest->block_size) {
-        bashHashStart(&temporary_state, ctx->bash_digest->level);
-        bashHashStepH(ctx->key, ctx->key_len, &temporary_state);
-        bashHashStepG(digest, ctx->bash_digest->digest_size, &temporary_state);
+        bashHashStart(&ctx->backend_state, ctx->bash_digest->level);
+        bashHashStepH(ctx->key, ctx->key_len, &ctx->backend_state);
+        bashHashStepG(digest, ctx->bash_digest->digest_size, &ctx->backend_state);
         memcpy(key_block, digest, ctx->bash_digest->digest_size);
     } else if (ctx->key_len != 0) {
         memcpy(key_block, ctx->key, ctx->key_len);
@@ -257,7 +256,6 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     bashHashStart(&ctx->outer_state, ctx->bash_digest->level);
     bashHashStepH(pad, ctx->bash_digest->block_size, &ctx->outer_state);
 
-    OPENSSL_cleanse(&temporary_state, sizeof(temporary_state));
     OPENSSL_cleanse(pad, sizeof(pad));
     OPENSSL_cleanse(digest, sizeof(digest));
     OPENSSL_cleanse(key_block, sizeof(key_block));
@@ -303,7 +301,6 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
     bee2_hmac_ctx_t *ctx = vctx;
     unsigned char inner_digest[BEE2_HMAC_MAX_DIGEST_SIZE];
     unsigned char full_mac[BEE2_HMAC_MAX_DIGEST_SIZE];
-    bee2_backend_state_t outer_state;
     size_t digest_size;
 
     if (!ctx || !ctx->initialized || !output_len)
@@ -318,15 +315,14 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
 
     if (ctx->bash_digest) {
         bashHashStepG(inner_digest, digest_size, &ctx->backend_state);
-        memcpy(&outer_state, &ctx->outer_state, sizeof(outer_state));
-        bashHashStepH(inner_digest, digest_size, &outer_state);
-        bashHashStepG(full_mac, digest_size, &outer_state);
+        bashHashStepH(inner_digest, digest_size, &ctx->outer_state);
+        bashHashStepG(full_mac, digest_size, &ctx->outer_state);
     } else {
         beltHMACStepG(full_mac, &ctx->backend_state);
     }
     memcpy(output, full_mac, ctx->output_size);
     *output_len = ctx->output_size;
-    OPENSSL_cleanse(&outer_state, sizeof(outer_state));
+    OPENSSL_cleanse(&ctx->outer_state, sizeof(ctx->outer_state));
     OPENSSL_cleanse(full_mac, sizeof(full_mac));
     OPENSSL_cleanse(inner_digest, sizeof(inner_digest));
     ctx->initialized = 0;

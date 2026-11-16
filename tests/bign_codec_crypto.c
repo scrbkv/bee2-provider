@@ -360,6 +360,51 @@ cleanup:
     return ok;
 }
 
+/* Optional OpenSSL-managed PBES2 encryption must round-trip BIGN keys. */
+static int check_selected_cipher(EVP_PKEY *key, const char *format, const char *cipher_name)
+{
+    OSSL_ENCODER_CTX *encoder = NULL;
+    EVP_PKEY *decoded = NULL, *wrong = NULL;
+    BIO *output = NULL;
+    BUF_MEM *data = NULL;
+    unsigned int iterations = 12000;
+    size_t salt_length = 24;
+    OSSL_PARAM settings[] = {
+        OSSL_PARAM_uint("stb-pbkdf2-iterations", &iterations),
+        OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &salt_length),
+        OSSL_PARAM_END
+    };
+    int ok = 0;
+
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, format, "PrivateKeyInfo", "provider=bee2");
+    output = BIO_new(BIO_s_mem());
+    if (!encoder || !output || !OSSL_ENCODER_CTX_set_params(encoder, settings) ||
+        !OSSL_ENCODER_CTX_set_cipher(encoder, cipher_name, NULL) ||
+        !OSSL_ENCODER_CTX_set_passphrase(encoder, password, sizeof(password) - 1) ||
+        !OSSL_ENCODER_to_bio(encoder, output) ||
+        !BIO_get_mem_ptr(output, &data) || !data || data->length == 0)
+        goto cleanup;
+
+    if (!decode_key(&decoded, format, data, password, sizeof(password) - 1) ||
+        !decoded || !same_private_key(key, decoded) ||
+        decode_key(&wrong, format, data, wrong_password, sizeof(wrong_password) - 1) ||
+        wrong != NULL)
+        goto cleanup;
+    ok = 1;
+
+cleanup:
+    if (!ok) {
+        fprintf(stderr, "BIGN %s PBES2 with %s failed\n", format, cipher_name);
+        ERR_print_errors_fp(stderr);
+    }
+    EVP_PKEY_free(wrong);
+    EVP_PKEY_free(decoded);
+    BIO_free(output);
+    OSSL_ENCODER_CTX_free(encoder);
+    return ok;
+}
+
 /* Foreign encrypted PKCS#8 objects must remain decodable when the BIGN
  * decoder is loaded alongside OpenSSL's default provider. */
 static int check_foreign_key(const char *algorithm, const char *format, int encrypted)
@@ -450,7 +495,11 @@ int main(int argc, char **argv)
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {
             if (!check_serialization(key, formats[j], 0) ||
-                !check_serialization(key, formats[j], 1))
+                !check_serialization(key, formats[j], 1) ||
+                !check_selected_cipher(key, formats[j], "AES-256-CBC") ||
+                !check_selected_cipher(key, formats[j], "AES-192-CBC") ||
+                !check_selected_cipher(key, formats[j], "AES-128-CBC") ||
+                !check_selected_cipher(key, formats[j], "default"))
                 goto cleanup;
         }
         EVP_PKEY_free(key);
