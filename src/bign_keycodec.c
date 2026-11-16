@@ -46,42 +46,6 @@ static int write_all(BIO *bio, const void *data, size_t len) {
     return 1;
 }
 
-static int append_bytes(unsigned char **buffer,
-                        size_t *length,
-                        size_t *capacity,
-                        const unsigned char *data,
-                        size_t data_length) {
-    size_t required;
-    size_t new_capacity;
-    unsigned char *expanded;
-
-    if (!buffer || !length || !capacity || (!data && data_length != 0) ||
-        data_length > SIZE_MAX - *length)
-        return 0;
-
-    required = *length + data_length;
-    if (required > *capacity) {
-        new_capacity = *capacity ? *capacity : 4096u;
-        while (new_capacity < required) {
-            if (new_capacity > SIZE_MAX / 2u) {
-                new_capacity = required;
-                break;
-            }
-            new_capacity *= 2u;
-        }
-        expanded = OPENSSL_realloc(*buffer, new_capacity);
-        if (!expanded)
-            return 0;
-        *buffer = expanded;
-        *capacity = new_capacity;
-    }
-
-    if (data_length != 0)
-        memcpy(*buffer + *length, data, data_length);
-    *length = required;
-    return 1;
-}
-
 static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len,
                                          const bee2_bign_encoder_ctx_t *ctx,
                                         OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,

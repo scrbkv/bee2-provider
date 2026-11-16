@@ -689,6 +689,42 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
     return 1;
 }
 
+static int append_bytes(unsigned char **buffer,
+                        size_t *length,
+                        size_t *capacity,
+                        const unsigned char *data,
+                        size_t data_length) {
+    size_t required;
+    size_t new_capacity;
+    unsigned char *expanded;
+
+    if (!buffer || !length || !capacity || (!data && data_length != 0) ||
+        data_length > SIZE_MAX - *length)
+        return 0;
+
+    required = *length + data_length;
+    if (required > *capacity) {
+        new_capacity = *capacity ? *capacity : 4096u;
+        while (new_capacity < required) {
+            if (new_capacity > SIZE_MAX / 2u) {
+                new_capacity = required;
+                break;
+            }
+            new_capacity *= 2u;
+        }
+        expanded = OPENSSL_realloc(*buffer, new_capacity);
+        if (!expanded)
+            return 0;
+        *buffer = expanded;
+        *capacity = new_capacity;
+    }
+
+    if (data_length != 0)
+        memcpy(*buffer + *length, data, data_length);
+    *length = required;
+    return 1;
+}
+
 static int read_pem_object(BIO *bio, unsigned char first,
                            unsigned char **out, size_t *len) {
     static const char begin[] = "-----BEGIN ";
