@@ -395,7 +395,7 @@ static const OSSL_ALGORITHM bee2_decoders[] = {
      bee2_stb_epki_decoder_functions,
      "STB PBES2 EncryptedPrivateKeyInfo to PrivateKeyInfo (DER)"},
     {"DER", "provider=bee2,input=pem",
-     bee2_stb_epki_decoder_functions,
+     bee2_stb_pem_decoder_functions,
      "STB PBES2 and BIGN PEM to DER decoder"},
     {BEE2_ALG_BIGN_KEY,
      "provider=bee2,input=der,structure=PrivateKeyInfo",

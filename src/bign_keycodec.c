@@ -131,6 +131,7 @@ ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT)
 typedef struct {
     const bee2_bign_variant_t *variant;
     OSSL_LIB_CTX *libctx;
+    int input_pem;
 } bee2_bign_decoder_ctx_t;
 
 static int write_all(BIO *bio, const void *data, size_t len) {
@@ -1447,26 +1448,38 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     if (ctx == NULL || in == NULL || data_cb == NULL)
         return 0;
     bio = BIO_new_from_core_bio(ctx->libctx, in);
-    if (bio == NULL || !read_one_object(bio, &buf, &len))
+    if (bio == NULL)
         goto end;
-    if (len == 0) {
-        ok = 1;
-        goto end;
-    }
 
-    if (buf[0] == 0x30) {
-        payload = buf;
-        payload_len = len;
-    } else {
-        converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
-        if (converted == NULL || payload_len == 0 ||
-            (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) != 0 &&
-             strcmp(pem_name, BIGN_PEM_LABEL) != 0 &&
-             strcmp(pem_name, BIGN_PUB_PEM_LABEL) != 0)) {
+    if (ctx->input_pem) {
+        char *header = NULL;
+        long decoded_len = 0;
+        int read_ok;
+
+        read_ok = PEM_read_bio(bio, &pem_name, &header,
+                               &converted, &decoded_len);
+        OPENSSL_free(header);
+        if (!read_ok || converted == NULL || decoded_len <= 0) {
+            ok = 1;
+            goto end;
+        }
+        if (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) != 0 &&
+            strcmp(pem_name, BIGN_PEM_LABEL) != 0 &&
+            strcmp(pem_name, BIGN_PUB_PEM_LABEL) != 0) {
             ok = 1;
             goto end;
         }
         payload = converted;
+        payload_len = (size_t)decoded_len;
+    } else {
+        if (!read_one_object(bio, &buf, &len))
+            goto end;
+        if (len == 0) {
+            ok = 1;
+            goto end;
+        }
+        payload = buf;
+        payload_len = len;
     }
 
     p = payload;
@@ -1579,6 +1592,14 @@ static void *bign_decoder_newctx(void *provctx) {
     return bign_decoder_newctx_common(NULL, provctx);
 }
 
+static void *bign_stb_pem_newctx(void *provctx) {
+    bee2_bign_decoder_ctx_t *ctx = bign_decoder_newctx_common(NULL, provctx);
+
+    if (ctx)
+        ctx->input_pem = 1;
+    return ctx;
+}
+
 static void *bign_pem_encoder_newctx(void *provctx) {
     return bign_encoder_newctx_common(NULL, 1, provctx);
 }
@@ -1631,6 +1652,12 @@ const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
 
 const OSSL_DISPATCH bee2_stb_epki_decoder_functions[] = {
     {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
+    {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
+    {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_stb_epki_decode},
+    {0, NULL}};
+
+const OSSL_DISPATCH bee2_stb_pem_decoder_functions[] = {
+    {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_stb_pem_newctx},
     {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
     {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_stb_epki_decode},
     {0, NULL}};
