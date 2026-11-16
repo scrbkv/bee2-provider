@@ -1504,13 +1504,17 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
             ok = 1;
             goto end;
         }
-        if (buf[0] == 0x30)
-            goto end;
-        converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
-        if (converted == NULL || payload_len == 0 ||
-            payload_len > BIGN_MAX_KEY_INPUT)
-            goto end;
-        payload = converted;
+        if (buf[0] == 0x30) {
+            /* A generic loader may invoke this adapter on DER input. */
+            payload = buf;
+            payload_len = len;
+        } else {
+            converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
+            if (converted == NULL || payload_len == 0 ||
+                payload_len > BIGN_MAX_KEY_INPUT)
+                goto end;
+            payload = converted;
+        }
     } else {
         if (!read_one_object(bio, &buf, &len))
             goto end;
@@ -1534,6 +1538,7 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         ASN1_OBJECT *public_oid = NULL;
         const char *structure = NULL;
         char *key_type = NULL;
+        char resolved_name[128];
         char bign_name[] = "bign", rsa_name[] = "RSA", ec_name[] = "EC";
 
         /* Emit a new DER object for subsequent decoders: the original
@@ -1547,8 +1552,12 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         if (plain_p8 != NULL && p == payload + payload_len &&
             PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8)) {
             structure = "PrivateKeyInfo";
-            if (oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY))
+            if (oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
                 key_type = bign_name;
+            } else if (OBJ_obj2txt(resolved_name, sizeof(resolved_name),
+                                   private_oid, 0) > 0) {
+                key_type = resolved_name;
+            }
         } else {
             p = payload;
             ERR_set_mark();
@@ -1557,8 +1566,12 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
             if (pub != NULL && p == payload + payload_len &&
                 X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub)) {
                 structure = "SubjectPublicKeyInfo";
-                if (oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
+                if (oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY)) {
                     key_type = bign_name;
+                } else if (OBJ_obj2txt(resolved_name, sizeof(resolved_name),
+                                       public_oid, 0) > 0) {
+                    key_type = resolved_name;
+                }
             }
         }
         if (structure == NULL && ctx->input_pem && pem_name != NULL) {
@@ -1571,12 +1584,14 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
             }
         }
         if (structure != NULL) {
-            OSSL_PARAM params[5];
+            OSSL_PARAM params[6];
             size_t n = 0;
 
             if (key_type != NULL)
                 params[n++] = OSSL_PARAM_construct_utf8_string(
                     OSSL_OBJECT_PARAM_DATA_TYPE, key_type, 0);
+            params[n++] = OSSL_PARAM_construct_utf8_string(
+                OSSL_OBJECT_PARAM_INPUT_TYPE, "DER", 0);
             params[n++] = OSSL_PARAM_construct_utf8_string(
                 OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0);
             params[n++] = OSSL_PARAM_construct_octet_string(
