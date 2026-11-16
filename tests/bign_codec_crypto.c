@@ -44,6 +44,20 @@ static int decode_key(EVP_PKEY **key, const char *format, const BUF_MEM *data,
         !OSSL_DECODER_CTX_set_passphrase(ctx, pass, passlen))
         goto cleanup;
     ok = OSSL_DECODER_from_bio(ctx, input) > 0;
+    if (!ok && pass == password && passlen == sizeof(password) - 1) {
+        EVP_PKEY *direct_key = NULL;
+        OSSL_DECODER_CTX *direct = OSSL_DECODER_CTX_new_for_pkey(
+            &direct_key, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR,
+            NULL, "provider=bee2");
+        BIO *direct_input = BIO_new_mem_buf(data->data, (int)data->length);
+        int direct_ok = direct && direct_input &&
+            OSSL_DECODER_CTX_set_passphrase(direct, pass, passlen) &&
+            OSSL_DECODER_from_bio(direct, direct_input) > 0;
+        fprintf(stderr, "BIGN PKCS#8 decoder diagnostic: provider-only=%d\\n", direct_ok);
+        EVP_PKEY_free(direct_key);
+        BIO_free(direct_input);
+        OSSL_DECODER_CTX_free(direct);
+    }
 
 cleanup:
     BIO_free(input);
