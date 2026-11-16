@@ -9,7 +9,6 @@
 #include <openssl/objects.h>
 #include <openssl/rand.h>
 #include <limits.h>
-#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -177,6 +176,40 @@ static size_t asn_length(const ASN1_STRING *value)
 #endif
 }
 
+
+int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
+{
+    const X509_ALGOR *alg = NULL;
+    const ASN1_OCTET_STRING *ciphertext = NULL;
+    const ASN1_OBJECT *obj = NULL;
+    const void *value = NULL;
+    PBE2PARAM *pbe = NULL;
+    int type, recognised = 0;
+    size_t key_len;
+
+    if (encrypted == NULL)
+        return 0;
+    X509_SIG_get0(encrypted, &alg, &ciphertext);
+    if (alg == NULL || ciphertext == NULL)
+        return 0;
+    X509_ALGOR_get0(&obj, &type, &value, alg);
+    if (!oid_is(obj, BEE2_OID_PBES2) ||
+        type != V_ASN1_SEQUENCE || value == NULL)
+        return 0;
+    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
+    if (pbe != NULL && pbe->encryption != NULL) {
+        X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
+        for (key_len = 16; key_len <= 32; key_len += 8) {
+            if (oid_is(obj, kwp_oid(key_len))) {
+                recognised = 1;
+                break;
+            }
+        }
+    }
+    PBE2PARAM_free(pbe);
+    return recognised;
+}
+
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
                                             const unsigned char *password,
                                             size_t password_len, int *recognised)
@@ -194,7 +227,6 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     size_t salt_len, wrapped_len, plain_len, key_len = 0, k;
     long iter;
     int type = V_ASN1_UNDEF;
-    int stage = 0;
 
     if (recognised == NULL)
         return NULL;
@@ -207,7 +239,6 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     X509_ALGOR_get0(&obj, &type, &value, alg);
     if (!oid_is(obj, BEE2_OID_PBES2) || type != V_ASN1_SEQUENCE || value == NULL)
         return NULL;
-    stage = 1;
     pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
     if (pbe == NULL || pbe->encryption == NULL || pbe->keyfunc == NULL)
         goto end;
@@ -221,13 +252,11 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     }
     if (!*recognised)
         goto end;
-    stage = 2;
     if (type != V_ASN1_UNDEF && type != V_ASN1_NULL)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->keyfunc);
     if (!oid_is(obj, BEE2_OID_PBKDF2) || type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
-    stage = 3;
     kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
     if (kdf == NULL || kdf->salt == NULL || kdf->iter == NULL || kdf->prf == NULL ||
         kdf->salt->type != V_ASN1_OCTET_STRING ||
@@ -239,7 +268,6 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
         goto end;
     if (kdf->keylength != NULL && ASN1_INTEGER_get(kdf->keylength) != (long)key_len)
         goto end;
-    stage = 4;
     iter = ASN1_INTEGER_get(kdf->iter);
     salt_len = asn_length(kdf->salt->value.octet_string);
     wrapped_len = asn_length(ciphertext);
@@ -255,13 +283,10 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     plain = OPENSSL_malloc(plain_len);
     if (plain == NULL)
         goto end;
-    stage = 5;
     if (beltPBKDF2(derived, password, password_len, (size_t)iter, salt, salt_len) != ERR_OK)
         goto end;
-    stage = 6;
     if (beltKWPUnwrap(plain, wrapped, wrapped_len, NULL, derived, key_len) != ERR_OK)
         goto end;
-    stage = 7;
     p = plain;
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)plain_len);
     if (p8 != NULL && p != plain + plain_len) {
@@ -270,8 +295,6 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     }
 
 end:
-    if (p8 == NULL)
-        fprintf(stderr, "DEBUG: STB PBES2 stage=%d recognised=%d\n", stage, *recognised);
     OPENSSL_cleanse(derived, sizeof(derived));
     if (plain != NULL)
         OPENSSL_clear_free(plain, wrapped_len - 16);

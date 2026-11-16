@@ -15,7 +15,6 @@
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 
 #define BIGN_PEM_LABEL "PRIVATE KEY"
@@ -1300,7 +1299,6 @@ static int bign_decoder_decode(void *vctx,
                                OSSL_PASSPHRASE_CALLBACK *pw_cb,
                                void *pw_cbarg) {
     bee2_bign_decoder_ctx_t *ctx = vctx;
-    fprintf(stderr, "DEBUG: BIGN decoder called selection=%d\n", selection);
     if (!ctx || !data_cb)
         return 0;
 
@@ -1312,8 +1310,6 @@ static int bign_decoder_decode(void *vctx,
     if (bio == NULL)
         return 0;
     read_ok = read_one_object(bio, &buf, &len);
-    fprintf(stderr, "DEBUG: BIGN core BIO read=%d bytes=%zu eof=%d retry=%d\\n",
-            read_ok, len, BIO_eof(bio), BIO_should_retry(bio));
     BIO_free(bio);
     if (!read_ok)
         return 0;
@@ -1376,8 +1372,6 @@ static int bign_decoder_decode(void *vctx,
     }
 
     if (!decoded) {
-        fprintf(stderr, "DEBUG: BIGN decoder rejected input PEM=%d bytes=%zu\n",
-                is_pem, der_len);
         bee2_bign_key_free(key);
         if (der != buf)
             OPENSSL_clear_free(der, der_len);
@@ -1423,6 +1417,89 @@ static int bign_decoder_export_object(void *vctx,
         return 0;
 
     return bign_export_key_params(key, export_cb, export_cbarg);
+}
+
+
+/* The OpenSSL DER decoder chain first unwraps EncryptedPrivateKeyInfo and
+ * then passes an ordinary PrivateKeyInfo to the key-type decoder. The default
+ * unwrap decoder cannot handle HMAC-HBELT, so provide a DER -> DER step for
+ * STB PBES2 without changing the standard decoder or intercepting other keys. */
+static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
+                                OSSL_CALLBACK *data_cb, void *data_cbarg,
+                                OSSL_PASSPHRASE_CALLBACK *pw_cb, void *pw_cbarg)
+{
+    bee2_bign_decoder_ctx_t *ctx = vctx;
+    BIO *bio = NULL;
+    unsigned char *buf = NULL, *plain_der = NULL;
+    const unsigned char *p;
+    X509_SIG *encrypted = NULL;
+    PKCS8_PRIV_KEY_INFO *p8 = NULL;
+    const ASN1_OBJECT *key_oid = NULL;
+    char password[PEM_BUFSIZE] = {0};
+    char key_type[128];
+    size_t password_len = 0, len = 0;
+    int plain_len, obj_type = OSSL_OBJECT_PKEY, recognised = 0;
+    int ok = 0;
+
+    (void)selection;
+    if (ctx == NULL || in == NULL || data_cb == NULL)
+        return 0;
+    bio = BIO_new_from_core_bio(ctx->libctx, in);
+    if (bio == NULL || !read_one_object(bio, &buf, &len))
+        goto end;
+    if (len == 0) {
+        ok = 1;
+        goto end;
+    }
+
+    p = buf;
+    ERR_set_mark();
+    encrypted = d2i_X509_SIG(NULL, &p, (long)len);
+    ERR_pop_to_mark();
+    if (encrypted == NULL || p != buf + len ||
+        !bee2_stb_pbes2_is_stb(encrypted)) {
+        /* Let the ordinary OpenSSL decoders handle other key containers. */
+        ok = 1;
+        goto end;
+    }
+    if (pw_cb == NULL || !pw_cb(password, sizeof(password), &password_len,
+                               NULL, pw_cbarg) ||
+        password_len > sizeof(password))
+        goto end;
+    p8 = bee2_stb_pbes2_decrypt(encrypted,
+                                (const unsigned char *)password,
+                                password_len, &recognised);
+    if (!recognised || p8 == NULL ||
+        !PKCS8_pkey_get0(&key_oid, NULL, NULL, NULL, p8) ||
+        key_oid == NULL ||
+        OBJ_obj2txt(key_type, sizeof(key_type), key_oid, 1) <= 0)
+        goto end;
+    plain_len = i2d_PKCS8_PRIV_KEY_INFO(p8, &plain_der);
+    if (plain_len <= 0 || plain_der == NULL)
+        goto end;
+
+    {
+        OSSL_PARAM params[] = {
+            OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, key_type, 0),
+            OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_INPUT_TYPE, "DER", 0),
+            OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, "PrivateKeyInfo", 0),
+            OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA, plain_der, (size_t)plain_len),
+            OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
+            OSSL_PARAM_END
+        };
+
+        ok = data_cb(params, data_cbarg);
+    }
+
+end:
+    OPENSSL_cleanse(password, sizeof(password));
+    if (plain_der != NULL)
+        OPENSSL_clear_free(plain_der, plain_len > 0 ? (size_t)plain_len : 0);
+    PKCS8_PRIV_KEY_INFO_free(p8);
+    X509_SIG_free(encrypted);
+    OPENSSL_clear_free(buf, len);
+    BIO_free(bio);
+    return ok;
 }
 
 #define BIGN_CODEC_NEWCTX(BITS) \
@@ -1489,6 +1566,12 @@ const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
     {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
     {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},
     {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object},
+    {0, NULL}};
+
+const OSSL_DISPATCH bee2_stb_epki_decoder_functions[] = {
+    {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
+    {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
+    {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bign_stb_epki_decode},
     {0, NULL}};
 
 const OSSL_DISPATCH bee2_bign_decoder_functions[] = {
