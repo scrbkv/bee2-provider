@@ -173,7 +173,8 @@ than new redundant test binaries: BIGN raw/BAKE derived secret equality after
 updated BELT-MAC copy via `EVP_MAC_CTX_dup`, and `EVP_KDF_reset` with required
 parameter reinstallation and deterministic repeatability.
 
-The BIGN engine interoperability script also cross-loads both generated
-PKCS#8 private keys in OpenSSL 1.1.1/3.x, signs using either backend with either
-key and verifies every signature with both implementations. The existing CSR,
-X.509 and explicit-parameter scenarios remain unchanged.
+BIGN signature and parameter-contract tests now exercise the generic
+`bign` alias using an explicit named curve for key import, signing and
+verification, as well as key generation from an existing BIGN key's domain
+parameters. These exercise distinct provider dispatch paths rather than
+repeating fixed-curve KATs.

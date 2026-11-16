@@ -238,6 +238,52 @@ cleanup:
     return ok;
 }
 
+
+/* The generic BIGN key-management/signature aliases must work with an
+ * explicitly selected curve, independently of the fixed bign-256 alias. */
+static int run_generic_bign_sign(void)
+{
+    EVP_PKEY_CTX *import = NULL, *sign = NULL, *verify = NULL;
+    EVP_PKEY *key = NULL;
+    unsigned char private_key[32] = {3, 1, 4, 1};
+    unsigned char digest[32] = {1, 9, 7, 7};
+    unsigned char signature[48];
+    size_t signature_len = sizeof(signature);
+    char group[] = "bign-256";
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, group, sizeof(group)),
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, private_key, sizeof(private_key)),
+        OSSL_PARAM_END
+    };
+    int ok = 0;
+
+    import = EVP_PKEY_CTX_new_from_name(NULL, "bign", "provider=bee2");
+    if (!import || EVP_PKEY_fromdata_init(import) <= 0 ||
+        EVP_PKEY_fromdata(import, &key, EVP_PKEY_KEYPAIR, params) <= 0)
+        goto done;
+    sign = EVP_PKEY_CTX_new_from_pkey(NULL, key, "provider=bee2");
+    verify = EVP_PKEY_CTX_new_from_pkey(NULL, key, "provider=bee2");
+    if (!sign || !verify || EVP_PKEY_sign_init(sign) <= 0 ||
+        EVP_PKEY_sign(sign, signature, &signature_len, digest, sizeof(digest)) <= 0 ||
+        EVP_PKEY_verify_init(verify) <= 0 ||
+        EVP_PKEY_verify(verify, signature, signature_len, digest, sizeof(digest)) <= 0)
+        goto done;
+    digest[0] ^= 1u;
+    if (EVP_PKEY_verify(verify, signature, signature_len, digest, sizeof(digest)) > 0)
+        goto done;
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "Generic BIGN signature alias failed\n");
+    EVP_PKEY_CTX_free(verify);
+    EVP_PKEY_CTX_free(sign);
+    EVP_PKEY_CTX_free(import);
+    EVP_PKEY_free(key);
+    OPENSSL_cleanse(private_key, sizeof(private_key));
+    OPENSSL_cleanse(signature, sizeof(signature));
+    return ok;
+}
+
 static int should_run_alg(const char *selected_alg, const char *alg_name) {
     return selected_alg == NULL || strcmp(selected_alg, alg_name) == 0;
 }
@@ -277,7 +323,8 @@ int main(int argc, char **argv) {
             continue;
         ran = 1;
         if (!run_sign_verify_case(&cases[i], (unsigned char)(0x21u + i * 0x11u)) ||
-            !run_digest_streaming_case(&cases[i], (unsigned char)(0x21u + i * 0x11u)))
+            !run_digest_streaming_case(&cases[i], (unsigned char)(0x21u + i * 0x11u)) ||
+            (i == 0 && !run_generic_bign_sign()))
             goto cleanup;
     }
     if (!ran) {

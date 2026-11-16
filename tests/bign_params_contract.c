@@ -128,6 +128,24 @@ end:
     return ok;
 }
 
+
+static int check_keygen_from_template(EVP_PKEY *template)
+{
+    EVP_PKEY_CTX *gen = EVP_PKEY_CTX_new_from_pkey(
+        NULL, template, "provider=bee2");
+    EVP_PKEY *generated = NULL;
+    int ok = gen != NULL && EVP_PKEY_keygen_init(gen) > 0 &&
+             EVP_PKEY_keygen(gen, &generated) > 0 &&
+             EVP_PKEY_get_bits(generated) == EVP_PKEY_get_bits(template) &&
+             EVP_PKEY_eq(generated, template) == 0;
+
+    EVP_PKEY_free(generated);
+    EVP_PKEY_CTX_free(gen);
+    if (!ok)
+        fprintf(stderr, "BIGN key generation from template failed\n");
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *const names[] = {"bign-256", "bign-384", "bign-512"};
@@ -151,7 +169,7 @@ int main(int argc, char **argv)
         alice = generate_key(names[i]);
         bob = generate_key(names[i]);
         if (alice == NULL || bob == NULL || !check_key_params(alice) ||
-            !check_exchange_params(alice, bob)) {
+            !check_exchange_params(alice, bob) || !check_keygen_from_template(alice)) {
             fprintf(stderr, "BIGN parameter rollback failed for %s\n", names[i]);
             goto end;
         }
