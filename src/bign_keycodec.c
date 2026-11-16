@@ -1430,14 +1430,16 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
 {
     bee2_bign_decoder_ctx_t *ctx = vctx;
     BIO *bio = NULL;
-    unsigned char *buf = NULL, *plain_der = NULL;
+    unsigned char *buf = NULL, *plain_der = NULL, *converted = NULL;
+    const unsigned char *payload = NULL;
+    char *pem_name = NULL;
     const unsigned char *p;
     X509_SIG *encrypted = NULL;
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
     const ASN1_OBJECT *key_oid = NULL;
     char password[PEM_BUFSIZE] = {0};
     char key_type[128];
-    size_t password_len = 0, len = 0;
+    size_t password_len = 0, len = 0, payload_len = 0;
     int plain_len = 0, obj_type = OSSL_OBJECT_PKEY, recognised = 0;
     int ok = 0;
 
@@ -1452,11 +1454,26 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         goto end;
     }
 
-    p = buf;
+    if (buf[0] == 0x30) {
+        payload = buf;
+        payload_len = len;
+    } else {
+        converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
+        if (converted == NULL || payload_len == 0 ||
+            (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) != 0 &&
+             strcmp(pem_name, BIGN_PEM_LABEL) != 0 &&
+             strcmp(pem_name, BIGN_PUB_PEM_LABEL) != 0)) {
+            ok = 1;
+            goto end;
+        }
+        payload = converted;
+    }
+
+    p = payload;
     ERR_set_mark();
-    encrypted = d2i_X509_SIG(NULL, &p, (long)len);
+    encrypted = d2i_X509_SIG(NULL, &p, (long)payload_len);
     ERR_pop_to_mark();
-    if (encrypted == NULL || p != buf + len ||
+    if (encrypted == NULL || p != payload + payload_len ||
         !bee2_stb_pbes2_is_stb(encrypted)) {
         PKCS8_PRIV_KEY_INFO *plain_p8 = NULL;
         X509_PUBKEY *pub = NULL;
@@ -1468,20 +1485,20 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
         /* The first DER-to-DER decoder may consume a nonseekable BIO.
          * Recognised plain BIGN keys must therefore pass through here as
          * well, without requiring another attempt to read the original BIO. */
-        p = buf;
+        p = payload;
         ERR_set_mark();
-        plain_p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
+        plain_p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)payload_len);
         ERR_pop_to_mark();
-        if (plain_p8 != NULL && p == buf + len &&
+        if (plain_p8 != NULL && p == payload + payload_len &&
             PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8) &&
             oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
             structure = "PrivateKeyInfo";
         } else {
-            p = buf;
+            p = payload;
             ERR_set_mark();
-            pub = d2i_X509_PUBKEY(NULL, &p, (long)len);
+            pub = d2i_X509_PUBKEY(NULL, &p, (long)payload_len);
             ERR_pop_to_mark();
-            if (pub != NULL && p == buf + len &&
+            if (pub != NULL && p == payload + payload_len &&
                 X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub) &&
                 oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
                 structure = "SubjectPublicKeyInfo";
@@ -1490,7 +1507,8 @@ static int bign_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
             OSSL_PARAM params[] = {
                 OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, bign_name, 0),
                 OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0),
-                OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA, buf, len),
+                OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA,
+                                        (void *)payload, payload_len),
                 OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
                 OSSL_PARAM_END
             };
@@ -1538,6 +1556,8 @@ end:
         OPENSSL_clear_free(plain_der, plain_len > 0 ? (size_t)plain_len : 0);
     PKCS8_PRIV_KEY_INFO_free(p8);
     X509_SIG_free(encrypted);
+    OPENSSL_clear_free(converted, payload_len);
+    OPENSSL_free(pem_name);
     OPENSSL_clear_free(buf, len);
     BIO_free(bio);
     return ok;
