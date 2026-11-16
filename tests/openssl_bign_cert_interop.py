@@ -148,6 +148,15 @@ def main() -> int:
             run_checked([bee2evp_openssl, "x509", *bee2evp_backend,
                          "-in", str(cert), "-noout", "-text"], bee2evp_env)
 
+        # -text parses X.509 without verifying signatures.
+        for cert in (provider_cert, bee2evp_cert):
+            for openssl, backend, env in (
+                (provider_openssl, provider_backend, None),
+                (bee2evp_openssl, bee2evp_backend, bee2evp_env),
+            ):
+                run_checked([openssl, "verify", *backend, "-CAfile", str(cert),
+                             str(cert)], env)
+
         message = root / "message.bin"
         message.write_bytes(bytes(range(64)))
         for (label, signer, signer_backend, signer_env, key, verifier,

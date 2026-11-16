@@ -49,3 +49,14 @@ are reproducible and their failures can be meaningfully interpreted.
 Source formatting is not yet enforced by CI. The current `.clang-format`
 configuration is a project-specific LLVM-derived style; review it against
 OpenSSL's conventions before enabling a formatting gate.
+
+## Instrumented source coverage
+
+The `coverage` job compiles provider sources with GCC `--coverage`, runs all
+standard tests and publishes `coverage.html`, `coverage.xml` and
+`coverage-summary.json` for `src/` (excluding Bee2 and harnesses).
+These reports quantify line and branch coverage; passing test counts do not.
+
+The sanitizer job selects every registered CTest except the three Python CLI
+integration tests, preventing new native tests from bypassing instrumentation.
+The engine interop matrix subsumes duplicate fixed-only cipher/MAC/digest cases.

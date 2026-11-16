@@ -59,58 +59,6 @@ if(NOT BEE2_INTEROP_BEE2EVP_OPENSSL_CONF)
         "OPENSSL_CONF used for bee2evp interop commands" FORCE)
 endif()
 
-function(add_bee2_bee2evp_cipher_test test_name provider_name bee2evp_name key_size iv_size data_len)
-    set(spec
-        "cipher|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|${key_size}|${iv_size}|-|-"
-    )
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
-            "${spec}"
-    )
-endfunction()
-
-function(add_bee2_bee2evp_digest_test test_name provider_name bee2evp_name data_len)
-    set(spec
-        "digest|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|0|0|-|-"
-    )
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
-            "${spec}"
-    )
-endfunction()
-
-function(add_bee2_bee2evp_mac_test test_name provider_name bee2evp_name key_size data_len)
-    set(options)
-    set(one_value_args PROVIDER_DIGEST BEE2EVP_DIGEST)
-    cmake_parse_arguments(MAC "${options}" "${one_value_args}" "" ${ARGN})
-
-    set(provider_digest "-")
-    set(bee2evp_digest "-")
-    if(MAC_PROVIDER_DIGEST)
-        set(provider_digest "${MAC_PROVIDER_DIGEST}")
-    endif()
-    if(MAC_BEE2EVP_DIGEST)
-        set(bee2evp_digest "${MAC_BEE2EVP_DIGEST}")
-    endif()
-    set(spec
-        "mac|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|${key_size}|0|${provider_digest}|${bee2evp_digest}"
-    )
-
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
-            "${spec}"
-    )
-endfunction()
-
 function(add_bee2_bee2evp_bign_cert_test test_name provider_alg bee2evp_alg)
     set(options EXPLICIT_BEE2)
     set(one_value_args DAYS)
@@ -136,45 +84,6 @@ function(add_bee2_bee2evp_bign_cert_test test_name provider_alg bee2evp_alg)
             "${spec}"
     )
 endfunction()
-
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_ecb belt-ecb128 belt-ecb128 16 0 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_ecb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_ecb belt-ecb192 belt-ecb192 24 0 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_ecb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_ecb belt-ecb256 belt-ecb256 32 0 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_ecb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_cbc belt-cbc128 belt-cbc128 16 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_cbc)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_cbc belt-cbc192 belt-cbc192 24 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_cbc)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_cbc belt-cbc256 belt-cbc256 32 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_cbc)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_cfb belt-cfb128 belt-cfb128 16 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_cfb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_cfb belt-cfb192 belt-cfb192 24 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_cfb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_cfb belt-cfb256 belt-cfb256 32 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_cfb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_ctr belt-ctr128 belt-ctr128 16 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_ctr)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_ctr belt-ctr192 belt-ctr192 24 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_ctr)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_ctr belt-ctr256 belt-ctr256 32 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_ctr)
-
-add_bee2_bee2evp_mac_test(bee2_bee2evp_interop_mac_belt_mac256 belt-mac256 belt-mac256 32 257)
-set_property(TEST bee2_bee2evp_interop_mac_belt_mac256 APPEND PROPERTY LABELS interop bee2evp mac_belt_mac256)
-add_bee2_bee2evp_mac_test(bee2_bee2evp_interop_mac_belt_hmac belt-hmac belt-hmac 32 257 PROVIDER_DIGEST belt-hash)
-set_property(TEST bee2_bee2evp_interop_mac_belt_hmac APPEND PROPERTY LABELS interop bee2evp mac_belt_hmac)
-
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_belt_hash belt-hash belt-hash 257)
-set_property(TEST bee2_bee2evp_interop_digest_belt_hash APPEND PROPERTY LABELS interop bee2evp digest_belt_hash)
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_256 bash256 bash256 257)
-set_property(TEST bee2_bee2evp_interop_digest_bash_256 APPEND PROPERTY LABELS interop bee2evp digest_bash_256)
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_384 bash384 bash384 257)
-set_property(TEST bee2_bee2evp_interop_digest_bash_384 APPEND PROPERTY LABELS interop bee2evp digest_bash_384)
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_512 bash512 bash512 257)
-set_property(TEST bee2_bee2evp_interop_digest_bash_512 APPEND PROPERTY LABELS interop bee2evp digest_bash_512)
 
 add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_256 bign-256 bign-256 DAYS 30)
 set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_256 APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_256)
@@ -501,12 +410,18 @@ if(BEE2_PROVIDER_ENABLE_INTEROP)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_matrix.py "${spec}")
         set_tests_properties(${test_name} PROPERTIES LABELS "interop;bee2evp;matrix")
     endforeach()
-    foreach(name IN ITEMS belt-mac256 belt-hmac)
+    foreach(name IN ITEMS belt-mac128 belt-mac192 belt-mac256 belt-hmac)
         set(digest "-")
         if(name STREQUAL "belt-hmac")
             set(digest "belt-hash")
         endif()
-        set(spec "mac|${interop_prefix}|${name}|${name}|257|32|0|${digest}|-")
+        set(key_len 32)
+        if(name STREQUAL "belt-mac128")
+            set(key_len 16)
+        elseif(name STREQUAL "belt-mac192")
+            set(key_len 24)
+        endif()
+        set(spec "mac|${interop_prefix}|${name}|${name}|257|${key_len}|0|${digest}|-")
         set(test_name "bee2_interop_matrix_${name}")
         string(REPLACE "-" "_" test_name "${test_name}")
         add_test(NAME ${test_name}

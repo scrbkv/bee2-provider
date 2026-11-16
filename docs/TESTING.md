@@ -115,3 +115,16 @@ KATs check the standard's 256-bit ciphertext examples.
 
 The provider uses Bee2 `beltKeyExpand2()` with `u32To()` to expand
 keys; tests verify its output against the normative STB values.
+
+## Instrumented provider coverage
+
+Configure with `-DBEE2_PROVIDER_ENABLE_COVERAGE=ON` (GCC and tests required),
+run the full CTest suite, then generate gcovr reports restricted to `src/`.
+GitHub Actions publishes per-line HTML, XML and JSON summary artifacts. Only
+the provider, not Bee2, is instrumented. The measured percentage is not the
+same as the percentage of tests that pass. No unreachable branches should be
+silently excluded merely to improve the number.
+
+The engine matrix replaces duplicate fixed-only cipher/MAC/digest cases.
+BIGN CSR/certificate interop verifies certificate signatures using both
+implementations rather than merely printing their ASN.1 descriptions.
