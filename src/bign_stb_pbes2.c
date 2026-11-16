@@ -210,6 +210,49 @@ int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
     return recognised;
 }
 
+
+/* Only bounded PBKDF2 is attempted by the BIGN legacy PBES2 fallback.
+ * Other KDFs are left to OpenSSL's normal decoder chain. */
+int bee2_stb_pbes2_legacy_pbkdf2_allowed(const X509_SIG *encrypted,
+                                          unsigned int max_iterations)
+{
+    const X509_ALGOR *alg = NULL;
+    const ASN1_OCTET_STRING *ciphertext = NULL;
+    const ASN1_OBJECT *oid = NULL;
+    const void *value = NULL;
+    PBE2PARAM *pbe = NULL;
+    PBKDF2PARAM *kdf = NULL;
+    long iterations;
+    int type, allowed = 0;
+
+    if (!encrypted || max_iterations == 0)
+        return 0;
+    X509_SIG_get0(encrypted, &alg, &ciphertext);
+    if (!alg || !ciphertext)
+        return 0;
+    X509_ALGOR_get0(&oid, &type, &value, alg);
+    if (!oid_is(oid, BEE2_OID_PBES2) ||
+        type != V_ASN1_SEQUENCE || !value)
+        return 0;
+    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
+    if (!pbe || !pbe->keyfunc)
+        goto end;
+    X509_ALGOR_get0(&oid, &type, &value, pbe->keyfunc);
+    if (!oid_is(oid, BEE2_OID_PBKDF2) ||
+        type != V_ASN1_SEQUENCE || !value)
+        goto end;
+    kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
+    if (!kdf || !kdf->iter)
+        goto end;
+    iterations = ASN1_INTEGER_get(kdf->iter);
+    allowed = iterations > 0 && (unsigned long)iterations <= max_iterations;
+
+end:
+    PBKDF2PARAM_free(kdf);
+    PBE2PARAM_free(pbe);
+    return allowed;
+}
+
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
                                             const unsigned char *password,
                                             size_t password_len,

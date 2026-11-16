@@ -15,6 +15,10 @@
 /* Check the PBES2 encryption OID without requesting a password. */
 int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted);
 
+/* Bound the work of the provider's legacy PBES2/PBKDF2 fallback. */
+int bee2_stb_pbes2_legacy_pbkdf2_allowed(const X509_SIG *encrypted,
+                                          unsigned int max_iterations);
+
 /* DER-encoded EncryptedPrivateKeyInfo, allocated with OPENSSL_malloc(). */
 unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
                                       const unsigned char *password, size_t password_len,

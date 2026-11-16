@@ -48,16 +48,19 @@ encoder context parameters via `OSSL_ENCODER_CTX_set_params()`. Values below
 limits enforce the *recommendations* from STB Annex E as an output policy;
 Bee2's standalone `belt-pbkdf` primitive still supports all standard-defined
 inputs, including smaller test-vector parameters. Older OpenSSL-generated
-PBES2 containers remain readable, but new encrypted PKCS#8 files use the
-STB-algorithm profile. Interoperability with third-party PKCS#8 implementations
+PBES2/PBKDF2 containers remain readable through the provider's bounded legacy
+decoder; other legacy KDFs are handled, when supported, by OpenSSL's normal
+decoder chain. New encrypted PKCS#8 files use the STB-algorithm profile. Interoperability with third-party PKCS#8 implementations
 requires support for these STB algorithm identifiers.
 
 STB PKCS#8 decoding limits PBKDF2 to 1,000,000 iterations by default to
 bound the work requested by untrusted containers. Applications needing a
 larger limit can set the `stb-pbkdf2-max-decode-iterations` (uint) decoder
 context parameter using `OSSL_DECODER_CTX_set_params()`; values from
-10,000 through `INT_MAX` are supported. This limit does not change the
-encoder's configurable iteration count or OpenSSL's handling of non-STB PBES2.
+10,000 through `INT_MAX` are supported. The provider applies this limit to its own STB decoder and to its
+legacy PBES2/PBKDF2 fallback, before deriving the key. It does not change
+the encoder's iteration count or impose a global limit on OpenSSL's separate
+decoders.
 The `bign-with-hspec` digest is selected independently of the signature
 provider query; set `OSSL_SIGNATURE_PARAM_PROPERTIES` to constrain its fetch.
 

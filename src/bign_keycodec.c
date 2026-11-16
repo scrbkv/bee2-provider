@@ -696,7 +696,8 @@ static int decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
         goto clear_password;
     p8 = bee2_stb_pbes2_decrypt(encrypted, (const unsigned char *)password,
                                 password_len, max_pbkdf2_iterations, &recognised);
-    if (!recognised && p8 == NULL)
+    if (!recognised && p8 == NULL &&
+        bee2_stb_pbes2_legacy_pbkdf2_allowed(encrypted, max_pbkdf2_iterations))
         p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
     if (p8)
         ok = decode_pkcs8_info(p8, expected, key);

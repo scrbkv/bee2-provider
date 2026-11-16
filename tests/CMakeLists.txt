@@ -510,6 +510,19 @@ if(BEE2_PROVIDER_ENABLE_INTEROP)
 endif()
 
 # BIGN PKCS#8/SPKI cryptographic key serialization in PEM and DER.
+add_executable(bee2_bign_legacy_pbkdf2_limit
+    bign_legacy_pbkdf2_limit.c ${CMAKE_SOURCE_DIR}/src/bign_stb_pbes2.c)
+target_include_directories(bee2_bign_legacy_pbkdf2_limit PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(bee2_bign_legacy_pbkdf2_limit SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/bee2/include)
+target_link_libraries(bee2_bign_legacy_pbkdf2_limit PRIVATE
+    bee2_static OpenSSL::Crypto)
+add_test(NAME bee2_bign_legacy_pbkdf2_limit
+    COMMAND bee2_bign_legacy_pbkdf2_limit)
+set_tests_properties(bee2_bign_legacy_pbkdf2_limit
+    PROPERTIES LABELS "regression;bign;pbkdf2;native")
+
 add_executable(bee2_bign_codec_crypto bign_codec_crypto.c)
 target_link_libraries(bee2_bign_codec_crypto PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bign_codec_crypto

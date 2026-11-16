@@ -87,7 +87,9 @@ blockers, not optional polish.
 The native `bee2_bign_codec_crypto` test checks PBES2 with the HMAC-HBELT PRF
 OID, BELT-KWP-128/192/256 identifiers, caller-selected 12,000 iterations and
 24-byte salt, minimum-parameter rejections, and incorrect password rejection.
-Older OpenSSL PBES2 remains supported by the decoder for backwards compatibility.
+Older OpenSSL PBES2/PBKDF2 remains supported by the bounded legacy fallback.
+The `bee2_bign_legacy_pbkdf2_limit` test rejects over-limit and unsupported
+legacy KDF parameters without performing an expensive password derivation.
 The native test also checks the configurable PBKDF2 decode work limit, and
 `bee2_provider_negative_contract` checks failed BELT-SDE reinitialization.
 

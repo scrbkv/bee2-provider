@@ -272,7 +272,11 @@ static int
 hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM params[]) {
     bee2_hmac_ctx_t *ctx = vctx;
 
-    if (!ctx || !hmac_set_ctx_params(ctx, params))
+    if (!ctx)
+        return 0;
+    /* A failed Init must not leave the preceding MAC operation active. */
+    ctx->initialized = 0;
+    if (!hmac_set_ctx_params(ctx, params))
         return 0;
     if (key) {
         if (!bee2_secret_replace(&ctx->key, &ctx->key_len, key, key_len))

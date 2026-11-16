@@ -36,6 +36,46 @@ static int check_hmac(void)
     return ok;
 }
 
+
+static int check_hmac_failed_reinit(void)
+{
+    EVP_MAC *mac = EVP_MAC_fetch(NULL, "belt-hmac", "provider=bee2");
+    EVP_MAC_CTX *ctx = EVP_MAC_CTX_new(mac);
+    unsigned char key[32] = {0}, output[32], data[] = {1, 2, 3};
+    char invalid_digest[] = "SHA256";
+    size_t output_len = 0, invalid_size = 33;
+    OSSL_PARAM invalid_digest_params[] = {
+        OSSL_PARAM_utf8_string(OSSL_MAC_PARAM_DIGEST, invalid_digest, sizeof(invalid_digest)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM invalid_size_params[] = {
+        OSSL_PARAM_size_t(OSSL_MAC_PARAM_SIZE, &invalid_size),
+        OSSL_PARAM_END
+    };
+    int ok = ctx != NULL &&
+             EVP_MAC_init(ctx, key, sizeof(key), NULL) > 0 &&
+             EVP_MAC_update(ctx, data, sizeof(data)) > 0 &&
+             EVP_MAC_init(ctx, NULL, 0, invalid_digest_params) <= 0 &&
+             EVP_MAC_update(ctx, data, sizeof(data)) <= 0 &&
+             EVP_MAC_final(ctx, output, &output_len, sizeof(output)) <= 0 &&
+             EVP_MAC_init(ctx, NULL, 0, NULL) > 0 &&
+             EVP_MAC_update(ctx, data, sizeof(data)) > 0 &&
+             EVP_MAC_init(ctx, NULL, 0, invalid_size_params) <= 0 &&
+             EVP_MAC_update(ctx, data, sizeof(data)) <= 0 &&
+             EVP_MAC_final(ctx, output, &output_len, sizeof(output)) <= 0 &&
+             EVP_MAC_init(ctx, NULL, 0, NULL) > 0 &&
+             EVP_MAC_update(ctx, data, sizeof(data)) > 0 &&
+             EVP_MAC_final(ctx, output, &output_len, sizeof(output)) > 0 &&
+             output_len == sizeof(output);
+
+    if (!ok)
+        fprintf(stderr, "Failed HMAC Init left the previous operation active\n");
+    EVP_MAC_CTX_free(ctx);
+    EVP_MAC_free(mac);
+    OPENSSL_cleanse(output, sizeof(output));
+    return ok;
+}
+
 static int check_pbkdf(void)
 {
     EVP_KDF *kdf = EVP_KDF_fetch(NULL, "belt-pbkdf", "provider=bee2");
@@ -212,7 +252,7 @@ int main(int argc, char **argv)
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
     if (def == NULL || bee2 == NULL)
         goto end;
-    ok = check_hmac() && check_pbkdf() && check_bign_digest() &&
+    ok = check_hmac() && check_hmac_failed_reinit() && check_pbkdf() && check_bign_digest() &&
          check_belt_cipher() && check_bash_prgae();
 end:
     OSSL_PROVIDER_unload(bee2);

@@ -139,7 +139,7 @@ jobs:
       - name: Run native C tests with sanitizers
         run: |
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_roundtrip|brng_kat|bign_sign_contract|bign_keyexchange_contract|direct_interop|bign_direct_interop|params_atomicity|provider_negative_contract|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|bash_prgae_stb|bash_prgae_streaming|belt_reinit_padding|bign_transport_contract|digest_oneshot|bign_params_contract|bign_codec_crypto|stb_kat|hmac_bash_crypto|bign_bake_crypto|bign_digest_algorithms|bign_hspec_interop|bash_prgae_evp_stb|provider_algorithms)' \
+            -R '^bee2_(cipher_roundtrip|brng_kat|bign_sign_contract|bign_keyexchange_contract|direct_interop|bign_direct_interop|params_atomicity|provider_negative_contract|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|bash_prgae_stb|bash_prgae_streaming|belt_reinit_padding|bign_transport_contract|digest_oneshot|bign_params_contract|bign_codec_crypto|bign_legacy_pbkdf2_limit|stb_kat|hmac_bash_crypto|bign_bake_crypto|bign_digest_algorithms|bign_hspec_interop|bash_prgae_evp_stb|provider_algorithms)' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
