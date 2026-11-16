@@ -31,7 +31,12 @@ static int inspect(const OSSL_ALGORITHM *alg, OSSL_PROVIDER *provider)
     EVP_CIPHER *cipher = NULL;
     EVP_CIPHER_CTX *evp = NULL;
     int len = 0, final_len = 0, ok = 0;
-    int is_aead;
+    int is_aead, is_padded;
+    unsigned int no_padding = 0;
+    OSSL_PARAM padding_params[] = {
+        OSSL_PARAM_uint(OSSL_CIPHER_PARAM_PADDING, &no_padding),
+        OSSL_PARAM_END
+    };
     char name[80];
     const char *end = strchr(alg->algorithm_names, ':');
     size_t name_len = end ? (size_t)(end - alg->algorithm_names) :
@@ -43,6 +48,8 @@ static int inspect(const OSSL_ALGORITHM *alg, OSSL_PROVIDER *provider)
     name[name_len] = '\0';
     keylen = strstr(name, "128") ? 16 : (strstr(name, "192") ? 24 : 32);
     ivlen = strstr(name, "ecb") ? 0 : (strstr(name, "bash-prg-ae") ? keylen : 16);
+    is_padded = strstr(name, "belt-ecb") != NULL ||
+                strstr(name, "belt-cbc") != NULL;
     is_aead = strstr(name, "bash-prg-ae") != NULL ||
               strstr(name, "belt-che") != NULL ||
               strstr(name, "belt-dwp") != NULL;
@@ -71,7 +78,8 @@ static int inspect(const OSSL_ALGORITHM *alg, OSSL_PROVIDER *provider)
         (taglen && !m.getparams))
         goto done;
     ctx = m.newctx(OSSL_PROVIDER_get0_provider_ctx(provider));
-    if (!ctx || !m.init(ctx, key, keylen, ivlen ? iv : NULL, ivlen, NULL))
+    if (!ctx || !m.init(ctx, key, keylen, ivlen ? iv : NULL, ivlen,
+                        is_padded ? padding_params : NULL))
         goto done;
     clone = m.dupctx(ctx);
     if (!clone ||
