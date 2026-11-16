@@ -3,7 +3,6 @@
 
 #include <limits.h>
 #include <openssl/crypto.h>
-#include <openssl/rand.h>
 #include <string.h>
 
 #define BEE2_PKEY_PARAM_ENC_PARAMS "enc_params"
@@ -15,11 +14,6 @@ typedef struct {
     int encode_explicit;
     int encode_cofactor;
 } bee2_bign_gen_ctx_t;
-
-typedef struct {
-    OSSL_LIB_CTX *libctx;
-    int failed;
-} bee2_bign_rng_t;
 
 static const OSSL_PARAM bee2_bign_keymgmt_impexp_types[] = {
     OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
@@ -310,7 +304,7 @@ static const OSSL_PARAM *bign_gettable_params(void *provctx) {
     return bee2_bign_keymgmt_gettable_params;
 }
 
-static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
+int bee2_bign_import_params(void *vkey, int selection, const OSSL_PARAM params[]) {
     bee2_bign_key_t *key = vkey;
     bee2_bign_key_t candidate;
     const OSSL_PARAM *p;
@@ -370,29 +364,27 @@ static int bign_import(void *vkey, int selection, const OSSL_PARAM params[]) {
     if ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && !candidate.has_priv)
         goto cleanup;
 
-    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !candidate.has_pub) {
-        if (!candidate.has_priv)
-            goto cleanup;
-        if (!bee2_bign_derive_pubkey(candidate.variant, candidate.pub, candidate.priv))
-            goto cleanup;
-        candidate.has_pub = 1;
-    }
-
     if (!have_priv_in && !have_pub_in && !(selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS))
         goto cleanup;
-
-    if (candidate.has_pub && !bee2_bign_key_validate_public(&candidate))
-        goto cleanup;
-    if (candidate.has_priv && candidate.has_pub && !bee2_bign_key_validate_pair(&candidate))
-        goto cleanup;
-    if (candidate.has_priv && !candidate.has_pub) {
+    if (candidate.has_priv) {
         unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
         int valid = bee2_bign_derive_pubkey(candidate.variant, derived, candidate.priv);
 
+        if (valid && candidate.has_pub)
+            valid = bee2_constant_time_equal(derived, candidate.pub, pub_len);
+        if (valid && !candidate.has_pub &&
+            (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) {
+            memcpy(candidate.pub, derived, pub_len);
+            candidate.has_pub = 1;
+        }
         bee2_bign_cleanse(derived, sizeof(derived));
         if (!valid)
             goto cleanup;
+    } else if (candidate.has_pub && !bee2_bign_key_validate_public(&candidate)) {
+        goto cleanup;
     }
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !candidate.has_pub)
+        goto cleanup;
 
     *key = candidate;
     ok = 1;
@@ -416,7 +408,7 @@ static const OSSL_PARAM *bign_import_types_ex(void *provctx, int selection) {
 
 #endif
 
-static int bign_export(void *vkey, int selection, OSSL_CALLBACK *param_cb, void *cbarg) {
+int bee2_bign_export_params(void *vkey, int selection, OSSL_CALLBACK *param_cb, void *cbarg) {
     const bee2_bign_key_t *key = vkey;
     OSSL_PARAM params[6];
     unsigned char derived[BEE2_BIGN_MAX_WORDS * 16] = {0};
@@ -612,17 +604,6 @@ static const OSSL_PARAM *bign_gen_settable_params(void *genctx, void *provctx) {
     return bee2_bign_gen_settable_params;
 }
 
-static void bee2_bign_openssl_rng(void *buf, size_t count, void *state) {
-    bee2_bign_rng_t *rng = state;
-
-    if (rng == NULL || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
-        if (buf != NULL)
-            bee2_bign_cleanse(buf, count);
-        if (rng != NULL)
-            rng->failed = 1;
-    }
-}
-
 static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     bee2_bign_gen_ctx_t *gctx = vgenctx;
     bee2_bign_key_t *key = NULL;
@@ -638,7 +619,6 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
         return NULL;
     rng.libctx = gctx->libctx;
 
-    OPENSSL_cleanse(&curve, sizeof(curve));
     key = bign_new_common(gctx->variant);
     if (!key)
         goto cleanup;
@@ -747,10 +727,10 @@ static const char *bign_query_operation_name(int operation_id) {
         {OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))bign_match}, \
         {OSSL_FUNC_KEYMGMT_VALIDATE, (void (*)(void))bign_validate}, \
         {OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))bign_load}, \
-        {OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))bign_import}, \
+        {OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))bee2_bign_import_params}, \
         {OSSL_FUNC_KEYMGMT_IMPORT_TYPES, (void (*)(void))bign_import_types}, \
         BEE2_BIGN_KEYMGMT_IMPORT_TYPES_EX_DISPATCH{OSSL_FUNC_KEYMGMT_EXPORT, \
-                                                   (void (*)(void))bign_export}, \
+                                                   (void (*)(void))bee2_bign_export_params}, \
         {OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))bign_export_types}, \
         BEE2_BIGN_KEYMGMT_EXPORT_TYPES_EX_DISPATCH{OSSL_FUNC_KEYMGMT_DUP, \
                                                    (void (*)(void))bign_dup}, \
@@ -778,10 +758,10 @@ const OSSL_DISPATCH bee2_bign_keymgmt_functions[] = {
     {OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))bign_match},
     {OSSL_FUNC_KEYMGMT_VALIDATE, (void (*)(void))bign_validate},
     {OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))bign_load},
-    {OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))bign_import},
+    {OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))bee2_bign_import_params},
     {OSSL_FUNC_KEYMGMT_IMPORT_TYPES, (void (*)(void))bign_import_types},
     BEE2_BIGN_KEYMGMT_IMPORT_TYPES_EX_DISPATCH{OSSL_FUNC_KEYMGMT_EXPORT,
-                                               (void (*)(void))bign_export},
+                                               (void (*)(void))bee2_bign_export_params},
     {OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))bign_export_types},
     BEE2_BIGN_KEYMGMT_EXPORT_TYPES_EX_DISPATCH{OSSL_FUNC_KEYMGMT_DUP, (void (*)(void))bign_dup},
     {OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME, (void (*)(void))bign_query_operation_name},

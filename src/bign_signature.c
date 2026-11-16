@@ -11,7 +11,6 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
-#include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <string.h>
 
@@ -41,11 +40,6 @@ typedef struct {
     char hash_oid[96];
     int md_started;
 } bee2_bign_sig_ctx_t;
-
-typedef struct {
-    OSSL_LIB_CTX *libctx;
-    int failed;
-} bee2_bign_sig_rng_t;
 
 static const OSSL_PARAM bee2_bign_sig_gettable_ctx_params[] = {
     OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_ALGORITHM_ID, NULL, 0),
@@ -302,17 +296,6 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
 
 static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]);
 
-static void bign_sig_openssl_rng(void *buf, size_t count, void *state) {
-    bee2_bign_sig_rng_t *rng = state;
-
-    if (!rng || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
-        if (buf)
-            bee2_bign_cleanse(buf, count);
-        if (rng)
-            rng->failed = 1;
-    }
-}
-
 static int bign_sig_assign_key(bee2_bign_sig_ctx_t *ctx, void *vkey, int for_sign) {
     bee2_bign_key_t *key = vkey;
     const bee2_bign_variant_t *variant;
@@ -341,28 +324,13 @@ static int bign_sig_hash_oneshot(const EVP_MD *md,
                                  size_t inlen,
                                  unsigned char out[EVP_MAX_MD_SIZE],
                                  size_t *outlen) {
-    EVP_MD_CTX *mctx = NULL;
     unsigned int mdlen = 0;
-    int ok = 0;
 
-    if (!md || !out || !outlen)
+    if (!md || !out || !outlen || (inlen != 0 && in == NULL) ||
+        !EVP_Digest(in, inlen, out, &mdlen, md, NULL))
         return 0;
-    mctx = EVP_MD_CTX_new();
-    if (!mctx)
-        goto cleanup;
-
-    if (!EVP_DigestInit_ex2(mctx, md, NULL))
-        goto cleanup;
-    if (inlen > 0 && !EVP_DigestUpdate(mctx, in, inlen))
-        goto cleanup;
-    if (!EVP_DigestFinal_ex(mctx, out, &mdlen))
-        goto cleanup;
     *outlen = (size_t)mdlen;
-    ok = 1;
-
-cleanup:
-    EVP_MD_CTX_free(mctx);
-    return ok;
+    return 1;
 }
 
 static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
@@ -372,7 +340,7 @@ static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
                               const unsigned char *hash,
                               size_t hashlen) {
     bign_params curve;
-    bee2_bign_sig_rng_t rng = {0};
+    bee2_bign_rng_t rng = {0};
     size_t priv_len;
     size_t need_sig_len;
     const char *hash_oid;
@@ -415,7 +383,7 @@ static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
                      oid_der_len,
                      hash,
                      ctx->key->priv,
-                     (gen_i)bign_sig_openssl_rng,
+                     (gen_i)bee2_bign_openssl_rng,
                      &rng) != ERR_OK ||
             rng.failed)
             goto cleanup;
@@ -528,11 +496,11 @@ static void bign_sig_freectx(void *vctx) {
     if (!ctx)
         return;
     bign_sig_reset_md(ctx, 0);
-    bee2_bign_cleanse(ctx, sizeof(*ctx));
     OPENSSL_clear_free(ctx, sizeof(*ctx));
 }
 
-static void *bign_sig_dupctx(void *vctx) {
+/* Init copies configuration without duplicating the unfinished digest. */
+static void *bign_sig_copyctx(void *vctx, int copy_digest_state) {
     bee2_bign_sig_ctx_t *src = vctx;
     bee2_bign_sig_ctx_t *dst;
 
@@ -550,7 +518,7 @@ static void *bign_sig_dupctx(void *vctx) {
     dst->deterministic = src->deterministic;
     dst->hspec = src->hspec;
     memcpy(dst->hash_oid, src->hash_oid, sizeof(dst->hash_oid));
-    dst->md_started = src->md_started;
+    dst->md_started = copy_digest_state ? src->md_started : 0;
     memcpy(dst->propq, src->propq, sizeof(dst->propq));
     if (!bign_str_copy(dst->mdname, sizeof(dst->mdname), src->mdname))
         goto err;
@@ -568,7 +536,7 @@ static void *bign_sig_dupctx(void *vctx) {
         dst->md = src->md;
     }
 
-    if (src->mdctx) {
+    if (copy_digest_state && src->mdctx) {
         dst->mdctx = EVP_MD_CTX_new();
         if (!dst->mdctx)
             goto err;
@@ -582,6 +550,10 @@ err:
     return NULL;
 }
 
+static void *bign_sig_dupctx(void *vctx) {
+    return bign_sig_copyctx(vctx, 1);
+}
+
 static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
                           void *vkey, const OSSL_PARAM params[],
                           int for_sign, int digest_operation) {
@@ -589,7 +561,7 @@ static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
 
     if (!ctx)
         return 0;
-    next = bign_sig_dupctx(ctx);
+    next = bign_sig_copyctx(ctx, 0);
     if (next == NULL)
         goto err;
     if (!bign_sig_assign_key(next, vkey, for_sign) ||

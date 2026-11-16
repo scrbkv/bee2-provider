@@ -48,11 +48,6 @@ static inline int bee2_backend_is_compatible(void) {
            bashHash_keep() <= BEE2_BACKEND_STATE_SIZE && bashPrg_keep() <= BEE2_BACKEND_STATE_SIZE;
 }
 
-static inline void bee2_backend_cleanup(void *ctx, size_t size) {
-    if (ctx)
-        OPENSSL_cleanse(ctx, size);
-}
-
 /* Formatted-key bytes match the bee2evp representation. */
 static inline void bee2_belt_expand_key(const void *key, size_t key_len, octet expanded[32]) {
     u32 words[8];
@@ -84,10 +79,7 @@ typedef bee2_belt_mode_ctx_t belt_bde_ctx_t;
 
 static inline void
 bee2_belt_mode_store_key(bee2_belt_mode_ctx_t *c, const void *key, size_t key_len) {
-    if (key_len == BELT_KEY_SIZE)
-        memcpy(c->key, key, BELT_KEY_SIZE);
-    else
-        bee2_belt_expand_key(key, key_len, c->key);
+    bee2_belt_expand_key(key, key_len, c->key);
     c->key_set = 1;
 }
 
@@ -99,14 +91,6 @@ static inline void belt_ecb_set_key(belt_ecb_ctx_t *c, const void *key, size_t k
     bee2_belt_mode_store_key(c, key, key_len);
     belt_ecb_restart(c);
 }
-static inline void belt_ecb_set_iv(belt_ecb_ctx_t *c, const void *iv, size_t iv_len) {
-    (void)c;
-    (void)iv;
-    (void)iv_len;
-}
-static inline void belt_ecb_init(belt_ecb_ctx_t *c) {
-    memset(c, 0, sizeof(*c));
-}
 static inline void belt_ecb_encrypt(belt_ecb_ctx_t *c, const void *in, size_t blocks, void *out) {
     memmove(out, in, (size_t)blocks * 16u);
     beltECBStepE(out, (size_t)blocks * 16u, &c->state);
@@ -115,14 +99,8 @@ static inline void belt_ecb_decrypt(belt_ecb_ctx_t *c, const void *in, size_t bl
     memmove(out, in, (size_t)blocks * 16u);
     beltECBStepD(out, (size_t)blocks * 16u, &c->state);
 }
-static inline void belt_ecb_cleanup(belt_ecb_ctx_t *c) {
-    bee2_backend_cleanup(c, sizeof(*c));
-}
 
 #define BELT_IV_MODE(PFX, CAMEL, ENCSTEP, DECSTEP) \
-    static inline void PFX##_init(PFX##_ctx_t *c) { \
-        memset(c, 0, sizeof(*c)); \
-    } \
     static inline void PFX##_restart(PFX##_ctx_t *c) { \
         if (c->key_set && c->iv_set) \
             CAMEL##Refresh(&c->state, c->iv); \
@@ -143,9 +121,6 @@ static inline void belt_ecb_cleanup(belt_ecb_ctx_t *c) {
     static inline void PFX##_decrypt(PFX##_ctx_t *c, const void *in, size_t blocks, void *out) { \
         memmove(out, in, (size_t)blocks * 16u); \
         DECSTEP(out, (size_t)blocks * 16u, &c->state); \
-    } \
-    static inline void PFX##_cleanup(PFX##_ctx_t *c) { \
-        bee2_backend_cleanup(c, sizeof(*c)); \
     }
 
 BELT_IV_MODE(belt_cbc, beltCBC, beltCBCStepE, beltCBCStepD)
@@ -174,9 +149,6 @@ belt_ctr_crypt_bytes(belt_ctr_ctx_t *c, const void *in, size_t n, void *out) {
 typedef bee2_belt_mode_ctx_t belt_che_ctx_t;
 typedef bee2_belt_mode_ctx_t belt_dwp_ctx_t;
 #define BELT_AEAD_ADAPTER(PFX, CAMEL) \
-    static inline void PFX##_init(PFX##_ctx_t *c) { \
-        memset(c, 0, sizeof(*c)); \
-    } \
     static inline void PFX##_restart(PFX##_ctx_t *c) { \
         if (c->key_set && c->iv_set) \
             CAMEL##Refresh(&c->state, c->iv); \
@@ -205,9 +177,6 @@ typedef bee2_belt_mode_ctx_t belt_dwp_ctx_t;
     } \
     static inline void PFX##_get_mac(PFX##_ctx_t *c, void *out) { \
         CAMEL##StepG(out, &c->state); \
-    } \
-    static inline void PFX##_cleanup(PFX##_ctx_t *c) { \
-        bee2_backend_cleanup(c, sizeof(*c)); \
     }
 BELT_AEAD_ADAPTER(belt_che, beltCHE)
 BELT_AEAD_ADAPTER(belt_dwp, beltDWP)
@@ -218,18 +187,12 @@ typedef struct {
     unsigned char key[BELT_KEY_SIZE];
     int key_set;
 } belt_mac_ctx_t;
-static inline void belt_mac_init(belt_mac_ctx_t *c) {
-    memset(c, 0, sizeof(*c));
-}
 static inline void belt_mac_restart(belt_mac_ctx_t *c) {
     if (c->key_set)
         beltMACStart(&c->state, c->key, BELT_KEY_SIZE);
 }
 static inline void belt_mac_set_key(belt_mac_ctx_t *c, const void *key, size_t key_len) {
-    if (key_len == BELT_KEY_SIZE)
-        memcpy(c->key, key, BELT_KEY_SIZE);
-    else
-        bee2_belt_expand_key(key, key_len, c->key);
+    bee2_belt_expand_key(key, key_len, c->key);
     c->key_set = 1;
     belt_mac_restart(c);
 }
@@ -239,18 +202,12 @@ static inline void belt_mac_update(belt_mac_ctx_t *c, const void *in, size_t n) 
 static inline void belt_mac_get(belt_mac_ctx_t *c, void *out) {
     beltMACStepG(out, &c->state);
 }
-static inline void belt_mac_cleanup(belt_mac_ctx_t *c) {
-    bee2_backend_cleanup(c, sizeof(*c));
-}
 
 /* HMAC-HBELT. */
 typedef bee2_backend_state_t belt_hmac_ctx_t;
 
 /* BELT SDE. */
 typedef bee2_belt_mode_ctx_t belt_sde_ctx_t;
-static inline void belt_sde_init(belt_sde_ctx_t *c) {
-    memset(c, 0, sizeof(*c));
-}
 static inline void belt_sde_restart(belt_sde_ctx_t *c) {
     if (c->key_set)
         beltSDEStart(&c->state, c->key, BELT_KEY_SIZE);
@@ -271,9 +228,6 @@ static inline void belt_sde_encrypt(belt_sde_ctx_t *c, const void *in, size_t bl
 static inline void belt_sde_decrypt(belt_sde_ctx_t *c, const void *in, size_t blocks, void *out) {
     memmove(out, in, (size_t)blocks * 16u);
     beltSDEStepD(out, (size_t)blocks * 16u, c->iv, &c->state);
-}
-static inline void belt_sde_cleanup(belt_sde_ctx_t *c) {
-    bee2_backend_cleanup(c, sizeof(*c));
 }
 
 /* BASH-PRG-AE adapters used by the existing provider implementation. */

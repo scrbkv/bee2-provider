@@ -9,7 +9,7 @@
  *
  * NOTE: All provider-side functions are prefixed with provider_belt_mac_ to
  * avoid name collisions with the provider-local Bee2 adapter functions
- * (belt_mac_init, belt_mac_update, etc.).
+ * (belt_mac_restart, belt_mac_update, etc.).
  */
 
 #include "bee2_backend.h"
@@ -39,7 +39,6 @@ static void *provider_belt_mac_newctx_with_key_length(void *provctx, size_t key_
     if (!c)
         return NULL;
     c->fixed_key_len = key_len;
-    belt_mac_init(&c->backend_state);
     return c;
 }
 
@@ -57,7 +56,6 @@ static void provider_belt_mac_freectx(void *vctx) {
     bee2_belt_mac_ctx_t *c = vctx;
     if (!c)
         return;
-    belt_mac_cleanup(&c->backend_state);
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

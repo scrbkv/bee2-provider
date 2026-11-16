@@ -97,7 +97,6 @@ static int bign_keyexchange_derive_raw(const bee2_bign_keyexchange_ctx_t *ctx,
     bign_params curve;
     int ok;
 
-    OPENSSL_cleanse(&curve, sizeof(curve));
     if (!bee2_bign_curve_init_std(ctx->local_key->variant, &curve))
         return 0;
     ok = bignDH(secret, &curve, ctx->local_key->priv, ctx->peer_key->pub, secret_len) == ERR_OK;

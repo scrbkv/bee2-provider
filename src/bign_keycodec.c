@@ -1181,102 +1181,19 @@ static int bign_encoder_encode(void *vctx,
 
 static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PARAM params[]) {
     const bee2_bign_encoder_ctx_t *ctx = vctx;
-    const OSSL_PARAM *p = NULL;
-    char *group = NULL;
-    const bee2_bign_variant_t *variant = NULL;
-    bee2_bign_key_t *key = NULL;
-    const void *buf = NULL;
-    size_t len = 0;
+    bee2_bign_key_t *key;
 
-    if (!ctx || !params)
+    if (ctx == NULL || params == NULL ||
+        OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME) == NULL)
         return NULL;
-
-    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME);
-    if (p && !OSSL_PARAM_get_utf8_string(p, &group, 0))
+    key = bee2_bign_key_new(ctx->variant);
+    if (key == NULL)
         return NULL;
-    variant = bee2_bign_variant_from_name(group);
-    OPENSSL_free(group);
-    if (!variant || (ctx->variant && variant != ctx->variant)) {
+    if (!bee2_bign_import_params(key, selection, params)) {
+        bee2_bign_key_free(key);
         return NULL;
     }
-
-    key = bee2_bign_key_new(variant);
-    if (!key)
-        return NULL;
-
-    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
-        p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PRIV_KEY);
-        if (!p)
-            goto err;
-        if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
-            goto err;
-        if (buf == NULL || len != bee2_bign_priv_len(variant))
-            goto err;
-        memcpy(key->priv, buf, len);
-        key->has_priv = 1;
-    }
-
-    p = (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
-            ? OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY) : NULL;
-    if (p) {
-        if (!OSSL_PARAM_get_octet_string_ptr(p, &buf, &len))
-            goto err;
-        if (buf == NULL || len != bee2_bign_pub_len(variant))
-            goto err;
-        memcpy(key->pub, buf, len);
-        key->has_pub = 1;
-    } else if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && key->has_priv &&
-               !bee2_bign_key_ensure_public(key))
-        goto err;
-
-    if ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && !key->has_priv)
-        goto err;
-    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !key->has_pub)
-        goto err;
-    if (key->has_pub && !bee2_bign_key_validate_public(key))
-        goto err;
-    if (key->has_priv && key->has_pub && !bee2_bign_key_validate_pair(key))
-        goto err;
-    if (key->has_priv && !key->has_pub) {
-        unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
-        int valid = bee2_bign_derive_pubkey(key->variant, derived, key->priv);
-
-        bee2_bign_cleanse(derived, sizeof(derived));
-        if (!valid)
-            goto err;
-    }
-
     return key;
-
-err:
-    bee2_bign_key_free(key);
-    return NULL;
-}
-
-static int
-bign_export_key_params(const bee2_bign_key_t *key, OSSL_CALLBACK *export_cb, void *export_cbarg) {
-    if (!key || !export_cb)
-        return 0;
-
-    size_t priv_len = bee2_bign_priv_len(key->variant);
-    size_t pub_len = bee2_bign_pub_len(key->variant);
-
-    OSSL_PARAM params[5];
-    size_t n = 0;
-
-    params[n++] = OSSL_PARAM_construct_utf8_string(
-        OSSL_PKEY_PARAM_GROUP_NAME, (char *)key->variant->curve_oid, 0);
-    if (key->has_priv) {
-        params[n++] = OSSL_PARAM_construct_octet_string(
-            OSSL_PKEY_PARAM_PRIV_KEY, (void *)key->priv, priv_len);
-    }
-    if (key->has_pub) {
-        params[n++] =
-            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY, (void *)key->pub, pub_len);
-    }
-    params[n] = OSSL_PARAM_construct_end();
-
-    return export_cb(params, export_cbarg);
 }
 
 static void bign_encoder_free_object(void *obj) {
@@ -1464,7 +1381,10 @@ static int bign_decoder_export_object(void *vctx,
     if (!key || (ctx->variant && key->variant != ctx->variant))
         return 0;
 
-    return bign_export_key_params(key, export_cb, export_cbarg);
+    return bee2_bign_export_params(
+        key, (key->has_priv ? OSSL_KEYMGMT_SELECT_PRIVATE_KEY : 0) |
+             (key->has_pub ? OSSL_KEYMGMT_SELECT_PUBLIC_KEY : 0),
+        export_cb, export_cbarg);
 }
 
 

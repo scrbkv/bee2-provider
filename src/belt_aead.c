@@ -39,7 +39,6 @@
 /*  Context                                                             */
 /* ------------------------------------------------------------------ */
 
-typedef void (*belt_aead_init_fn)(bee2_belt_mode_ctx_t *context);
 typedef void (*belt_aead_restart_fn)(bee2_belt_mode_ctx_t *context);
 typedef void (*belt_aead_set_key_fn)(bee2_belt_mode_ctx_t *context,
                                      const void *key,
@@ -55,10 +54,8 @@ typedef void (*belt_aead_crypt_fn)(bee2_belt_mode_ctx_t *context,
                                    size_t length,
                                    void *output);
 typedef void (*belt_aead_get_tag_fn)(bee2_belt_mode_ctx_t *context, void *tag);
-typedef void (*belt_aead_cleanup_fn)(bee2_belt_mode_ctx_t *context);
 
 typedef struct {
-    belt_aead_init_fn init;
     belt_aead_restart_fn restart;
     belt_aead_set_key_fn set_key;
     belt_aead_set_iv_fn set_iv;
@@ -66,19 +63,16 @@ typedef struct {
     belt_aead_crypt_fn encrypt;
     belt_aead_crypt_fn decrypt;
     belt_aead_get_tag_fn get_tag;
-    belt_aead_cleanup_fn cleanup;
 } belt_aead_descriptor_t;
 
 #define BELT_AEAD_DESCRIPTOR(NAME, PREFIX) \
-    static const belt_aead_descriptor_t NAME = {PREFIX##_init, \
-                                                PREFIX##_restart, \
+    static const belt_aead_descriptor_t NAME = {PREFIX##_restart, \
                                                 PREFIX##_set_key, \
                                                 PREFIX##_set_iv, \
                                                 PREFIX##_update_ad, \
                                                 PREFIX##_encrypt, \
                                                 PREFIX##_decrypt, \
-                                                PREFIX##_get_mac, \
-                                                PREFIX##_cleanup}
+                                                PREFIX##_get_mac}
 
 BELT_AEAD_DESCRIPTOR(belt_che_descriptor, belt_che);
 BELT_AEAD_DESCRIPTOR(belt_dwp_descriptor, belt_dwp);
@@ -121,7 +115,6 @@ static void *belt_aead_newctx_for_algorithm(void *provctx,
         return NULL;
     c->algorithm = algorithm;
     c->fixed_key_len = fixed_key_len;
-    c->algorithm->init(&c->backend_state);
     return c;
 }
 
@@ -141,7 +134,6 @@ static void belt_aead_freectx(void *vctx) {
     bee2_belt_aead_ctx_t *c = vctx;
     if (!c)
         return;
-    c->algorithm->cleanup(&c->backend_state);
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

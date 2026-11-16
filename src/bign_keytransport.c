@@ -1,7 +1,6 @@
 #include "bign_common.h"
 
 #include <limits.h>
-#include <openssl/rand.h>
 
 #define BEE2_BIGN_KEYTRANSPORT_HEADER_SIZE 16u
 #define BEE2_BIGN_KEYTRANSPORT_PARAM_HEADER "header"
@@ -12,22 +11,6 @@ typedef struct {
     unsigned char header[BEE2_BIGN_KEYTRANSPORT_HEADER_SIZE];
     int encrypt;
 } bee2_bign_keytransport_ctx_t;
-
-typedef struct {
-    OSSL_LIB_CTX *libctx;
-    int failed;
-} bee2_bign_keytransport_rng_t;
-
-static void bign_keytransport_rng(void *buf, size_t count, void *state) {
-    bee2_bign_keytransport_rng_t *rng = state;
-
-    if (rng == NULL || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
-        if (buf != NULL)
-            bee2_bign_cleanse(buf, count);
-        if (rng != NULL)
-            rng->failed = 1;
-    }
-}
 
 static void *bign_keytransport_newctx(void *provctx) {
     bee2_bign_keytransport_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
@@ -40,7 +23,6 @@ static void bign_keytransport_freectx(void *vctx) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     if (!ctx)
         return;
-    bee2_bign_cleanse(ctx, sizeof(*ctx));
     OPENSSL_clear_free(ctx, sizeof(*ctx));
 }
 
@@ -148,7 +130,7 @@ static int bign_keytransport_encrypt(void *vctx,
                                      size_t inlen) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     bign_params curve;
-    bee2_bign_keytransport_rng_t rng = {0};
+    bee2_bign_rng_t rng = {0};
     size_t need;
     int ok = 0;
     if (!ctx || !ctx->encrypt || !ctx->key || !outlen || !in || inlen < 16)
@@ -164,10 +146,10 @@ static int bign_keytransport_encrypt(void *vctx,
     if (outsize < need)
         return 0;
     rng.libctx = ctx->libctx;
-    OPENSSL_cleanse(&curve, sizeof(curve));
     if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
         goto cleanup;
-    if (bignKeyWrap(out, &curve, in, inlen, ctx->header, ctx->key->pub, bign_keytransport_rng, &rng) !=
+    if (bignKeyWrap(out, &curve, in, inlen, ctx->header, ctx->key->pub,
+                    bee2_bign_openssl_rng, &rng) !=
             ERR_OK ||
         rng.failed)
         goto cleanup;
@@ -204,7 +186,6 @@ static int bign_keytransport_decrypt(void *vctx,
     }
     if (outsize < need)
         return 0;
-    OPENSSL_cleanse(&curve, sizeof(curve));
     if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
         goto cleanup;
     if (bignKeyUnwrap(out, &curve, in, inlen, ctx->header, ctx->key->priv) != ERR_OK)

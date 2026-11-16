@@ -32,9 +32,6 @@
 /* KWP header size equals one BELT block (16 bytes). */
 #define BELT_KWP_HDR_SIZE BELT_IV_SIZE
 
-/* Default initial authentication header (H₀) — all-zeros. */
-static const octet belt_kwp_default_header[BELT_KWP_HDR_SIZE];
-
 /* ------------------------------------------------------------------ */
 /*  Context                                                             */
 /* ------------------------------------------------------------------ */
@@ -61,7 +58,6 @@ static void *belt_kwp_newctx_with_key_length(void *provctx, size_t key_len) {
     if (!c)
         return NULL;
     c->fixed_key_len = key_len;
-    memcpy(c->hdr, belt_kwp_default_header, BELT_KWP_HDR_SIZE);
     return c;
 }
 

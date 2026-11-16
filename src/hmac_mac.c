@@ -237,9 +237,6 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     }
 
     OPENSSL_cleanse(key_block, sizeof(key_block));
-    OPENSSL_cleanse(digest, sizeof(digest));
-    OPENSSL_cleanse(pad, sizeof(pad));
-    OPENSSL_cleanse(&temporary_state, sizeof(temporary_state));
 
     if (ctx->key_len > ctx->bash_digest->block_size) {
         bashHashStart(&temporary_state, ctx->bash_digest->level);
@@ -319,9 +316,6 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
     if (output_size < ctx->output_size || ctx->output_size > digest_size)
         return 0;
 
-    OPENSSL_cleanse(inner_digest, sizeof(inner_digest));
-    OPENSSL_cleanse(full_mac, sizeof(full_mac));
-    OPENSSL_cleanse(&outer_state, sizeof(outer_state));
     if (ctx->bash_digest) {
         bashHashStepG(inner_digest, digest_size, &ctx->backend_state);
         memcpy(&outer_state, &ctx->outer_state, sizeof(outer_state));

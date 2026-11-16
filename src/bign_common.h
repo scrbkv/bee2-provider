@@ -25,6 +25,17 @@ typedef struct {
     octet priv[BEE2_BIGN_MAX_WORDS * 8];
 } bee2_bign_key_t;
 
+typedef struct {
+    OSSL_LIB_CTX *libctx;
+    int failed;
+} bee2_bign_rng_t;
+
+void bee2_bign_openssl_rng(void *buf, size_t count, void *state);
+int bee2_bign_import_params(void *vkey, int selection,
+                            const OSSL_PARAM params[]);
+int bee2_bign_export_params(void *key, int selection,
+                            OSSL_CALLBACK *param_cb, void *cbarg);
+
 const bee2_bign_variant_t *bee2_bign_variant_256(void);
 const bee2_bign_variant_t *bee2_bign_variant_384(void);
 const bee2_bign_variant_t *bee2_bign_variant_512(void);
@@ -42,7 +53,6 @@ int bee2_bign_derive_pubkey(const bee2_bign_variant_t *variant,
 
 bee2_bign_key_t *bee2_bign_key_new(const bee2_bign_variant_t *variant);
 void bee2_bign_key_free(bee2_bign_key_t *key);
-int bee2_bign_key_ensure_public(bee2_bign_key_t *key);
 int bee2_bign_key_validate_pair(const bee2_bign_key_t *key);
 int bee2_bign_key_validate_public(const bee2_bign_key_t *key);
 

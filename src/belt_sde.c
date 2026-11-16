@@ -48,7 +48,6 @@ static void *belt_sde_newctx(void *provctx, size_t fixed_key_len) {
     if (!c)
         return NULL;
     c->fixed_key_len = fixed_key_len;
-    belt_sde_init(&c->backend_state);
     return c;
 }
 
@@ -65,7 +64,6 @@ static void belt_sde_freectx(void *vctx) {
     bee2_belt_sde_ctx_t *c = vctx;
     if (!c)
         return;
-    belt_sde_cleanup(&c->backend_state);
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

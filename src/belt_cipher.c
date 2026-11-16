@@ -35,7 +35,6 @@
 /*  Context                                                             */
 /* ------------------------------------------------------------------ */
 
-typedef void (*belt_mode_init_fn)(bee2_belt_mode_ctx_t *context);
 typedef void (*belt_mode_restart_fn)(bee2_belt_mode_ctx_t *context);
 typedef void (*belt_mode_set_key_fn)(bee2_belt_mode_ctx_t *context,
                                      const void *key,
@@ -47,10 +46,8 @@ typedef void (*belt_mode_crypt_fn)(bee2_belt_mode_ctx_t *context,
                                    const void *input,
                                    size_t blocks,
                                    void *output);
-typedef void (*belt_mode_cleanup_fn)(bee2_belt_mode_ctx_t *context);
 
 typedef struct {
-    belt_mode_init_fn init;
     belt_mode_restart_fn restart;
     belt_mode_set_key_fn set_key;
     belt_mode_set_iv_fn set_iv;
@@ -58,31 +55,26 @@ typedef struct {
     belt_mode_crypt_fn decrypt;
     belt_mode_crypt_fn encrypt_bytes;
     belt_mode_crypt_fn decrypt_bytes;
-    belt_mode_cleanup_fn cleanup;
     size_t iv_size;
 } belt_mode_descriptor_t;
 
 #define BELT_MODE_DESCRIPTOR(NAME, PREFIX, IV_SIZE, ENCRYPT_BYTES, DECRYPT_BYTES) \
-    static const belt_mode_descriptor_t NAME = {PREFIX##_init, \
-                                                PREFIX##_restart, \
+    static const belt_mode_descriptor_t NAME = {PREFIX##_restart, \
                                                 PREFIX##_set_key, \
                                                 PREFIX##_set_iv, \
                                                 PREFIX##_encrypt, \
                                                 PREFIX##_decrypt, \
                                                 (ENCRYPT_BYTES), \
                                                 (DECRYPT_BYTES), \
-                                                PREFIX##_cleanup, \
                                                 (IV_SIZE)}
 
-static const belt_mode_descriptor_t belt_ecb_mode = {belt_ecb_init,
-                                                     belt_ecb_restart,
+static const belt_mode_descriptor_t belt_ecb_mode = {belt_ecb_restart,
                                                      belt_ecb_set_key,
-                                                     belt_ecb_set_iv,
+                                                     NULL,
                                                      belt_ecb_encrypt,
                                                      belt_ecb_decrypt,
                                                      NULL,
                                                      NULL,
-                                                     belt_ecb_cleanup,
                                                      0};
 BELT_MODE_DESCRIPTOR(belt_cbc_mode, belt_cbc, BELT_IV_SIZE, NULL, NULL);
 BELT_MODE_DESCRIPTOR(belt_cfb_mode, belt_cfb, BELT_IV_SIZE,
@@ -236,7 +228,6 @@ belt_newctx_mode(void *provctx, const belt_mode_descriptor_t *mode, size_t fixed
     c->mode = mode;
     c->fixed_key_len = fixed_key_len;
     c->padding = mode == &belt_ecb_mode || mode == &belt_cbc_mode;
-    c->mode->init(&c->backend_state);
     return c;
 }
 
@@ -265,7 +256,6 @@ static void belt_freectx(void *vctx) {
     bee2_belt_ctx_t *c = vctx;
     if (!c)
         return;
-    c->mode->cleanup(&c->backend_state);
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

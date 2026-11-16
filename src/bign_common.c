@@ -4,6 +4,7 @@
 #include "provider_util.h"
 
 #include <openssl/crypto.h>
+#include <openssl/rand.h>
 #include <string.h>
 
 static const bee2_bign_variant_t bee2_bign_var_256 = {
@@ -14,6 +15,17 @@ static const bee2_bign_variant_t bee2_bign_var_384 = {
 
 static const bee2_bign_variant_t bee2_bign_var_512 = {
     "bign-512", BEE2_OID_BIGN_CURVE512, 512u, 256u, "bash512"};
+
+void bee2_bign_openssl_rng(void *buf, size_t count, void *state) {
+    bee2_bign_rng_t *rng = state;
+
+    if (rng == NULL || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
+        if (buf != NULL)
+            OPENSSL_cleanse(buf, count);
+        if (rng != NULL)
+            rng->failed = 1;
+    }
+}
 
 const bee2_bign_variant_t *bee2_bign_variant_256(void) {
     return &bee2_bign_var_256;
@@ -75,7 +87,6 @@ int bee2_bign_derive_pubkey(const bee2_bign_variant_t *variant,
 
     if (!variant || !pub || !priv)
         return 0;
-    OPENSSL_cleanse(&curve, sizeof(curve));
     if (!bee2_bign_curve_init_std(variant, &curve))
         goto cleanup;
     ok = (bignPubkeyCalc(pub, &curve, priv) == ERR_OK);
@@ -97,17 +108,6 @@ void bee2_bign_key_free(bee2_bign_key_t *key) {
     if (key == NULL)
         return;
     OPENSSL_clear_free(key, sizeof(*key));
-}
-
-int bee2_bign_key_ensure_public(bee2_bign_key_t *key) {
-    if (key == NULL || key->variant == NULL)
-        return 0;
-    if (key->has_pub)
-        return 1;
-    if (!key->has_priv || !bee2_bign_derive_pubkey(key->variant, key->pub, key->priv))
-        return 0;
-    key->has_pub = 1;
-    return 1;
 }
 
 int bee2_bign_key_validate_public(const bee2_bign_key_t *key) {
