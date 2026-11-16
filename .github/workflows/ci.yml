@@ -218,12 +218,25 @@ jobs:
         run: |
           "$BEE2EVP_OPENSSL_PREFIX/bin/openssl" engine -t -c bee2evp
 
+      - name: Compile legacy EVP cipher interop helper
+        shell: bash
+        run: |
+          tool="$RUNNER_TEMP/bee2evp-cipher-tool"
+          "${CC}" -std=c11 -Wall -Wextra -Werror \
+            -I"$BEE2EVP_OPENSSL_PREFIX/include" \
+            tests/interop_cipher_tool.c \
+            -L"$BEE2EVP_OPENSSL_PREFIX/lib" \
+            -Wl,-rpath,"$BEE2EVP_OPENSSL_PREFIX/lib" \
+            -lcrypto -o "$tool"
+          echo "BEE2EVP_LEGACY_TOOL=$tool" >> "$GITHUB_ENV"
+
       - name: Configure and build interoperability tests
         shell: bash
         run: |
           cmake -S . -B build-interop -DCMAKE_BUILD_TYPE=Release \
             -DBEE2_PROVIDER_BUILD_TESTS=ON \
             -DBEE2_PROVIDER_ENABLE_INTEROP=ON \
+            -DBEE2_INTEROP_LEGACY_TOOL="$BEE2EVP_LEGACY_TOOL" \
             -DBEE2_INTEROP_BEE2EVP_ENGINE=bee2evp \
             -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
             -DOPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include" \

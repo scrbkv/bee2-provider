@@ -32,8 +32,10 @@ of the underlying algorithms.
 - Interoperability with a pinned `bee2evp` engine is exercised in an
   independent GitHub Actions job. Its supported cipher, MAC and digest
   algorithms are checked with fixed boundary sizes and deterministic
-  pseudorandom buffers, including cross-decryption. Existing BIGN
-  certificate interoperability checks are included in that job.
+  pseudorandom buffers, including cross-decryption. Extended BIGN
+  certificate interoperability checks verify certificate signatures under both
+  implementations. A separate AEAD/KWP matrix covers the legacy wire format
+  for BELT-DWP, BELT-CHE, BELT-KWP and BASH-PRG-AE2561.
   The engine is a separate implementation interface over Bee2; it is
   not an independent cryptographic implementation.
 - The main build matrix does not cover Windows or macOS.

@@ -383,6 +383,21 @@ set_tests_properties(bee2_bign_params_contract PROPERTIES LABELS "regression;big
 # BEE2_PROVIDER_ENABLE_INTEROP is enabled. The matrix checks both encryption
 # directions for boundary values and deterministic pseudorandom inputs.
 if(BEE2_PROVIDER_ENABLE_INTEROP)
+    set(BEE2_INTEROP_LEGACY_TOOL "$ENV{BEE2EVP_LEGACY_TOOL}" CACHE FILEPATH
+        "OpenSSL 1.1.1 helper for legacy engine AEAD and KWP")
+    if(NOT EXISTS "${BEE2_INTEROP_LEGACY_TOOL}")
+        message(FATAL_ERROR "BEE2_INTEROP_LEGACY_TOOL is required when enabling interop")
+    endif()
+    add_executable(bee2_interop_cipher_tool interop_cipher_tool.c)
+    target_link_libraries(bee2_interop_cipher_tool PRIVATE OpenSSL::Crypto)
+    add_test(NAME bee2_interop_aead_kwp
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_aead_interop.py
+            --provider-tool $<TARGET_FILE:bee2_interop_cipher_tool>
+            --engine-tool "${BEE2_INTEROP_LEGACY_TOOL}"
+            --provider-path $<TARGET_FILE_DIR:bee2_provider>)
+    set_tests_properties(bee2_interop_aead_kwp
+        PROPERTIES LABELS "interop;bee2evp;cipher;aead;kwp")
     set(interop_prefix
         "${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>"
     )

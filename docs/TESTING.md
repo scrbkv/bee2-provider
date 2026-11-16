@@ -128,3 +128,13 @@ silently excluded merely to improve the number.
 The engine matrix replaces duplicate fixed-only cipher/MAC/digest cases.
 BIGN CSR/certificate interop verifies certificate signatures using both
 implementations rather than merely printing their ASN.1 descriptions.
+
+## Legacy AEAD and key-wrap interop
+
+The extended interop job compiles `interop_cipher_tool.c` once with OpenSSL
+3.x and once with OpenSSL 1.1.1. The harness normalizes legacy appended AEAD
+tags into the provider's explicit-tag wire representation and cross-decrypts
+both sides. It covers 128/192/256-bit BELT-DWP, BELT-CHE, BELT-KWP, and the
+legacy BASH-PRG-AE2561 profile (empty announcement), with zero, patterned,
+and deterministic pseudorandom inputs, boundary lengths, AAD and tag tampering.
+BELT-KWP uses the legacy engine's zero-header profile.
