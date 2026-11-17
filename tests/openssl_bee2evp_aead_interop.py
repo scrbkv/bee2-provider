@@ -69,12 +69,17 @@ def main() -> None:
     parser.add_argument("--provider-tool", type=Path, required=True)
     parser.add_argument("--engine-tool", type=Path, required=True)
     parser.add_argument("--provider-path", required=True)
+    parser.add_argument("--algorithm", help="run the matrix for a single algorithm")
     args = parser.parse_args()
     for binary in (args.provider_tool, args.engine_tool):
         if not binary.is_file():
             parser.error(f"missing interop executable: {binary}")
     algorithms = [f"belt-{mode}{bits}" for mode in ("dwp", "che", "kwp")
                   for bits in (128, 192, 256)] + ["bash-prg-ae2561"]
+    if args.algorithm is not None:
+        if args.algorithm not in algorithms:
+            parser.error(f"unknown interop algorithm: {args.algorithm}")
+        algorithms = [args.algorithm]
     total = 0
     with tempfile.TemporaryDirectory(prefix="bee2evp-extended-") as root:
         directory = Path(root)

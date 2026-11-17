@@ -390,14 +390,25 @@ if(BEE2_PROVIDER_ENABLE_INTEROP)
     endif()
     add_executable(bee2_interop_cipher_tool interop_cipher_tool.c)
     target_link_libraries(bee2_interop_cipher_tool PRIVATE OpenSSL::Crypto)
-    add_test(NAME bee2_interop_aead_kwp
-        COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_aead_interop.py
-            --provider-tool $<TARGET_FILE:bee2_interop_cipher_tool>
-            --engine-tool "${BEE2_INTEROP_LEGACY_TOOL}"
-            --provider-path $<TARGET_FILE_DIR:bee2_provider>)
-    set_tests_properties(bee2_interop_aead_kwp
-        PROPERTIES LABELS "interop;bee2evp;cipher;aead;kwp")
+    # Each algorithm is an independent CTest. One long matrix used to
+    # approach the per-test timeout even though individual cases passed.
+    foreach(alg IN ITEMS
+            belt-dwp128 belt-dwp192 belt-dwp256
+            belt-che128 belt-che192 belt-che256
+            belt-kwp128 belt-kwp192 belt-kwp256
+            bash-prg-ae2561)
+        string(REPLACE "-" "_" alg_id "${alg}")
+        set(test_name "bee2_interop_${alg_id}")
+        add_test(NAME ${test_name}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_aead_interop.py
+                --provider-tool $<TARGET_FILE:bee2_interop_cipher_tool>
+                --engine-tool "${BEE2_INTEROP_LEGACY_TOOL}"
+                --provider-path $<TARGET_FILE_DIR:bee2_provider>
+                --algorithm "${alg}")
+        set_tests_properties(${test_name}
+            PROPERTIES LABELS "interop;bee2evp;cipher")
+    endforeach()
     set(interop_prefix
         "${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>"
     )
