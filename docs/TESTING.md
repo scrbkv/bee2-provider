@@ -190,3 +190,8 @@ hooks in production code.
 The BIGN digest-binding tests also validate published digest sizes, the
 `sig=deterministic` parameter, rejection of unsupported signature modes and
 nonmutation of the deterministic flag on a rejected parameter batch.
+
+The ASN.1 fault-injection target also simulates failure of the SPKI
+`X509_PUBKEY_set0_param` ownership transfer with named and explicit BIGN
+parameters, including public-key allocation and cleanup. No production
+allocator hooks or injected failure logic are introduced.
