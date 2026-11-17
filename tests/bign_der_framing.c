@@ -25,6 +25,76 @@ static int check(const char *label, const unsigned char *der, size_t size,
 }
 
 
+
+/* Deterministic mutation corpus over real PKCS#8/SPKI encodings.
+ * Every truncation and appended byte must be rejected. A single-bit or
+ * byte alteration may still encode a valid, *different* key, in which case
+ * validate the returned key rather than incorrectly demanding rejection.
+ */
+static int check_der_mutations(const unsigned char *der, size_t length,
+                               const bee2_bign_variant_t *expected,
+                               int is_public)
+{
+    static const unsigned char changes[] = {1, 0x80, 0xff};
+    unsigned char *altered = NULL;
+    size_t i, j, rejects = 0;
+    int ok = 0;
+
+    altered = OPENSSL_malloc(length + 2);
+    if (!altered)
+        return 0;
+    for (i = 0; i < length; ++i) {
+        bee2_bign_key_t key = {0};
+        int success = is_public
+            ? bee2_bign_asn1_decode_spki_der(der, i, expected, &key)
+            : bee2_bign_asn1_decode_pkcs8_der(der, i, expected, &key);
+        if (success)
+            goto done;
+    }
+    memcpy(altered, der, length);
+    altered[length] = 0;
+    {
+        bee2_bign_key_t key = {0};
+        int accepted = is_public
+            ? bee2_bign_asn1_decode_spki_der(altered, length + 1, expected, &key)
+            : bee2_bign_asn1_decode_pkcs8_der(altered, length + 1, expected, &key);
+        if (accepted)
+            goto done;
+    }
+
+    for (i = 0; i < length; ++i) {
+        for (j = 0; j < sizeof(changes); ++j) {
+            bee2_bign_key_t parsed = {0};
+            int accepted;
+            memcpy(altered, der, length);
+            altered[i] ^= changes[j];
+            accepted = is_public
+                ? bee2_bign_asn1_decode_spki_der(altered, length, expected, &parsed)
+                : bee2_bign_asn1_decode_pkcs8_der(altered, length, expected, &parsed);
+            if (accepted) {
+                if (parsed.variant != expected ||
+                    !parsed.has_pub ||
+                    parsed.has_priv != !is_public ||
+                    !bee2_bign_key_validate_public(&parsed) ||
+                    (!is_public && !bee2_bign_key_validate_pair(&parsed))) {
+                    OPENSSL_cleanse(&parsed, sizeof(parsed));
+                    goto done;
+                }
+            } else {
+                ++rejects;
+            }
+            OPENSSL_cleanse(&parsed, sizeof(parsed));
+        }
+    }
+    ok = rejects != 0;
+done:
+    if (!ok)
+        fprintf(stderr, "BIGN %s DER mutation corpus failed\n",
+                is_public ? "public" : "private");
+    OPENSSL_clear_free(altered, length + 2);
+    return ok;
+}
+
 /* Exercise the ASN.1 public interface directly: OpenSSL's pkey CLI can
  * consume just one object and is not a strict DER framing validator.
  * Keep these assertions in the existing ASN.1 test executable.
@@ -45,7 +115,9 @@ static int check_bign_key_der(void)
         key.encode_explicit = (int)explicit_encoding;
         private_der = bee2_bign_asn1_encode_pkcs8_der(&key, &private_len);
         public_der = bee2_bign_asn1_encode_spki_der(&key, &public_len);
-        if (!private_der || !public_der || private_len < 32 || public_len < 64)
+        if (!private_der || !public_der || private_len < 32 || public_len < 64 ||
+            !check_der_mutations(private_der, private_len, curve, 0) ||
+            !check_der_mutations(public_der, public_len, curve, 1))
             goto done;
 
         memset(&parsed, 0, sizeof(parsed));

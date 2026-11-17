@@ -553,7 +553,9 @@ if(UNIX AND NOT APPLE)
     target_include_directories(bee2_bign_asn1_fault SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
     target_link_libraries(bee2_bign_asn1_fault PRIVATE bee2_static OpenSSL::Crypto)
     target_link_options(bee2_bign_asn1_fault PRIVATE
-        "-Wl,--wrap=PKCS8_pkey_set0" "-Wl,--wrap=X509_PUBKEY_set0_param")
+        "-Wl,--wrap=PKCS8_pkey_set0" "-Wl,--wrap=X509_PUBKEY_set0_param"
+        "-Wl,--wrap=CRYPTO_malloc" "-Wl,--wrap=CRYPTO_zalloc"
+        "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=CRYPTO_realloc")
     if(BEE2_PROVIDER_ENABLE_COVERAGE)
         target_compile_options(bee2_bign_asn1_fault PRIVATE
             --coverage -fprofile-update=atomic -O0 -g)

@@ -161,3 +161,10 @@ excluded from that matrix.
 BIGN interoperability checks cross-load private PKCS#8 keys, verify signatures
 in both directions, and verify CSRs and self-signed X.509 certificates using
 both implementations, including explicit curve parameters.
+
+The ASN.1 tests include exhaustive one-byte and single-bit mutation of valid
+BIGN PKCS#8/SPKI encodings and every shorter length. If a modified encoding
+still describes a valid key, the decoder's key invariants must hold; truncated
+and trailing DER must be rejected. The fault-injection target also walks
+failure positions for provider-owned OpenSSL allocations, with ASan checking
+cleanup across named and explicit parameter encodings.
