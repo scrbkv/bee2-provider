@@ -6,6 +6,8 @@
 #include "bign_stb_pbes2.h"
 
 #include <openssl/crypto.h>
+#include <openssl/asn1t.h>
+#include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <stdio.h>
 #include <string.h>
@@ -91,6 +93,71 @@ int __wrap_X509_PUBKEY_set0_param(X509_PUBKEY *pub, ASN1_OBJECT *alg,
         return 0;
     return __real_X509_PUBKEY_set0_param(pub, alg, parameter_type,
                                          parameters, key, key_len);
+}
+
+
+/* Fail selected OpenSSL operations at their provider-owned call sites.
+ * Unlike global OpenSSL allocator hooks, linker wrapping does not interfere
+ * with OpenSSL internals or the random generator's own allocations. */
+enum asn1_fault_kind {
+    ASN1_FAULT_NONE,
+    ASN1_FAULT_RANDOM,
+    ASN1_FAULT_PACK,
+    ASN1_FAULT_ALGORITHM,
+    ASN1_FAULT_INTEGER,
+    ASN1_FAULT_OCTETS
+};
+
+static enum asn1_fault_kind asn1_fault;
+static int asn1_fault_at, asn1_fault_calls;
+
+static int should_fail_asn1(enum asn1_fault_kind kind)
+{
+    return asn1_fault == kind && ++asn1_fault_calls == asn1_fault_at;
+}
+
+int __real_RAND_priv_bytes_ex(OSSL_LIB_CTX *libctx, unsigned char *buf,
+                              size_t count, unsigned int strength);
+ASN1_STRING *__real_ASN1_item_pack(void *object, const ASN1_ITEM *item,
+                                  ASN1_OCTET_STRING **output);
+int __real_X509_ALGOR_set0(X509_ALGOR *alg, ASN1_OBJECT *oid,
+                           int type, void *value);
+int __real_ASN1_INTEGER_set(ASN1_INTEGER *integer, long value);
+int __real_ASN1_OCTET_STRING_set(ASN1_OCTET_STRING *string,
+                                 const unsigned char *bytes, int length);
+
+int __wrap_RAND_priv_bytes_ex(OSSL_LIB_CTX *libctx, unsigned char *buf,
+                              size_t count, unsigned int strength)
+{
+    return should_fail_asn1(ASN1_FAULT_RANDOM) ? 0 :
+           __real_RAND_priv_bytes_ex(libctx, buf, count, strength);
+}
+
+ASN1_STRING *__wrap_ASN1_item_pack(void *object, const ASN1_ITEM *item,
+                                  ASN1_OCTET_STRING **output)
+{
+    return should_fail_asn1(ASN1_FAULT_PACK) ? NULL :
+           __real_ASN1_item_pack(object, item, output);
+}
+
+int __wrap_X509_ALGOR_set0(X509_ALGOR *alg, ASN1_OBJECT *oid,
+                           int type, void *value)
+{
+    return should_fail_asn1(ASN1_FAULT_ALGORITHM) ? 0 :
+           __real_X509_ALGOR_set0(alg, oid, type, value);
+}
+
+int __wrap_ASN1_INTEGER_set(ASN1_INTEGER *integer, long value)
+{
+    return should_fail_asn1(ASN1_FAULT_INTEGER) ? 0 :
+           __real_ASN1_INTEGER_set(integer, value);
+}
+
+int __wrap_ASN1_OCTET_STRING_set(ASN1_OCTET_STRING *string,
+                                 const unsigned char *bytes, int length)
+{
+    return should_fail_asn1(ASN1_FAULT_OCTETS) ? 0 :
+           __real_ASN1_OCTET_STRING_set(string, bytes, length);
 }
 
 int main(void)
@@ -223,6 +290,68 @@ int main(void)
             fprintf(stderr, "STB PBES2 allocation failures were not exercised\n");
             return 1;
         }
+    }
+
+
+    /* The failure may occur after the KWP payload was allocated or after a
+     * portion of the ASN.1 tree was constructed.  Every failed call must
+     * leave no ciphertext and reset the reported length. */
+    {
+        static const unsigned char password[] = "asn1-call-fault";
+        unsigned char *plain = NULL;
+        size_t plain_len = 0;
+        enum asn1_fault_kind kind;
+
+        key.encode_explicit = 0;
+        plain = bee2_bign_asn1_encode_pkcs8_der(&key, &plain_len);
+        if (plain == NULL)
+            return 1;
+
+        for (kind = ASN1_FAULT_RANDOM; kind <= ASN1_FAULT_OCTETS; ++kind) {
+            int index, failures = 0, successes = 0;
+
+            for (index = 1; index <= 6; ++index) {
+                unsigned char *der;
+                size_t length = 1234;
+                int valid;
+
+                asn1_fault = kind;
+                asn1_fault_at = index;
+                asn1_fault_calls = 0;
+                der = bee2_stb_pbes2_encrypt(
+                    plain, plain_len, password, sizeof(password) - 1,
+                    32, BEE2_STB_PBKDF2_MIN_ITER, BEE2_STB_PBKDF2_MIN_SALT,
+                    NULL, &length);
+                asn1_fault = ASN1_FAULT_NONE;
+
+                valid = der == NULL ? length == 0 : length != 0;
+                if (der == NULL) {
+                    ++failures;
+                } else {
+                    const unsigned char *p = der;
+                    X509_SIG *info = d2i_X509_SIG(NULL, &p, (long)length);
+
+                    valid = valid && info != NULL && p == der + length &&
+                            bee2_stb_pbes2_is_stb(info);
+                    X509_SIG_free(info);
+                    ++successes;
+                }
+                OPENSSL_clear_free(der, length);
+                if (!valid) {
+                    fprintf(stderr, "STB PBES2 failed call rollback (%d/%d)\n",
+                            (int)kind, index);
+                    OPENSSL_clear_free(plain, plain_len);
+                    return 1;
+                }
+            }
+            if (failures == 0 || successes == 0) {
+                fprintf(stderr, "ASN.1 call failure injection was not reached (%d)\n",
+                        (int)kind);
+                OPENSSL_clear_free(plain, plain_len);
+                return 1;
+            }
+        }
+        OPENSSL_clear_free(plain, plain_len);
     }
 
     OPENSSL_cleanse(&key, sizeof(key));

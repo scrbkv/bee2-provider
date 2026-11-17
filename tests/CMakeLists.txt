@@ -591,7 +591,10 @@ if(UNIX AND NOT APPLE)
     target_link_options(bee2_bign_asn1_fault PRIVATE
         "-Wl,--wrap=PKCS8_pkey_set0" "-Wl,--wrap=X509_PUBKEY_set0_param"
         "-Wl,--wrap=CRYPTO_malloc" "-Wl,--wrap=CRYPTO_zalloc"
-        "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=CRYPTO_realloc")
+        "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=CRYPTO_realloc"
+        "-Wl,--wrap=RAND_priv_bytes_ex" "-Wl,--wrap=ASN1_item_pack"
+        "-Wl,--wrap=X509_ALGOR_set0" "-Wl,--wrap=ASN1_INTEGER_set"
+        "-Wl,--wrap=ASN1_OCTET_STRING_set")
     if(BEE2_PROVIDER_ENABLE_COVERAGE)
         target_compile_options(bee2_bign_asn1_fault PRIVATE
             --coverage -fprofile-update=atomic -O0 -g)
