@@ -2,6 +2,7 @@
  * The openssl pkey CLI intentionally accepts one DER object followed by data. */
 #include "../src/bign_der_frame.h"
 #include "../src/bign_asn1.h"
+#include "../src/provider_util.h"
 
 #include <openssl/crypto.h>
 
@@ -115,6 +116,106 @@ done:
     return ok;
 }
 
+
+/* Run the shared BIGN and secret-memory helpers through their public
+ * contracts. These are genuine invalid-input and key-consistency cases,
+ * rather than synthetic branches hidden behind compiler directives.
+ */
+static int check_common_contract(void)
+{
+    const bee2_bign_variant_t *variant = bee2_bign_variant_256();
+    bee2_bign_key_t *key = NULL;
+    unsigned char data[16], pub[64], secret_a[] = {3, 7, 9};
+    unsigned char *secret = NULL;
+    size_t secret_len = 0;
+    bign_params params;
+    size_t i;
+    int ok = 0;
+
+    memset(data, 0xa5, sizeof(data));
+    bee2_bign_openssl_rng(data, sizeof(data), NULL);
+    for (i = 0; i < sizeof(data); ++i)
+        if (data[i] != 0)
+            goto done;
+
+    if (bee2_bign_variant_matches(NULL, "bign-256") ||
+        bee2_bign_variant_matches(variant, NULL) ||
+        !bee2_bign_variant_matches(variant, "bign-256") ||
+        !bee2_bign_variant_matches(variant, variant->curve_oid) ||
+        bee2_bign_variant_matches(variant, "bign-384") ||
+        bee2_bign_variant_from_name(NULL) != NULL ||
+        bee2_bign_variant_from_name("not-a-curve") != NULL ||
+        bee2_bign_variant_from_name("bign-256") != variant ||
+        bee2_bign_priv_len(NULL) != 0 ||
+        bee2_bign_pub_len(NULL) != 0 ||
+        bee2_bign_sig_len(NULL) != 0 ||
+        bee2_bign_curve_init_std(NULL, &params) ||
+        bee2_bign_curve_init_std(variant, NULL) ||
+        bee2_bign_derive_pubkey(NULL, pub, secret_a) ||
+        bee2_bign_derive_pubkey(variant, NULL, secret_a) ||
+        bee2_bign_derive_pubkey(variant, pub, NULL))
+        goto done;
+
+    key = bee2_bign_key_new(variant);
+    if (key == NULL ||
+        bee2_bign_key_validate_public(NULL) ||
+        bee2_bign_key_validate_public(key) ||
+        bee2_bign_key_validate_pair(NULL) ||
+        bee2_bign_key_validate_pair(key))
+        goto done;
+
+    key->has_priv = 1;
+    key->priv[0] = 3;
+    if (!bee2_bign_derive_pubkey(variant, key->pub, key->priv))
+        goto done;
+    key->has_pub = 1;
+    if (!bee2_bign_key_validate_pair(key) ||
+        !bee2_bign_key_validate_public(key))
+        goto done;
+
+    key->pub[0] ^= 1;
+    if (bee2_bign_key_validate_pair(key))
+        goto done;
+    key->pub[0] ^= 1;
+    key->has_pub = 0;
+    if (bee2_bign_key_validate_pair(key))
+        goto done;
+    key->has_pub = 1;
+    key->has_priv = 0;
+    if (bee2_bign_key_validate_pair(key))
+        goto done;
+    key->has_priv = 1;
+    memset(key->pub, 0, sizeof(key->pub));
+    if (bee2_bign_key_validate_public(key))
+        goto done;
+
+    if (bee2_secret_replace(NULL, &secret_len, secret_a, sizeof(secret_a)) ||
+        bee2_secret_replace(&secret, NULL, secret_a, sizeof(secret_a)) ||
+        bee2_secret_replace(&secret, &secret_len, NULL, 1) ||
+        !bee2_secret_replace(&secret, &secret_len, secret_a, sizeof(secret_a)) ||
+        secret_len != sizeof(secret_a) ||
+        !bee2_constant_time_equal(secret, secret_a, secret_len) ||
+        bee2_constant_time_equal(secret, NULL, secret_len) ||
+        bee2_constant_time_equal(NULL, secret_a, secret_len) ||
+        bee2_constant_time_equal(secret_a, data, sizeof(secret_a)) ||
+        !bee2_constant_time_equal(NULL, NULL, 0) ||
+        !bee2_secret_replace(&secret, &secret_len, NULL, 0) ||
+        secret != NULL || secret_len != 0)
+        goto done;
+
+    bee2_bign_cleanse(NULL, sizeof(data));
+    bee2_bign_cleanse(data, 0);
+    bee2_bign_key_free(NULL);
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "BIGN shared helper contract failed\n");
+    OPENSSL_clear_free(secret, secret_len);
+    bee2_bign_key_free(key);
+    OPENSSL_cleanse(pub, sizeof(pub));
+    return ok;
+}
+
 int main(void)
 {
     static const unsigned char valid_empty[] = {0x30, 0x00};
@@ -148,5 +249,6 @@ int main(void)
     free(oversized);
 
     ok &= check_bign_key_der();
+    ok &= check_common_contract();
     return ok ? 0 : 1;
 }
