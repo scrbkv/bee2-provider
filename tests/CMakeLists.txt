@@ -645,6 +645,31 @@ if(UNIX AND NOT APPLE)
         LABELS "bign;signature;negative;fault_injection;native")
 endif()
 
+# Test BIGN KEYMGMT object allocation, key generation and RNG failures.
+if(UNIX AND NOT APPLE)
+    add_executable(bee2_bign_keymgmt_fault
+        bign_keymgmt_fault.c
+        ${CMAKE_SOURCE_DIR}/src/bign_keymgmt.c
+        ${CMAKE_SOURCE_DIR}/src/bign_common.c
+        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+    target_include_directories(bee2_bign_keymgmt_fault PRIVATE
+        ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(bee2_bign_keymgmt_fault SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/bee2/include)
+    target_link_libraries(bee2_bign_keymgmt_fault PRIVATE
+        bee2_static OpenSSL::Crypto)
+    target_link_options(bee2_bign_keymgmt_fault PRIVATE
+        "-Wl,--wrap=CRYPTO_zalloc" "-Wl,--wrap=RAND_priv_bytes_ex")
+    if(BEE2_PROVIDER_ENABLE_COVERAGE)
+        target_compile_options(bee2_bign_keymgmt_fault PRIVATE
+            --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(bee2_bign_keymgmt_fault PRIVATE --coverage)
+    endif()
+    add_test(NAME bee2_bign_keymgmt_fault COMMAND bee2_bign_keymgmt_fault)
+    set_tests_properties(bee2_bign_keymgmt_fault PROPERTIES
+        LABELS "bign;keymgmt;negative;fault_injection;native")
+endif()
+
 # Isolate allocation-failure and constant-time helper contracts without
 # introducing test-only hooks into the provider.
 if(UNIX AND NOT APPLE)
