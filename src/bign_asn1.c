@@ -1398,8 +1398,7 @@ int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
     if (encrypted == NULL)
         return 0;
     X509_SIG_get0(encrypted, &alg, &ciphertext);
-    if (alg == NULL || ciphertext == NULL)
-        return 0;
+    /* X509_SIG has mandatory algorithm and ciphertext fields. */
     X509_ALGOR_get0(&obj, &type, &value, alg);
     if (!oid_equals(obj, BEE2_OID_PBES2) ||
         type != V_ASN1_SEQUENCE || value == NULL)
@@ -1436,8 +1435,6 @@ int bee2_stb_pbes2_legacy_pbkdf2_allowed(const X509_SIG *encrypted,
     if (!encrypted || max_iterations == 0)
         return 0;
     X509_SIG_get0(encrypted, &alg, &ciphertext);
-    if (!alg || !ciphertext)
-        return 0;
     X509_ALGOR_get0(&oid, &type, &value, alg);
     if (!oid_equals(oid, BEE2_OID_PBES2) ||
         type != V_ASN1_SEQUENCE || !value)
@@ -1486,8 +1483,6 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     if (encrypted == NULL || password == NULL || password_len > INT_MAX)
         return NULL;
     X509_SIG_get0(encrypted, &alg, &ciphertext);
-    if (alg == NULL || ciphertext == NULL)
-        return NULL;
     X509_ALGOR_get0(&obj, &type, &value, alg);
     if (!oid_equals(obj, BEE2_OID_PBES2) || type != V_ASN1_SEQUENCE || value == NULL)
         return NULL;
