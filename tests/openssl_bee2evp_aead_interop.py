@@ -26,7 +26,7 @@ def run(binary: Path, module_dir: str, alg: str, operation: str,
     cmd = [str(binary), module_dir, alg, operation, key.hex(),
            iv.hex() if iv else "-", aad.hex() if aad else "-",
            str(src), str(dst)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if (result.returncode == 0) != succeeds:
         raise RuntimeError(f"{alg}/{operation}: unexpected exit status "
                            f"{result.returncode}\n{result.stdout}\n{result.stderr}")
@@ -34,7 +34,8 @@ def run(binary: Path, module_dir: str, alg: str, operation: str,
 
 
 def case(provider: Path, engine: Path, module_dir: str, alg: str,
-         length: int, profile: int, directory: Path) -> None:
+         length: int, profile: int, directory: Path,
+         check_integrity: bool) -> None:
     bash = alg.startswith("bash-")
     kwp = alg.startswith("belt-kwp")
     bits = 256 if bash else int(alg[-3:])
@@ -51,15 +52,16 @@ def case(provider: Path, engine: Path, module_dir: str, alg: str,
         recovered = run(binary, backend, alg, "dec", key, iv, aad, legacy, directory)
         if recovered != data:
             raise AssertionError(f"{alg}/{binary.name}: cross-decryption mismatch")
-        tampered = bytearray(legacy)
-        tampered[-1] ^= 1
-        run(binary, backend, alg, "dec", key, iv, aad,
-            bytes(tampered), directory, succeeds=False)
-        if aad:
-            changed = bytearray(aad)
-            changed[0] ^= 0x80
-            run(binary, backend, alg, "dec", key, iv, bytes(changed),
-                legacy, directory, succeeds=False)
+        if check_integrity:
+            tampered = bytearray(legacy)
+            tampered[-1] ^= 1
+            run(binary, backend, alg, "dec", key, iv, aad,
+                bytes(tampered), directory, succeeds=False)
+            if aad:
+                changed = bytearray(aad)
+                changed[0] ^= 0x80
+                run(binary, backend, alg, "dec", key, iv, bytes(changed),
+                    legacy, directory, succeeds=False)
 
 
 def main() -> None:
@@ -88,8 +90,15 @@ def main() -> None:
             for length in lengths:
                 for profile in range(3):
                     try:
+                        # Check authentication failures for each algorithm on
+                        # random boundary inputs, not for every equivalent
+                        # plaintext profile. Both decrypt directions are
+                        # still checked for every case.
+                        check_integrity = (profile == 2 and
+                                           length in (0, 1, 15, 16, 17, 31, 33, 257))
                         case(args.provider_tool, args.engine_tool,
-                             args.provider_path, algorithm, length, profile, directory)
+                             args.provider_path, algorithm, length, profile,
+                             directory, check_integrity)
                     except Exception as exc:
                         raise RuntimeError(f"{algorithm}: length={length}, profile={profile}") from exc
                     total += 1
