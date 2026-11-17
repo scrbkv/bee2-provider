@@ -159,7 +159,7 @@ compiled directly into unit tests. The Bee2 dependency and test harnesses do
 not contribute to the reported percentages.
 
 The coverage job enforces 100% function execution and regression floors of
-80% line and 60% branch coverage. Successful tests are not equivalent to
+90% line and 72% branch coverage. Successful tests are not equivalent to
 complete behavioral coverage. Do not hide defensive error-handling branches
 or exclude them merely to improve the numbers. Atomic GCC coverage counters
 are required because the native concurrency test exercises shared provider

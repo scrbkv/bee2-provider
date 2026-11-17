@@ -308,7 +308,7 @@ jobs:
         run: |
           python3 -m pip install --break-system-packages 'gcovr>=8,<9'
           python3 -m gcovr --root . --filter 'src/' --print-summary \
-            --fail-under-function 100 --fail-under-line 80 --fail-under-branch 60 \
+            --fail-under-function 100 --fail-under-line 90 --fail-under-branch 72 \
             --json-summary build-coverage/coverage-summary.json
           python3 -m gcovr --root . --filter 'src/' \
             --html-details build-coverage/coverage.html
