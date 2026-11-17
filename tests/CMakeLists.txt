@@ -615,6 +615,36 @@ if(UNIX AND NOT APPLE)
         LABELS "bign;asn1;negative;fault_injection;native")
 endif()
 
+# Exercise allocation and copy failures in the provider's BIGN signature
+# context without replacing OpenSSL's process-wide allocation callbacks.
+if(UNIX AND NOT APPLE)
+    add_executable(bee2_bign_signature_fault
+        bign_signature_fault.c
+        ${CMAKE_SOURCE_DIR}/src/bign_signature.c
+        ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
+        ${CMAKE_SOURCE_DIR}/src/bign_common.c
+        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+    target_include_directories(bee2_bign_signature_fault PRIVATE
+        ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(bee2_bign_signature_fault SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/bee2/include)
+    target_link_libraries(bee2_bign_signature_fault PRIVATE
+        bee2_static OpenSSL::Crypto)
+    target_link_options(bee2_bign_signature_fault PRIVATE
+        "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=EVP_MD_up_ref"
+        "-Wl,--wrap=EVP_MD_CTX_new" "-Wl,--wrap=EVP_MD_CTX_copy_ex"
+        "-Wl,--wrap=EVP_MD_fetch")
+    if(BEE2_PROVIDER_ENABLE_COVERAGE)
+        target_compile_options(bee2_bign_signature_fault PRIVATE
+            --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(bee2_bign_signature_fault PRIVATE --coverage)
+    endif()
+    add_test(NAME bee2_bign_signature_fault
+        COMMAND bee2_bign_signature_fault $<TARGET_FILE_DIR:bee2_provider>)
+    set_tests_properties(bee2_bign_signature_fault PROPERTIES
+        LABELS "bign;signature;negative;fault_injection;native")
+endif()
+
 # Isolate allocation-failure and constant-time helper contracts without
 # introducing test-only hooks into the provider.
 if(UNIX AND NOT APPLE)
