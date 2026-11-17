@@ -37,7 +37,8 @@ static int check_variant(const char *name, const char *digest,
     size_t sig_len, md_size = 0;
     unsigned int deterministic = 1, reported = 0;
     char illegal[96];
-    char overlong[256] = "provider=bee2";+    size_t i;
+    char overlong[256] = "provider=bee2";
+    size_t i;
     OSSL_PARAM bad_algid[] = {
         OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_ALGORITHM_ID, tiny, sizeof(tiny)),
         OSSL_PARAM_END
