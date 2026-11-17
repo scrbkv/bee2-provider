@@ -4,6 +4,9 @@
 #include "bign_asn1.h"
 
 #include <openssl/core_names.h>
+#include <bee2/crypto/bign128.h>
+#include <bee2/crypto/bign192.h>
+#include <bee2/crypto/bign256.h>
 
 #ifndef OSSL_SIGNATURE_PARAM_DETERMINISTIC
 #define OSSL_SIGNATURE_PARAM_DETERMINISTIC "deterministic"
@@ -117,6 +120,23 @@ static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
     name = ctx->fixed_digest ? ctx->fixed_digest :
            (ctx->variant ? ctx->variant->default_digest : NULL);
     return bign_sig_mdname_to_hash_oid(name);
+}
+
+/* The public fixed-curve APIs cache their curve and precomputation.
+ * Their signature functions hardcode the hash OID; use the generic API
+ * whenever that OID does not match the selected digest. */
+static int bign_sig_fixed_curve(const bee2_bign_sig_ctx_t *ctx,
+                                const char *hash_oid) {
+    if (ctx->variant == bee2_bign_variant_256() &&
+        strcmp(hash_oid, BEE2_OID_BELT_HASH) == 0)
+        return 1;
+    if (ctx->variant == bee2_bign_variant_384() &&
+        strcmp(hash_oid, BEE2_OID_BASH384) == 0)
+        return 2;
+    if (ctx->variant == bee2_bign_variant_512() &&
+        strcmp(hash_oid, BEE2_OID_BASH512) == 0)
+        return 3;
+    return 0;
 }
 
 static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
@@ -256,18 +276,15 @@ static int bign_sig_hash_oneshot(const EVP_MD *md,
 }
 
 static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
-                              unsigned char *sig,
-                              size_t *siglen,
-                              size_t sigsize,
-                              const unsigned char *hash,
-                              size_t hashlen) {
+                              unsigned char *sig, size_t *siglen, size_t sigsize,
+                              const unsigned char *hash, size_t hashlen) {
     bign_params curve;
     bee2_bign_rng_t rng = {0};
-    size_t priv_len;
     size_t need_sig_len;
     const char *hash_oid;
     unsigned char oid_der[32];
     size_t oid_der_len = sizeof(oid_der);
+    err_t code = ERR_BAD_PARAMS;
     int ok = 0;
 
     if (!ctx->key || !ctx->key->has_priv || !siglen || !hash)
@@ -277,37 +294,43 @@ static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
         *siglen = need_sig_len;
         return 1;
     }
-    if (sigsize < need_sig_len)
+    if (sigsize < need_sig_len || hashlen != bee2_bign_priv_len(ctx->variant))
         return 0;
 
+    hash_oid = bign_sig_hash_oid(ctx);
+    if (!hash_oid)
+        return 0;
     rng.libctx = ctx->libctx;
     OPENSSL_cleanse(&curve, sizeof(curve));
-    priv_len = bee2_bign_priv_len(ctx->variant);
-
-    if (hashlen != priv_len)
-        goto cleanup;
-    hash_oid = bign_sig_hash_oid(ctx);
-    if (!hash_oid || bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK)
-        goto cleanup;
-
-    if (!bee2_bign_curve_init_std(ctx->variant, &curve))
-        goto cleanup;
-    if (ctx->deterministic) {
-        if (bignSign2(sig, &curve, oid_der, oid_der_len, hash, ctx->key->priv, NULL, 0) != ERR_OK)
+    switch (bign_sig_fixed_curve(ctx, hash_oid)) {
+    case 1:
+        code = ctx->deterministic ?
+            bign128Sign2(sig, hash, ctx->key->priv, NULL, 0) :
+            bign128Sign(sig, hash, ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
+    case 2:
+        code = ctx->deterministic ?
+            bign192Sign2(sig, hash, ctx->key->priv, NULL, 0) :
+            bign192Sign(sig, hash, ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
+    case 3:
+        code = ctx->deterministic ?
+            bign256Sign2(sig, hash, ctx->key->priv, NULL, 0) :
+            bign256Sign(sig, hash, ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
+    default:
+        if (bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK ||
+            !bee2_bign_curve_init_std(ctx->variant, &curve))
             goto cleanup;
-    } else {
-        if (bignSign(sig,
-                     &curve,
-                     oid_der,
-                     oid_der_len,
-                     hash,
-                     ctx->key->priv,
-                     (gen_i)bee2_bign_openssl_rng,
-                     &rng) != ERR_OK ||
-            rng.failed)
-            goto cleanup;
+        code = ctx->deterministic ?
+            bignSign2(sig, &curve, oid_der, oid_der_len, hash,
+                      ctx->key->priv, NULL, 0) :
+            bignSign(sig, &curve, oid_der, oid_der_len, hash,
+                     ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
     }
-
+    if (code != ERR_OK || rng.failed)
+        goto cleanup;
     *siglen = need_sig_len;
     ok = 1;
 
@@ -317,34 +340,44 @@ cleanup:
 }
 
 static int bign_sig_verify_hash(const bee2_bign_sig_ctx_t *ctx,
-                                const unsigned char *sig,
-                                size_t siglen,
-                                const unsigned char *hash,
-                                size_t hashlen) {
+                                const unsigned char *sig, size_t siglen,
+                                const unsigned char *hash, size_t hashlen) {
     bign_params curve;
     const char *hash_oid;
     unsigned char oid_der[32];
     size_t oid_der_len = sizeof(oid_der);
-    int ok = 0;
+    err_t code = ERR_BAD_PARAMS;
 
     if (!ctx->key || !ctx->key->has_pub || !sig || !hash)
         return 0;
-    if (siglen != bee2_bign_sig_len(ctx->variant))
-        return 0;
-    if (hashlen != bee2_bign_priv_len(ctx->variant))
+    if (siglen != bee2_bign_sig_len(ctx->variant) ||
+        hashlen != bee2_bign_priv_len(ctx->variant))
         return 0;
     hash_oid = bign_sig_hash_oid(ctx);
-    if (!hash_oid || bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK)
+    if (!hash_oid)
         return 0;
 
     OPENSSL_cleanse(&curve, sizeof(curve));
-    if (!bee2_bign_curve_init_std(ctx->variant, &curve))
-        goto cleanup;
-    ok = (bignVerify(&curve, oid_der, oid_der_len, hash, sig, ctx->key->pub) == ERR_OK);
-
-cleanup:
+    switch (bign_sig_fixed_curve(ctx, hash_oid)) {
+    case 1:
+        code = bign128Verify(hash, sig, ctx->key->pub);
+        break;
+    case 2:
+        code = bign192Verify(hash, sig, ctx->key->pub);
+        break;
+    case 3:
+        code = bign256Verify(hash, sig, ctx->key->pub);
+        break;
+    default:
+        if (bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK ||
+            !bee2_bign_curve_init_std(ctx->variant, &curve))
+            break;
+        code = bignVerify(&curve, oid_der, oid_der_len, hash,
+                          sig, ctx->key->pub);
+        break;
+    }
     bee2_bign_cleanse(&curve, sizeof(curve));
-    return ok;
+    return code == ERR_OK;
 }
 
 static int bign_sig_reset_mdctx(bee2_bign_sig_ctx_t *ctx) {

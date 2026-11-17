@@ -114,7 +114,6 @@ static int bign_keytransport_encrypt(void *vctx,
                                      const unsigned char *in,
                                      size_t inlen) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
-    bign_params curve;
     bee2_bign_rng_t rng = {0};
     size_t need;
     int ok = 0;
@@ -131,12 +130,8 @@ static int bign_keytransport_encrypt(void *vctx,
     if (outsize < need)
         return 0;
     rng.libctx = ctx->libctx;
-    if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
-        goto cleanup;
-    if (bignKeyWrap(out, &curve, in, inlen, ctx->header, ctx->key->pub,
-                    bee2_bign_openssl_rng, &rng) !=
-            ERR_OK ||
-        rng.failed)
+    if (!bee2_bign_key_wrap(ctx->key->variant, out, in, inlen,
+                            ctx->header, ctx->key->pub, &rng) || rng.failed)
         goto cleanup;
     *outlen = need;
     ok = 1;
@@ -144,7 +139,6 @@ static int bign_keytransport_encrypt(void *vctx,
 cleanup:
     if (!ok)
         bee2_bign_cleanse(out, need);
-    bee2_bign_cleanse(&curve, sizeof(curve));
     return ok;
 }
 
@@ -155,7 +149,6 @@ static int bign_keytransport_decrypt(void *vctx,
                                      const unsigned char *in,
                                      size_t inlen) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
-    bign_params curve;
     size_t overhead;
     size_t need;
     int ok = 0;
@@ -171,9 +164,8 @@ static int bign_keytransport_decrypt(void *vctx,
     }
     if (outsize < need)
         return 0;
-    if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
-        goto cleanup;
-    if (bignKeyUnwrap(out, &curve, in, inlen, ctx->header, ctx->key->priv) != ERR_OK)
+    if (!bee2_bign_key_unwrap(ctx->key->variant, out, in, inlen,
+                              ctx->header, ctx->key->priv))
         goto cleanup;
     *outlen = need;
     ok = 1;
@@ -181,7 +173,6 @@ static int bign_keytransport_decrypt(void *vctx,
 cleanup:
     if (!ok)
         bee2_bign_cleanse(out, need);
-    bee2_bign_cleanse(&curve, sizeof(curve));
     return ok;
 }
 

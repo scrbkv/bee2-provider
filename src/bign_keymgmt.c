@@ -589,7 +589,6 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     bee2_bign_key_t *key = NULL;
     size_t priv_len;
     size_t pub_len;
-    bign_params curve;
     bee2_bign_rng_t rng = {0};
     int ok = 0;
 
@@ -607,9 +606,7 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
 
     priv_len = bee2_bign_priv_len(gctx->variant);
     pub_len = bee2_bign_pub_len(gctx->variant);
-    if (!bee2_bign_curve_init_std(gctx->variant, &curve))
-        goto cleanup;
-    if (bignKeypairGen(key->priv, key->pub, &curve, (gen_i)bee2_bign_openssl_rng, &rng) != ERR_OK ||
+    if (!bee2_bign_keypair_generate(gctx->variant, key->priv, key->pub, &rng) ||
         rng.failed)
         goto cleanup;
 
@@ -627,7 +624,6 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     ok = 1;
 
 cleanup:
-    bee2_bign_cleanse(&curve, sizeof(curve));
     if (!ok) {
         bign_key_free(key);
         key = NULL;
