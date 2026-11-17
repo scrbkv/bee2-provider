@@ -81,8 +81,10 @@ static int test_generated_key(const char *alg, const char *curve_name,
         OSSL_PARAM params[] = {
             OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
                                               (char *)groups[i], 0),
-            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
-                                               pub, pub_len),
+            OSSL_PARAM_construct_octet_string(
+                i == 2 ? OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY :
+                         OSSL_PKEY_PARAM_PUB_KEY,
+                pub, pub_len),
             /* A public-only import must not retain this private component. */
             OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
                                                priv, priv_len),

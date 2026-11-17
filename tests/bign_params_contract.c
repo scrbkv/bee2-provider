@@ -143,6 +143,61 @@ end:
 }
 
 
+/* Import must reject a valid point that does not belong to the scalar.
+ * A failed EVP_PKEY_set_params must also leave the existing key unchanged. */
+static int check_mismatched_pair(EVP_PKEY *alice, EVP_PKEY *bob, const char *algorithm)
+{
+    unsigned char private_key[64], foreign_public[128], expected_public[128];
+    unsigned char actual_public[128];
+    size_t private_len = 0, foreign_len = 0, expected_len = 0, actual_len = 0;
+    EVP_PKEY_CTX *import = NULL;
+    EVP_PKEY *invalid = NULL;
+    OSSL_PARAM params[3];
+    int ok = 0;
+
+    if (EVP_PKEY_get_octet_string_param(alice, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        private_key, sizeof(private_key),
+                                        &private_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(alice, OSSL_PKEY_PARAM_PUB_KEY,
+                                        expected_public, sizeof(expected_public),
+                                        &expected_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(bob, OSSL_PKEY_PARAM_PUB_KEY,
+                                        foreign_public, sizeof(foreign_public),
+                                        &foreign_len) <= 0 ||
+        expected_len != foreign_len ||
+        CRYPTO_memcmp(expected_public, foreign_public, expected_len) == 0)
+        goto end;
+
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
+                                                   private_key, private_len);
+    params[1] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                                   foreign_public, foreign_len);
+    params[2] = OSSL_PARAM_construct_end();
+    import = EVP_PKEY_CTX_new_from_name(NULL, algorithm, "provider=bee2");
+    if (!import || EVP_PKEY_fromdata_init(import) <= 0 ||
+        EVP_PKEY_fromdata(import, &invalid, EVP_PKEY_KEYPAIR, params) > 0 ||
+        EVP_PKEY_set_params(alice, params) > 0 ||
+        EVP_PKEY_get_octet_string_param(alice, OSSL_PKEY_PARAM_PUB_KEY,
+                                        actual_public, sizeof(actual_public),
+                                        &actual_len) <= 0 ||
+        actual_len != expected_len ||
+        CRYPTO_memcmp(actual_public, expected_public, expected_len) != 0)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN mismatched private/public import accepted: %s\n",
+                algorithm);
+    EVP_PKEY_free(invalid);
+    EVP_PKEY_CTX_free(import);
+    OPENSSL_cleanse(private_key, sizeof(private_key));
+    OPENSSL_cleanse(foreign_public, sizeof(foreign_public));
+    OPENSSL_cleanse(expected_public, sizeof(expected_public));
+    OPENSSL_cleanse(actual_public, sizeof(actual_public));
+    return ok;
+}
+
 static int check_keygen_from_template(EVP_PKEY *template)
 {
     EVP_PKEY_CTX *gen = EVP_PKEY_CTX_new_from_pkey(
@@ -183,7 +238,9 @@ int main(int argc, char **argv)
         alice = generate_key(names[i]);
         bob = generate_key(names[i]);
         if (alice == NULL || bob == NULL || !check_key_params(alice) ||
-            !check_exchange_params(alice, bob) || !check_keygen_from_template(alice)) {
+            !check_exchange_params(alice, bob) ||
+            !check_mismatched_pair(alice, bob, names[i]) ||
+            !check_keygen_from_template(alice)) {
             fprintf(stderr, "BIGN parameter rollback failed for %s\n", names[i]);
             goto end;
         }

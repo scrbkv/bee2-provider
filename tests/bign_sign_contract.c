@@ -5,6 +5,8 @@
 #endif
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/objects.h>
+#include <openssl/x509.h>
 #include <openssl/provider.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +17,7 @@ typedef struct {
     size_t priv_len;
     size_t sig_len;
     const char *digest;
+    const char *signature_oid;
 } bign_case_t;
 
 static void fill_priv(unsigned char *priv, size_t len, unsigned char seed) {
@@ -51,6 +54,39 @@ static EVP_PKEY *build_private_key(const bign_case_t *tc, const unsigned char *p
 cleanup:
     EVP_PKEY_CTX_free(kctx);
     return pkey;
+}
+
+/* A signature context must expose its default AlgorithmIdentifier before
+ * any explicit digest parameter is set (including the generic BIGN aliases). */
+static int check_default_algorithm_id(EVP_PKEY_CTX *ctx, const char *expected_oid)
+{
+    unsigned char der[128];
+    const unsigned char *p = der;
+    const ASN1_OBJECT *oid = NULL;
+    X509_ALGOR *algorithm = NULL;
+    char actual_oid[80];
+    int type = V_ASN1_UNDEF, ok = 0;
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_ALGORITHM_ID,
+                                der, sizeof(der)),
+        OSSL_PARAM_END
+    };
+
+    if (EVP_PKEY_CTX_get_params(ctx, params) <= 0 ||
+        params[0].return_size == 0 ||
+        params[0].return_size > sizeof(der))
+        goto end;
+    algorithm = d2i_X509_ALGOR(NULL, &p, (long)params[0].return_size);
+    if (!algorithm || p != der + params[0].return_size)
+        goto end;
+    X509_ALGOR_get0(&oid, &type, NULL, algorithm);
+    if (oid && type == V_ASN1_NULL &&
+        OBJ_obj2txt(actual_oid, sizeof(actual_oid), oid, 1) > 0 &&
+        strcmp(actual_oid, expected_oid) == 0)
+        ok = 1;
+end:
+    X509_ALGOR_free(algorithm);
+    return ok;
 }
 
 static int run_sign_verify_case(const bign_case_t *tc, unsigned char seed) {
@@ -91,6 +127,10 @@ static int run_sign_verify_case(const bign_case_t *tc, unsigned char seed) {
     }
     if (EVP_PKEY_sign_init(sctx) <= 0) {
         fprintf(stderr, "[FAIL] EVP_PKEY_sign_init(%s)\n", tc->alg);
+        goto cleanup;
+    }
+    if (!check_default_algorithm_id(sctx, tc->signature_oid)) {
+        fprintf(stderr, "[FAIL] default BIGN AlgorithmIdentifier for %s\n", tc->alg);
         goto cleanup;
     }
     sign_params[0] = OSSL_PARAM_construct_uint(OSSL_SIGNATURE_PARAM_DETERMINISTIC, &deterministic);
@@ -306,9 +346,9 @@ int main(int argc, char **argv) {
     OSSL_PROVIDER *default_prov = NULL;
     OSSL_PROVIDER *bee2_prov = NULL;
     static const bign_case_t cases[] = {
-        {"bign-256", 32u, 48u, "belt-hash"},
-        {"bign-384", 48u, 72u, "bash384"},
-        {"bign-512", 64u, 96u, "bash512"}};
+        {"bign-256", 32u, 48u, "belt-hash", "1.2.112.0.2.0.34.101.45.12"},
+        {"bign-384", 48u, 72u, "bash384", "1.2.112.0.2.0.34.101.45.14"},
+        {"bign-512", 64u, 96u, "bash512", "1.2.112.0.2.0.34.101.45.15"}};
     size_t i;
 
     if (argc != 2 && argc != 3) {
