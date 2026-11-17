@@ -121,8 +121,6 @@ static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     unsigned int iterations;
     size_t salt_len;
 
-    if (!ctx)
-        return 0;
     if (!params)
         return 1;
     iterations = ctx->pbkdf2_iterations;
@@ -320,8 +318,6 @@ static int bign_decoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     const OSSL_PARAM *p;
     unsigned int max_iterations;
 
-    if (ctx == NULL)
-        return 0;
     if (params == NULL)
         return 1;
     p = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_MAX_DECODE_ITER);

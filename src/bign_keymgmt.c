@@ -472,8 +472,6 @@ static int bign_set_params(void *vkey, const OSSL_PARAM params[]) {
     bee2_bign_key_t *key = vkey;
     int selection = 0;
 
-    if (!vkey)
-        return 0;
     if (!params)
         return 1;
     if (OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME))
@@ -499,8 +497,6 @@ static void *bign_dup(const void *vkey_from, int selection) {
     size_t priv_len;
     size_t pub_len;
 
-    if (!src)
-        return NULL;
     if (!src->variant)
         return NULL;
     dst = bign_new_common(src->variant);
@@ -593,8 +589,6 @@ static int bign_gen_set_template(void *vgenctx, void *vtempl) {
 static int bign_gen_set_params(void *vgenctx, const OSSL_PARAM params[]) {
     bee2_bign_gen_ctx_t *gctx = vgenctx;
 
-    if (!gctx)
-        return 0;
     return bign_apply_encoding_params(&gctx->encode_explicit, &gctx->encode_cofactor, params);
 }
 
@@ -615,7 +609,7 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
 
     (void)cb;
     (void)cbarg;
-    if (!gctx || !gctx->variant)
+    if (!gctx->variant)
         return NULL;
     rng.libctx = gctx->libctx;
 

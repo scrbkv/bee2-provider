@@ -101,8 +101,6 @@ static const char *bign_sig_mdname_to_hash_oid(const char *mdname) {
 
 /* Bee2 signs the DER OID of the hash function, not of the signature scheme. */
 static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
-    if (!ctx)
-        return NULL;
     if (ctx->hspec)
         return ctx->md && ctx->hash_oid[0] != '\0' ? ctx->hash_oid : NULL;
     if (ctx->hash_oid[0] != '\0')
@@ -117,8 +115,6 @@ static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
 }
 
 static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
-    if (!ctx)
-        return NULL;
     if (ctx->hspec)
         return BEE2_OID_BIGN_WITH_HSPEC;
     if (ctx->md) {
@@ -145,8 +141,6 @@ static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
 static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
     const char *oid;
 
-    if (!ctx)
-        return 0;
     ctx->aid_len = 0;
     if (ctx->hspec && (ctx->md == NULL || ctx->hash_oid[0] == '\0'))
         return 0;
@@ -179,8 +173,6 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
     bee2_bign_sig_ctx_t candidate;
     const char *properties;
 
-    if (ctx == NULL)
-        return 0;
     if (mdname == NULL || mdname[0] == '\0') {
         if (ctx->fixed_digest)
             return 0;
@@ -439,8 +431,6 @@ static void *bign_sig_copyctx(void *vctx, int copy_digest_state) {
     bee2_bign_sig_ctx_t *src = vctx;
     bee2_bign_sig_ctx_t *dst;
 
-    if (!src)
-        return NULL;
     dst = OPENSSL_zalloc(sizeof(*dst));
     if (!dst)
         return NULL;
@@ -494,8 +484,6 @@ static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
                           int for_sign, int digest_operation) {
     bee2_bign_sig_ctx_t *next;
 
-    if (!ctx)
-        return 0;
     next = bign_sig_copyctx(ctx, 0);
     if (next == NULL)
         goto err;
@@ -698,8 +686,6 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     unsigned int new_deterministic;
     int ok = 1;
 
-    if (!ctx)
-        return 0;
     if (!params)
         return 1;
     new_deterministic = ctx->deterministic;
@@ -776,8 +762,6 @@ static int bign_sig_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     OSSL_PARAM *p;
     int md_size;
 
-    if (!ctx)
-        return 0;
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID);
     if (p) {
