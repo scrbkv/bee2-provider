@@ -50,7 +50,7 @@ static int test_faults(void)
     OSSL_FUNC_keymgmt_gen_fn *generate = NULL;
     OSSL_FUNC_keymgmt_gen_cleanup_fn *free_generator = NULL;
     const OSSL_DISPATCH *fn;
-    void *ctx = NULL, *key = NULL, *copy = NULL;
+    void *ctx = NULL, *key = NULL, *copy = NULL, *temp_generator = NULL;
     int ok = 0;
 
     for (fn = bee2_bign_256_keymgmt_functions; fn->function_id != 0; ++fn) {
@@ -104,9 +104,9 @@ static int test_faults(void)
 
     failure = FAILURE_ALLOCATION;
     calls = 0;
-    copy = new_generator(NULL, OSSL_KEYMGMT_SELECT_KEYPAIR, NULL);
+    temp_generator = new_generator(NULL, OSSL_KEYMGMT_SELECT_KEYPAIR, NULL);
     failure = FAILURE_NONE;
-    if (copy != NULL || calls != 1)
+    if (temp_generator != NULL || calls != 1)
         goto end;
 
     failure = FAILURE_ALLOCATION;
@@ -144,8 +144,12 @@ end:
         free_key(copy);
         free_key(key);
     }
-    if (free_generator != NULL)
-        free_generator(ctx);
+    if (free_generator != NULL) {
+        if (temp_generator != NULL)
+            free_generator(temp_generator);
+        if (ctx != NULL)
+            free_generator(ctx);
+    }
     return ok;
 }
 
