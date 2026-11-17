@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, test-coverage-and-interop-20261116]
   pull_request:
   workflow_dispatch:
 

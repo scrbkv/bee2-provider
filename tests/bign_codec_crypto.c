@@ -8,6 +8,9 @@
 #include <openssl/encoder.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/kdf.h>
+#include <openssl/core_names.h>
+#include <stdint.h>
 #include <openssl/provider.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
@@ -436,6 +439,145 @@ next:
     return 1;
 }
 
+
+/* A valid KWP authentication tag must not make trailing plaintext bytes
+ * acceptable after the PKCS#8 DER object. PKCS8_decrypt_ex() alone does
+ * not guarantee that its ASN.1 decoder consumed the entire plaintext. */
+static int check_pbes2_plaintext_trailing_der(const BUF_MEM *encoded, EVP_PKEY *key)
+{
+    const unsigned char *p = (const unsigned char *)encoded->data;
+    const ASN1_OBJECT *oid = NULL;
+    const void *value = NULL;
+    X509_SIG *sig = NULL;
+    PBE2PARAM *pbe = NULL;
+    PBKDF2PARAM *pbkdf2 = NULL;
+    X509_ALGOR *outer = NULL;
+    ASN1_OCTET_STRING *ciphertext = NULL;
+    OSSL_ENCODER_CTX *encoder = NULL;
+    EVP_KDF *kdf = NULL;
+    EVP_KDF_CTX *kdf_ctx = NULL;
+    EVP_CIPHER *cipher = NULL;
+    EVP_CIPHER_CTX *cipher_ctx = NULL;
+    EVP_PKEY *unexpected = NULL;
+    BIO *plain_bio = NULL;
+    BUF_MEM *plain = NULL;
+    unsigned char derived[32] = {0};
+    unsigned char *invalid_plain = NULL, *wrapped = NULL, *mutated = NULL;
+    const unsigned char *salt = NULL;
+    const char *cipher_name;
+    size_t salt_len, key_len;
+    uint64_t iterations;
+    int bits = EVP_PKEY_get_bits(key);
+    int typ, part = 0, last = 0, mutated_len = 0, ok = 0;
+    BUF_MEM candidate = {0};
+
+    key_len = bits == 256 ? 16u : bits == 384 ? 24u : bits == 512 ? 32u : 0;
+    cipher_name = bits == 256 ? "belt-kwp128" :
+                  bits == 384 ? "belt-kwp192" : "belt-kwp256";
+    if (key_len == 0 || encoded->length > LONG_MAX)
+        goto end;
+    sig = d2i_X509_SIG(NULL, &p, (long)encoded->length);
+    if (sig == NULL || p != (const unsigned char *)encoded->data + encoded->length)
+        goto end;
+    X509_SIG_getm(sig, &outer, &ciphertext);
+    if (outer == NULL || ciphertext == NULL)
+        goto end;
+    X509_ALGOR_get0(&oid, &typ, &value, outer);
+    if (OBJ_obj2nid(oid) != NID_pbes2 ||
+        typ != V_ASN1_SEQUENCE || value == NULL)
+        goto end;
+    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
+    if (pbe == NULL)
+        goto end;
+    X509_ALGOR_get0(&oid, &typ, &value, pbe->keyfunc);
+    if (OBJ_obj2nid(oid) != NID_id_pbkdf2 ||
+        typ != V_ASN1_SEQUENCE || value == NULL)
+        goto end;
+    pbkdf2 = ASN1_item_unpack((const ASN1_STRING *)value,
+                              ASN1_ITEM_rptr(PBKDF2PARAM));
+    if (pbkdf2 == NULL || pbkdf2->salt == NULL ||
+        pbkdf2->salt->type != V_ASN1_OCTET_STRING ||
+        pbkdf2->salt->value.octet_string == NULL ||
+        pbkdf2->iter == NULL)
+        goto end;
+    typ = ASN1_STRING_length(pbkdf2->salt->value.octet_string);
+    if (typ <= 0 || ASN1_INTEGER_get(pbkdf2->iter) <= 0)
+        goto end;
+    salt_len = (size_t)typ;
+    salt = ASN1_STRING_get0_data(pbkdf2->salt->value.octet_string);
+    iterations = (uint64_t)ASN1_INTEGER_get(pbkdf2->iter);
+
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, "DER", "PrivateKeyInfo", "provider=bee2");
+    plain_bio = BIO_new(BIO_s_mem());
+    if (encoder == NULL || plain_bio == NULL ||
+        OSSL_ENCODER_to_bio(encoder, plain_bio) <= 0 ||
+        BIO_get_mem_ptr(plain_bio, &plain) <= 0 || plain == NULL ||
+        plain->length > INT_MAX - 32)
+        goto end;
+    invalid_plain = OPENSSL_malloc(plain->length + 1);
+    wrapped = OPENSSL_malloc(plain->length + 33);
+    if (invalid_plain == NULL || wrapped == NULL)
+        goto end;
+    memcpy(invalid_plain, plain->data, plain->length);
+    invalid_plain[plain->length] = 0;
+
+    kdf = EVP_KDF_fetch(NULL, "belt-pbkdf", "provider=bee2");
+    kdf_ctx = kdf != NULL ? EVP_KDF_CTX_new(kdf) : NULL;
+    cipher = EVP_CIPHER_fetch(NULL, cipher_name, "provider=bee2");
+    cipher_ctx = cipher != NULL ? EVP_CIPHER_CTX_new() : NULL;
+    if (kdf_ctx == NULL || cipher_ctx == NULL)
+        goto end;
+    {
+        OSSL_PARAM params[] = {
+            OSSL_PARAM_construct_octet_string(
+                OSSL_KDF_PARAM_PASSWORD, (void *)password, sizeof(password) - 1),
+            OSSL_PARAM_construct_octet_string(
+                OSSL_KDF_PARAM_SALT, (void *)salt, salt_len),
+            OSSL_PARAM_construct_uint64(OSSL_KDF_PARAM_ITER, &iterations),
+            OSSL_PARAM_construct_end()
+        };
+
+        if (EVP_KDF_derive(kdf_ctx, derived, sizeof(derived), params) <= 0)
+            goto end;
+    }
+    if (EVP_CipherInit_ex2(cipher_ctx, cipher, derived, NULL, 1, NULL) <= 0 ||
+        EVP_CipherUpdate(cipher_ctx, wrapped, &part,
+                         invalid_plain, (int)(plain->length + 1)) <= 0 ||
+        EVP_CipherFinal_ex(cipher_ctx, wrapped + part, &last) <= 0 ||
+        !ASN1_OCTET_STRING_set(ciphertext, wrapped, part + last))
+        goto end;
+    mutated_len = i2d_X509_SIG(sig, &mutated);
+    if (mutated_len <= 0 || mutated == NULL)
+        goto end;
+    candidate.data = (char *)mutated;
+    candidate.length = (size_t)mutated_len;
+    if (decode_key(&unexpected, "DER", &candidate,
+                   password, sizeof(password) - 1) || unexpected != NULL)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN PBES2 accepted authenticated trailing DER data\n");
+    ERR_clear_error();
+    EVP_PKEY_free(unexpected);
+    OPENSSL_free(mutated);
+    OPENSSL_clear_free(wrapped, plain != NULL ? plain->length + 33 : 0);
+    OPENSSL_clear_free(invalid_plain, plain != NULL ? plain->length + 1 : 0);
+    OPENSSL_cleanse(derived, sizeof(derived));
+    EVP_CIPHER_CTX_free(cipher_ctx);
+    EVP_CIPHER_free(cipher);
+    EVP_KDF_CTX_free(kdf_ctx);
+    EVP_KDF_free(kdf);
+    BIO_free(plain_bio);
+    OSSL_ENCODER_CTX_free(encoder);
+    PBKDF2PARAM_free(pbkdf2);
+    PBE2PARAM_free(pbe);
+    X509_SIG_free(sig);
+    return ok;
+}
+
 static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
 {
     OSSL_ENCODER_CTX *encoder = NULL;
@@ -480,7 +622,8 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
         goto cleanup;
     if ((encrypted && strcmp(format, "DER") == 0 &&
          (!check_pbkdf2_params(data, oid, key_len) ||
-           !check_pbes2_variants(data, key))) ||
+           !check_pbes2_variants(data, key) ||
+           !check_pbes2_plaintext_trailing_der(data, key))) ||
         !decode_key(&decoded, format, data, password, sizeof(password) - 1) ||
         decoded == NULL || !same_private_key(key, decoded))
         goto cleanup;
