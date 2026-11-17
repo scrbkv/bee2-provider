@@ -133,6 +133,14 @@ conversion and validation, fixed STB key/IV/tag requirements, actual
 sequences. `set_ctx_params(NULL)` must remain a successful no-op where the
 provider API specifies it. A KDF must itself reject unsupported output sizes.
 
+OpenSSL 3.5 and newer also have `EVP_CipherInit_SKEY()`. When a cipher
+does not implement an SKEY-specific initialization callback, libcrypto may
+pass the raw key and its actual length to the ordinary provider initializer.
+Therefore the provider must still validate fixed key and IV lengths in that
+callback; the EVP cipher's advertised fixed length is not sufficient on its
+own. The native negative-contract test covers this public SKEY fallback
+when building against OpenSSL 3.5+.
+
 Tests should preferentially exercise malformed inputs through public EVP,
 encoder/decoder, and STORE interfaces. Direct provider dispatch is useful for
 valid operation equivalence and for explicit provider contracts, but not to

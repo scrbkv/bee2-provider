@@ -1,5 +1,6 @@
 /* Check invalid operation sequences through the public EVP interface. */
 #include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
 #include <stdio.h>
@@ -72,6 +73,55 @@ done:
     return ok;
 }
 
+
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+/* EVP_CipherInit_SKEY falls back to the legacy init callback and supplies
+ * the raw SKEY length. Unlike EVP_EncryptInit_ex2, it need not match the
+ * fixed key length obtained from EVP_CIPHER_CTX.
+ */
+static int check_skey_cipher_lengths(void)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, "belt-cbc256", "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new(), *reference = EVP_CIPHER_CTX_new();
+    unsigned char key[32] = {0}, iv[16] = {0}, input[32] = {0};
+    unsigned char output[48], expected[48];
+    EVP_SKEY *short_key = EVP_SKEY_import_raw_key(NULL, OSSL_SKEY_TYPE_GENERIC,
+                                                  key, 16, NULL);
+    EVP_SKEY *correct_key = EVP_SKEY_import_raw_key(NULL, OSSL_SKEY_TYPE_GENERIC,
+                                                    key, sizeof(key), NULL);
+    int written = 0, tail = 0, reference_written = 0, reference_tail = 0;
+    int ok = 0;
+
+    if (!cipher || !ctx || !reference || !short_key || !correct_key ||
+        EVP_CipherInit_SKEY(ctx, cipher, short_key, iv, sizeof(iv), 1, NULL) > 0 ||
+        EVP_CipherInit_SKEY(ctx, cipher, correct_key, iv, sizeof(iv) - 1, 1, NULL) > 0 ||
+        EVP_CipherInit_SKEY(ctx, cipher, correct_key, iv, sizeof(iv), 1, NULL) <= 0 ||
+        EVP_CIPHER_CTX_set_padding(ctx, 0) <= 0 ||
+        EVP_EncryptUpdate(ctx, output, &written, input, sizeof(input)) <= 0 ||
+        EVP_EncryptFinal_ex(ctx, output + written, &tail) <= 0 ||
+        EVP_EncryptInit_ex2(reference, cipher, key, iv, NULL) <= 0 ||
+        EVP_CIPHER_CTX_set_padding(reference, 0) <= 0 ||
+        EVP_EncryptUpdate(reference, expected, &reference_written,
+                          input, sizeof(input)) <= 0 ||
+        EVP_EncryptFinal_ex(reference, expected + reference_written,
+                            &reference_tail) <= 0 ||
+        written + tail != reference_written + reference_tail ||
+        CRYPTO_memcmp(output, expected, (size_t)(written + tail)) != 0)
+        goto done;
+
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "BELT-CBC SKEY fallback key/IV length contract failed\n");
+    EVP_SKEY_free(short_key);
+    EVP_SKEY_free(correct_key);
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_CTX_free(reference);
+    EVP_CIPHER_free(cipher);
+    return ok;
+}
+#endif
+
 static int check_mac(void)
 {
     unsigned char key[32] = {0}, output[8];
@@ -138,6 +188,10 @@ int main(int argc, char **argv)
          check_cipher("belt-cfb256", 32, 16, 0) &&
          check_sde_failed_init() &&
          check_mac() && check_bign_private_key();
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+    if (ok)
+        ok = check_skey_cipher_lengths();
+#endif
 end:
     OSSL_PROVIDER_unload(bee2);
     OSSL_PROVIDER_unload(def);
