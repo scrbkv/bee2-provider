@@ -136,10 +136,21 @@ static int run_sign_verify_case(const bign_case_t *tc, unsigned char seed) {
         fprintf(stderr, "[FAIL] EVP_PKEY_verify_init(%s)\n", tc->alg);
         goto cleanup;
     }
+    /* Signature-size and digest-length bounds belong to the BIGN operation. */
+    {
+        size_t short_len = sig_len - 1;
+
+        if (EVP_PKEY_sign(sctx, sig_again, &short_len, hash, hash_len) > 0 ||
+            EVP_PKEY_sign(sctx, sig_again, &sig_again_len, hash, hash_len - 1) > 0)
+            goto cleanup;
+    }
     if (EVP_PKEY_verify(vctx, sig, sig_len, hash, hash_len) != 1) {
         fprintf(stderr, "[FAIL] EVP_PKEY_verify(valid, %s)\n", tc->alg);
         goto cleanup;
     }
+    if (EVP_PKEY_verify(vctx, sig, sig_len - 1, hash, hash_len) > 0 ||
+        EVP_PKEY_verify(vctx, sig, sig_len, hash, hash_len - 1) > 0)
+        goto cleanup;
     if (EVP_PKEY_verify(vctx, sig, sig_len, hash_bad, hash_len) == 1) {
         fprintf(stderr, "[FAIL] EVP_PKEY_verify(invalid, %s) unexpectedly passed\n", tc->alg);
         goto cleanup;

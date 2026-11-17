@@ -36,6 +36,15 @@ static int check_key_params(EVP_PKEY *key)
     char group_name[] = OSSL_PKEY_EC_ENCODING_GROUP;
     char invalid_name[] = "invalid";
     unsigned char invalid_pub[1] = {0};
+    unsigned int malformed_value = 7;
+    OSSL_PARAM bad_encoding_type[] = {
+        OSSL_PARAM_uint(OSSL_PKEY_PARAM_EC_ENCODING, &malformed_value),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM bad_group_type[] = {
+        OSSL_PARAM_uint(OSSL_PKEY_PARAM_GROUP_NAME, &malformed_value),
+        OSSL_PARAM_END
+    };
     OSSL_PARAM bad_encoding[] = {
         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_EC_ENCODING, explicit_name, sizeof(explicit_name)),
         OSSL_PARAM_utf8_string("enc_params", invalid_name, sizeof(invalid_name)),
@@ -60,6 +69,11 @@ static int check_key_params(EVP_PKEY *key)
         !get_encoding(key, OSSL_PKEY_EC_ENCODING_EXPLICIT))
         return 0;
     if (EVP_PKEY_set_params(key, bad_key) > 0 ||
+        !get_encoding(key, OSSL_PKEY_EC_ENCODING_EXPLICIT))
+        return 0;
+    /* EVP passes these typed parameters to KEYMGMT; reject atomically. */
+    if (EVP_PKEY_set_params(key, bad_encoding_type) > 0 ||
+        EVP_PKEY_set_params(key, bad_group_type) > 0 ||
         !get_encoding(key, OSSL_PKEY_EC_ENCODING_EXPLICIT))
         return 0;
     return 1;
