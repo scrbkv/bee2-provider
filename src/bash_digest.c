@@ -67,8 +67,6 @@ static void *bash_newctx(void *provctx, const bash_variant_t *var) {
 
 static void bash_freectx(void *vctx) {
     bee2_bash_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

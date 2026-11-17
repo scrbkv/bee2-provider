@@ -62,8 +62,6 @@ BELT_SDE_NEWCTX(256)
 
 static void belt_sde_freectx(void *vctx) {
     bee2_belt_sde_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

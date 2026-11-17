@@ -132,8 +132,6 @@ BELT_AEAD_NEWCTX(256, dwp, belt_dwp_descriptor)
 
 static void belt_aead_freectx(void *vctx) {
     bee2_belt_aead_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

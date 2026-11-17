@@ -73,8 +73,6 @@ static void *belt_kwp256_newctx(void *p) {
 
 static void belt_kwp_freectx(void *vctx) {
     bee2_belt_kwp_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

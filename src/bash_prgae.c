@@ -103,8 +103,6 @@ static void *bash_prgae_newctx_for_variant(void *provctx, const bash_prgae_varia
 
 static void bash_prgae_freectx(void *vctx) {
     bee2_bash_prgae_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 

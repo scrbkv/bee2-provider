@@ -25,8 +25,6 @@ static void *provider_belt_hash_newctx(void *provctx) {
 
 static void provider_belt_hash_freectx(void *vctx) {
     belt_hash_ctx_t *state = vctx;
-    if (!state)
-        return;
     OPENSSL_clear_free(state, sizeof(*state));
 }
 

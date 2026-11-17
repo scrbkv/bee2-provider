@@ -54,8 +54,6 @@ static void *provider_belt_mac256_newctx(void *p) {
 
 static void provider_belt_mac_freectx(void *vctx) {
     bee2_belt_mac_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 
