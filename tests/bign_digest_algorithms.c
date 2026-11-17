@@ -48,6 +48,23 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
     const OSSL_DISPATCH *function;
     char reported[64] = {0};
     char wrong[64];
+    char deterministic_mode[] = "deterministic";
+    char invalid_mode[] = "randomized";
+    unsigned int deterministic = 0;
+    size_t digest_size = 0;
+    OSSL_PARAM query_state[] = {
+        OSSL_PARAM_uint(OSSL_SIGNATURE_PARAM_DETERMINISTIC, &deterministic),
+        OSSL_PARAM_size_t(OSSL_SIGNATURE_PARAM_DIGEST_SIZE, &digest_size),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM enable_mode[] = {
+        OSSL_PARAM_utf8_string("sig", deterministic_mode, sizeof(deterministic_mode)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM reject_mode[] = {
+        OSSL_PARAM_utf8_string("sig", invalid_mode, sizeof(invalid_mode)),
+        OSSL_PARAM_END
+    };
     char correct[64];
     OSSL_PARAM query[] = {
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, reported, sizeof(reported)),
@@ -93,7 +110,14 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
     if (set(ctx, value) <= 0)
         goto end;
     memset(reported, 0, sizeof(reported));
-    if (get(ctx, query) <= 0 || OPENSSL_strcasecmp(reported, test->digest) != 0)
+    if (get(ctx, query) <= 0 || OPENSSL_strcasecmp(reported, test->digest) != 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 0 ||
+        digest_size != (OPENSSL_strcasecmp(test->digest, "bash384") == 0 ? 48u :
+                       OPENSSL_strcasecmp(test->digest, "bash512") == 0 ? 64u : 32u) ||
+        set(ctx, reject_mode) > 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 0 ||
+        set(ctx, enable_mode) <= 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 1)
         goto end;
     ok = 1;
 end:

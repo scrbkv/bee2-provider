@@ -187,13 +187,6 @@ parameter cleanup on a failed ownership transfer for both named and explicit
 curve encodings. This avoids global allocation failure or arbitrary test-only
 hooks in production code.
 
-## Coverage regression gates
-
-The GCC job enforces 100% production-function execution and minimum 80%
-line / 60% branch coverage via gcovr. These are regression floors rather than
-claims of comprehensive behavioral verification; every missing branch still
-requires classification as reachable, invalid-input, fault-injection, or
-compiler-generated before deciding how to test it. The native ASN.1 framing
-executable additionally checks named/explicit private and public key DER
-round trips, incorrect curve selection, shortened sequences, invalid curve
-points/scalars and missing key components directly through the decoder API.
+The BIGN digest-binding tests also validate published digest sizes, the
+`sig=deterministic` parameter, rejection of unsupported signature modes and
+nonmutation of the deterministic flag on a rejected parameter batch.
