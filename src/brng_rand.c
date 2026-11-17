@@ -166,8 +166,6 @@ static int brng_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     unsigned char *new_key = NULL, *new_iv = NULL;
     size_t key_len = 0, iv_len = 0;
 
-    if (!c)
-        return 0;
     if (!params)
         return 1;
     key_param = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_KEY);
@@ -223,8 +221,6 @@ static int brng_instantiate(void *vctx,
     (void)pstr;
     /* These deterministic generators cannot source fresh entropy by themselves.
      * Never silently claim prediction resistance or personalization support. */
-    if (c == NULL)
-        return 0;
     /* A failed Instantiate must invalidate the previous generator. */
     brng_clear_backend(c);
     if (prediction_resistance || pstr_len != 0 || !brng_set_ctx_params(vctx, params))

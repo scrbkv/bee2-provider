@@ -48,8 +48,6 @@ static int belt_pbkdf_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     unsigned char *new_pwd = NULL, *new_salt = NULL;
     uint64_t iter;
 
-    if (!ctx)
-        return 0;
     if (!params)
         return 1;
     pwd = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_PASSWORD);
@@ -93,7 +91,7 @@ belt_pbkdf_derive(void *vctx, unsigned char *key, size_t keylen, const OSSL_PARA
     bee2_belt_pbkdf_ctx_t *ctx = vctx;
     if (!belt_pbkdf_set_ctx_params(ctx, params))
         return 0;
-    if (ctx == NULL || key == NULL || keylen != 32 ||
+    if (key == NULL || keylen != 32 ||
         !ctx->password_set || !ctx->salt_set || ctx->iter == 0)
         return 0;
     return beltPBKDF2(key, ctx->password, ctx->password_len, ctx->iter, ctx->salt, ctx->salt_len) ==

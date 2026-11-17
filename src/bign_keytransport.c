@@ -27,8 +27,6 @@ static void bign_keytransport_freectx(void *vctx) {
 }
 
 static void *bign_keytransport_dupctx(void *vctx) {
-    if (!vctx)
-        return NULL;
     bee2_bign_keytransport_ctx_t *copy = OPENSSL_malloc(sizeof(*copy));
     if (copy)
         memcpy(copy, vctx, sizeof(*copy));
@@ -61,8 +59,6 @@ static int bign_keytransport_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     OSSL_PARAM *param;
 
-    if (ctx == NULL)
-        return 0;
     param = OSSL_PARAM_locate(params, BEE2_BIGN_KEYTRANSPORT_PARAM_HEADER);
     if (param != NULL &&
         !OSSL_PARAM_set_octet_string(param, ctx->header, sizeof(ctx->header)))
@@ -76,8 +72,6 @@ static int bign_keytransport_set_ctx_params(void *vctx, const OSSL_PARAM params[
     const void *header;
     size_t header_len;
 
-    if (ctx == NULL)
-        return 0;
     if (params == NULL)
         return 1;
 
@@ -95,8 +89,6 @@ static int bign_keytransport_set_ctx_params(void *vctx, const OSSL_PARAM params[
 static int bign_keytransport_encrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
-    if (!ctx)
-        return 0;
     ctx->key = NULL;
     ctx->encrypt = 0;
     if (!key || !key->variant || !key->has_pub ||
@@ -110,8 +102,6 @@ static int bign_keytransport_encrypt_init(void *vctx, void *vkey, const OSSL_PAR
 static int bign_keytransport_decrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
-    if (!ctx)
-        return 0;
     ctx->key = NULL;
     ctx->encrypt = 0;
     if (!key || !key->variant || !key->has_priv ||

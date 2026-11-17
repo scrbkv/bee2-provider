@@ -281,8 +281,6 @@ static int belt_init(void *vctx,
                      const OSSL_PARAM params[]) {
     bee2_belt_ctx_t *c = vctx;
 
-    if (c == NULL)
-        return 0;
     /* Failed reinitialization must not leave the previous operation usable. */
     c->finalized = 1;
     if ((key != NULL && keylen != c->fixed_key_len) ||

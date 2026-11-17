@@ -1,6 +1,5 @@
 /* A rejected parameter batch must not change the working MAC/KDF context. */
 #include <openssl/core_names.h>
-#include <openssl/core_dispatch.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
@@ -120,115 +119,6 @@ static int check_pbkdf(void)
 }
 
 
-
-/* Low-level OpenSSL dispatch contracts are not all reachable through EVP:
- * EVP validates some buffers and NULL handles before invoking the provider.
- * Invoke the documented provider entry points with malformed parameter
- * batches and ensure a subsequent valid KDF operation still works.
- */
-static int check_pbkdf_dispatch(OSSL_PROVIDER *provider)
-{
-    OSSL_FUNC_kdf_newctx_fn *newctx = NULL;
-    OSSL_FUNC_kdf_freectx_fn *freectx = NULL;
-    OSSL_FUNC_kdf_reset_fn *reset = NULL;
-    OSSL_FUNC_kdf_set_ctx_params_fn *set = NULL;
-    OSSL_FUNC_kdf_derive_fn *derive = NULL;
-    const OSSL_ALGORITHM *algs, *alg;
-    const OSSL_DISPATCH *fn;
-    unsigned char password[] = {'p', 'a', 's', 's'};
-    unsigned char salt[] = {1, 2, 3, 4, 5, 6, 7, 8};
-    unsigned char derived[32], again[32];
-    uint64_t iterations = 2, zero = 0;
-    int no_cache = 0, ok = 0;
-    void *ctx = NULL;
-    OSSL_PARAM pwd[] = {
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD, password, sizeof(password)),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM salt_param[] = {
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, salt, sizeof(salt)),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM iter[] = {
-        OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &iterations),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM full[] = {
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD, password, sizeof(password)),
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, salt, sizeof(salt)),
-        OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &iterations),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM zero_iter[] = {
-        OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &zero),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM bad_password[] = {
-        OSSL_PARAM_uint64(OSSL_KDF_PARAM_PASSWORD, &iterations),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM bad_salt[] = {
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, NULL, sizeof(salt)),
-        OSSL_PARAM_END
-    };
-    OSSL_PARAM bad_iteration[] = {
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_ITER, salt, sizeof(salt)),
-        OSSL_PARAM_END
-    };
-
-    algs = OSSL_PROVIDER_query_operation(provider, OSSL_OP_KDF, &no_cache);
-    if (algs == NULL)
-        return 0;
-    for (alg = algs; alg->algorithm_names; ++alg) {
-        if (strstr(alg->algorithm_names, "belt-pbkdf") == NULL)
-            continue;
-        for (fn = alg->implementation; fn->function_id; ++fn) {
-            switch (fn->function_id) {
-            case OSSL_FUNC_KDF_NEWCTX: newctx = OSSL_FUNC_kdf_newctx(fn); break;
-            case OSSL_FUNC_KDF_FREECTX: freectx = OSSL_FUNC_kdf_freectx(fn); break;
-            case OSSL_FUNC_KDF_RESET: reset = OSSL_FUNC_kdf_reset(fn); break;
-            case OSSL_FUNC_KDF_SET_CTX_PARAMS:
-                set = OSSL_FUNC_kdf_set_ctx_params(fn); break;
-            case OSSL_FUNC_KDF_DERIVE: derive = OSSL_FUNC_kdf_derive(fn); break;
-            }
-        }
-        break;
-    }
-    if (!newctx || !freectx || !reset || !set || !derive)
-        goto end;
-    reset(NULL);
-    freectx(NULL);
-    if (set(NULL, NULL) || derive(NULL, derived, sizeof(derived), NULL))
-        goto end;
-    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider));
-    if (!ctx || !set(ctx, NULL) || derive(ctx, derived, sizeof(derived), NULL) ||
-        set(ctx, bad_password) || set(ctx, bad_salt) ||
-        set(ctx, bad_iteration) || set(ctx, zero_iter))
-        goto end;
-
-    if (!set(ctx, pwd) || derive(ctx, derived, sizeof(derived), NULL) ||
-        !set(ctx, salt_param) || derive(ctx, derived, sizeof(derived), NULL) ||
-        !set(ctx, iter) || derive(ctx, NULL, sizeof(derived), NULL) ||
-        derive(ctx, derived, sizeof(derived) - 1, NULL) ||
-        !derive(ctx, derived, sizeof(derived), NULL))
-        goto end;
-    reset(ctx);
-    if (derive(ctx, again, sizeof(again), NULL) ||
-        !set(ctx, full) ||
-        !derive(ctx, again, sizeof(again), NULL) ||
-        CRYPTO_memcmp(derived, again, sizeof(derived)) != 0)
-        goto end;
-    ok = 1;
-end:
-    if (!ok)
-        fprintf(stderr, "BELT-PBKDF low-level parameter contract failed\n");
-    if (ctx && freectx)
-        freectx(ctx);
-    OSSL_PROVIDER_unquery_operation(provider, OSSL_OP_KDF, algs);
-    OPENSSL_cleanse(derived, sizeof(derived));
-    OPENSSL_cleanse(again, sizeof(again));
-    return ok;
-}
 
 static int check_belt_mac_copy(void)
 {
@@ -407,7 +297,7 @@ int main(int argc, char **argv)
     if (def == NULL || bee2 == NULL)
         goto end;
     ok = check_hmac() && check_hmac_failed_reinit() && check_belt_mac_copy() &&
-         check_pbkdf() && check_pbkdf_dispatch(bee2) && check_bign_digest() &&
+         check_pbkdf() && check_bign_digest() &&
          check_belt_cipher() && check_bash_prgae();
 end:
     OSSL_PROVIDER_unload(bee2);

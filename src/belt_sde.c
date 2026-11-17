@@ -90,8 +90,6 @@ static int belt_sde_init_operation(void *vctx,
                                    int enc,
                                    const OSSL_PARAM params[]) {
     bee2_belt_sde_ctx_t *c = vctx;
-    if (c == NULL)
-        return 0;
     /* Do not allow the preceding sector after a rejected reinitialization. */
     c->finalized = 1;
     if ((key != NULL && keylen != c->fixed_key_len) ||
@@ -166,8 +164,6 @@ static int belt_sde_final(void *vctx, unsigned char *out, size_t *outl, size_t o
     bee2_belt_sde_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
     if (!c->backend_state.key_set || !c->backend_state.iv_set ||
         !c->processed || c->finalized)

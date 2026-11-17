@@ -227,8 +227,6 @@ static int bash_prgae_update(void *vctx,
                              const unsigned char *in,
                              size_t inl) {
     bee2_bash_prgae_ctx_t *c = vctx;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
 
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized ||
@@ -276,8 +274,6 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
     bee2_bash_prgae_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized)
         return 0;

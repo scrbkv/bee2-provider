@@ -116,6 +116,33 @@ KATs check the standard's 256-bit ciphertext examples.
 The provider uses Bee2 `beltKeyExpand2()` with `u32To()` to expand
 keys; tests verify its output against the normative STB values.
 
+## EVP-to-provider validation boundary
+
+Provider callbacks are called by libcrypto with a context returned by the
+corresponding `newctx` callback. The cipher and MAC operations use the
+documented output-length pointer. The provider therefore does not need to
+recheck these context and output-length pointers on every operation. Context
+allocation failures are still handled when creating contexts; a null
+`freectx` argument remains safe.
+
+This does **not** make `OSSL_PARAM` values trusted. An application may supply
+parameters of the wrong type or with unsupported values, and OpenSSL passes
+provider-specific parameters to their implementation. Keep the `OSSL_PARAM`
+conversion and validation, fixed STB key/IV/tag requirements, actual
+`outsize` bounds, missing-key/state checks, and rejection of invalid operation
+sequences. `set_ctx_params(NULL)` must remain a successful no-op where the
+provider API specifies it. A KDF must itself reject unsupported output sizes.
+
+Tests should preferentially exercise malformed inputs through public EVP,
+encoder/decoder, and STORE interfaces. Direct provider dispatch is useful for
+valid operation equivalence and for explicit provider contracts, but not to
+simulate invalid libcrypto-owned contexts just to count coverage branches.
+Algorithm correctness and memory-safety tests take precedence over any
+line or branch coverage percentage.
+
+References: OpenSSL 3.0 `provider-cipher(7)`, `provider-kdf(7)`,
+`provider-mac(7)`, and `EVP_MAC(3)`.
+
 ## Instrumented coverage and regression tests
 
 Use `-DBEE2_PROVIDER_BUILD_TESTS=ON -DBEE2_PROVIDER_ENABLE_COVERAGE=ON`

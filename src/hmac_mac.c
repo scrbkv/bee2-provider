@@ -74,8 +74,6 @@ static void *hmac_dupctx(void *vctx) {
     const bee2_hmac_ctx_t *src = vctx;
     bee2_hmac_ctx_t *dst;
 
-    if (!src)
-        return NULL;
     dst = OPENSSL_memdup(src, sizeof(*src));
     if (!dst)
         return NULL;
@@ -159,8 +157,6 @@ static int hmac_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     int new_output_size_set, change_digest = 0;
     int change_key = 0;
 
-    if (!ctx)
-        return 0;
     if (!params)
         return 1;
     new_digest = ctx->bash_digest;
@@ -267,8 +263,6 @@ static int
 hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM params[]) {
     bee2_hmac_ctx_t *ctx = vctx;
 
-    if (!ctx)
-        return 0;
     /* A failed Init must not leave the preceding MAC operation active. */
     ctx->initialized = 0;
     if (!hmac_set_ctx_params(ctx, params))
@@ -286,7 +280,7 @@ hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM
 static int hmac_update(void *vctx, const unsigned char *input, size_t input_len) {
     bee2_hmac_ctx_t *ctx = vctx;
 
-    if (!ctx || !ctx->initialized || (input_len != 0u && input == NULL))
+    if (!ctx->initialized || (input_len != 0u && input == NULL))
         return 0;
     if (input_len > 0u) {
         if (ctx->bash_digest)
@@ -303,7 +297,7 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
     unsigned char full_mac[BEE2_HMAC_MAX_DIGEST_SIZE];
     size_t digest_size;
 
-    if (!ctx || !ctx->initialized || !output_len)
+    if (!ctx->initialized)
         return 0;
     digest_size = ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE;
     if (!output) {
