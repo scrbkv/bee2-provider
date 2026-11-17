@@ -256,6 +256,16 @@ static int check_oneshot_signature(const char *curve, const char *digest)
     if (EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
         EVP_DigestVerify(verify, signature, siglen, message, 0) > 0)
         goto done;
+
+    /* Streaming Final with no nonempty Update must sign the empty message.
+     * This must also work after a zero-byte Update. */
+    siglen = sizeof(signature);
+    if (EVP_DigestSignInit_ex(sign, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSignUpdate(sign, message, 0) <= 0 ||
+        EVP_DigestSignFinal(sign, signature, &siglen) <= 0 ||
+        EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerifyFinal(verify, signature, siglen) <= 0)
+        goto done;
     ok = 1;
 done:
     if (!ok)

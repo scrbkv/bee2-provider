@@ -416,46 +416,24 @@ static void bign_sig_freectx(void *vctx) {
     OPENSSL_clear_free(ctx, sizeof(*ctx));
 }
 
-/* Init copies configuration without duplicating the unfinished digest. */
-static void *bign_sig_copyctx(void *vctx, int copy_digest_state) {
-    bee2_bign_sig_ctx_t *src = vctx;
-    bee2_bign_sig_ctx_t *dst;
+/* Duplication is needed only when OpenSSL explicitly copies an EVP context.
+ * The hash state belongs to EVP, while a BIGN sign itself is a single Bee2 call. */
+static void *bign_sig_dupctx(void *vctx) {
+    const bee2_bign_sig_ctx_t *src = vctx;
+    bee2_bign_sig_ctx_t *dst = OPENSSL_memdup(src, sizeof(*src));
 
-    dst = OPENSSL_zalloc(sizeof(*dst));
     if (!dst)
         return NULL;
-
-    dst->libctx = src->libctx;
-    dst->variant = src->variant;
-    dst->fixed_digest = src->fixed_digest;
-    dst->key = src->key;
-    dst->mode = src->mode;
-    dst->deterministic = src->deterministic;
-    dst->hspec = src->hspec;
-    memcpy(dst->hash_oid, src->hash_oid, sizeof(dst->hash_oid));
-    dst->md_started = copy_digest_state ? src->md_started : 0;
-    memcpy(dst->propq, src->propq, sizeof(dst->propq));
-    if (!bign_str_copy(dst->mdname, sizeof(dst->mdname), src->mdname))
-        goto err;
-    if (!bign_str_copy(dst->mdprops, sizeof(dst->mdprops), src->mdprops))
-        goto err;
-    dst->aid_len = src->aid_len;
-    if (dst->aid_len > sizeof(dst->aid_buf))
-        goto err;
-    if (dst->aid_len > 0)
-        memcpy(dst->aid_buf, src->aid_buf, dst->aid_len);
-
+    dst->md = NULL;
+    dst->mdctx = NULL;
     if (src->md) {
         if (!EVP_MD_up_ref(src->md))
             goto err;
         dst->md = src->md;
     }
-
-    if (copy_digest_state && src->mdctx) {
+    if (src->mdctx) {
         dst->mdctx = EVP_MD_CTX_new();
-        if (!dst->mdctx)
-            goto err;
-        if (!EVP_MD_CTX_copy_ex(dst->mdctx, src->mdctx))
+        if (!dst->mdctx || !EVP_MD_CTX_copy_ex(dst->mdctx, src->mdctx))
             goto err;
     }
     return dst;
@@ -465,45 +443,43 @@ err:
     return NULL;
 }
 
-static void *bign_sig_dupctx(void *vctx) {
-    return bign_sig_copyctx(vctx, 1);
-}
-
+/* Init is transactional, but does not allocate an extra signature context.
+ * Stream hashing is initialized lazily at its first nonempty Update. */
 static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
                           void *vkey, const OSSL_PARAM params[],
                           int for_sign, int digest_operation) {
-    bee2_bign_sig_ctx_t *next;
+    bee2_bign_sig_ctx_t next = *ctx;
 
-    next = bign_sig_copyctx(ctx, 0);
-    if (next == NULL)
+    next.md = NULL;
+    next.mdctx = NULL;
+    if (ctx->md) {
+        if (!EVP_MD_up_ref(ctx->md))
+            goto err;
+        next.md = ctx->md;
+    }
+    if (!bign_sig_assign_key(&next, vkey, for_sign) ||
+        (params != NULL && !bign_sig_set_ctx_params(&next, params)))
         goto err;
-    if (!bign_sig_assign_key(next, vkey, for_sign) ||
-        (params != NULL && !bign_sig_set_ctx_params(next, params)))
-        goto err_next;
     if (digest_operation) {
         if (mdname && mdname[0] != '\0') {
-            if (!bign_sig_set_md(next, mdname, next->mdprops))
-                goto err_next;
-        } else if (!next->md) {
+            if (!bign_sig_set_md(&next, mdname, next.mdprops))
+                goto err;
+        } else if (!next.md) {
             const char *digest;
 
-            if (next->hspec)
-                goto err_next;
-            digest = next->fixed_digest ? next->fixed_digest : next->variant->default_digest;
-            if (!bign_sig_set_md(next, digest, NULL))
-                goto err_next;
+            if (next.hspec)
+                goto err;
+            digest = next.fixed_digest ? next.fixed_digest : next.variant->default_digest;
+            if (!bign_sig_set_md(&next, digest, NULL))
+                goto err;
         }
-        if (!bign_sig_reset_mdctx(next))
-            goto err_next;
     }
     bign_sig_reset_md(ctx, 0);
-    *ctx = *next;
-    OPENSSL_clear_free(next, sizeof(*next));
+    *ctx = next;
     return 1;
 
-err_next:
-    bign_sig_freectx(next);
 err:
+    bign_sig_reset_md(&next, 0);
     ctx->mode = BEE2_BIGN_SIG_IDLE;
     return 0;
 }
@@ -552,10 +528,12 @@ static int bign_sig_digest_update(void *vctx, const unsigned char *data,
                                   size_t datalen, bee2_bign_sig_mode_t mode) {
     bee2_bign_sig_ctx_t *ctx = vctx;
 
-    if (ctx->mode != mode || !ctx->mdctx)
+    if (ctx->mode != mode)
         return 0;
     if (datalen == 0)
         return 1;
+    if (!ctx->mdctx && !bign_sig_reset_mdctx(ctx))
+        return 0;
     if (!EVP_DigestUpdate(ctx->mdctx, data, datalen))
         return 0;
     ctx->md_started = 1;
@@ -590,13 +568,14 @@ bign_sig_digest_sign_final(void *vctx, unsigned char *sig, size_t *siglen, size_
     unsigned int md_len = 0;
     int ok;
 
-    if (ctx->mode != BEE2_BIGN_SIG_SIGN || !ctx->mdctx || !siglen)
+    if (ctx->mode != BEE2_BIGN_SIG_SIGN || !siglen)
         return 0;
     if (!sig) {
         *siglen = bee2_bign_sig_len(ctx->variant);
         return 1;
     }
-    ok = bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len);
+    ok = ctx->mdctx ? bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len) :
+                      EVP_Digest("", 0, md_buf, &md_len, ctx->md, NULL);
     if (ok)
         ok = bign_sig_sign_hash(ctx, sig, siglen, sigsize, md_buf, (size_t)md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));
@@ -609,9 +588,10 @@ static int bign_sig_digest_verify_final(void *vctx, const unsigned char *sig, si
     unsigned int md_len = 0;
     int ok;
 
-    if (ctx->mode != BEE2_BIGN_SIG_VERIFY || !ctx->mdctx)
+    if (ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
-    ok = bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len);
+    ok = ctx->mdctx ? bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len) :
+                      EVP_Digest("", 0, md_buf, &md_len, ctx->md, NULL);
     if (ok)
         ok = bign_sig_verify_hash(ctx, sig, siglen, md_buf, (size_t)md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));

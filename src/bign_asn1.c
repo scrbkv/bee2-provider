@@ -1268,7 +1268,7 @@ static ASN1_STRING *pack_param(const ASN1_VALUE *value, const ASN1_ITEM *item)
 
 static X509_SIG *build_encrypted_info(const unsigned char *salt, size_t salt_len,
                                       unsigned int iterations, size_t key_len,
-                                      const unsigned char *wrapped, size_t wrapped_len)
+                                      unsigned char **wrapped, size_t wrapped_len)
 {
     PBKDF2PARAM *kdf = NULL;
     PBE2PARAM *pbe = NULL;
@@ -1315,8 +1315,10 @@ static X509_SIG *build_encrypted_info(const unsigned char *salt, size_t salt_len
     if (!set_alg(outer, BEE2_OID_PBES2, V_ASN1_SEQUENCE, encoded))
         goto end;
     encoded = NULL;
-    if (!ASN1_OCTET_STRING_set(encrypted, wrapped, (int)wrapped_len))
-        goto end;
+    /* Hand the ciphertext to ASN.1 rather than copying it.
+     * ASN1_STRING_set0 takes ownership of the allocation. */
+    ASN1_STRING_set0(encrypted, *wrapped, (int)wrapped_len);
+    *wrapped = NULL;
     ok = 1;
 
 end:
@@ -1357,7 +1359,7 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
         beltKWPWrap(wrapped, der, der_len, NULL, derived, key_len) != ERR_OK)
         goto end;
 
-    info = build_encrypted_info(salt, salt_len, iterations, key_len, wrapped, der_len + 16);
+    info = build_encrypted_info(salt, salt_len, iterations, key_len, &wrapped, der_len + 16);
     if (info == NULL)
         goto end;
     n = i2d_X509_SIG(info, &result);
