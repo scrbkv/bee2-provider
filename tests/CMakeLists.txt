@@ -601,7 +601,10 @@ if(UNIX AND NOT APPLE)
         "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=CRYPTO_realloc"
         "-Wl,--wrap=RAND_priv_bytes_ex" "-Wl,--wrap=ASN1_item_pack"
         "-Wl,--wrap=X509_ALGOR_set0" "-Wl,--wrap=ASN1_INTEGER_set"
-        "-Wl,--wrap=ASN1_OCTET_STRING_set")
+        "-Wl,--wrap=ASN1_OCTET_STRING_set" "-Wl,--wrap=PBKDF2PARAM_new"
+        "-Wl,--wrap=PBE2PARAM_new" "-Wl,--wrap=X509_SIG_new"
+        "-Wl,--wrap=ASN1_OCTET_STRING_new" "-Wl,--wrap=ASN1_INTEGER_new"
+        "-Wl,--wrap=X509_ALGOR_new" "-Wl,--wrap=i2d_X509_SIG")
     if(BEE2_PROVIDER_ENABLE_COVERAGE)
         target_compile_options(bee2_bign_asn1_fault PRIVATE
             --coverage -fprofile-update=atomic -O0 -g)

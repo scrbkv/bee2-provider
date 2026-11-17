@@ -105,7 +105,14 @@ enum asn1_fault_kind {
     ASN1_FAULT_PACK,
     ASN1_FAULT_ALGORITHM,
     ASN1_FAULT_INTEGER,
-    ASN1_FAULT_OCTETS
+    ASN1_FAULT_OCTETS,
+    ASN1_FAULT_PBKDF2_NEW,
+    ASN1_FAULT_PBE2_NEW,
+    ASN1_FAULT_SIG_NEW,
+    ASN1_FAULT_SALT_NEW,
+    ASN1_FAULT_KEYLEN_NEW,
+    ASN1_FAULT_PRF_NEW,
+    ASN1_FAULT_DER_ENCODING
 };
 
 static enum asn1_fault_kind asn1_fault;
@@ -158,6 +165,57 @@ int __wrap_ASN1_OCTET_STRING_set(ASN1_OCTET_STRING *string,
 {
     return should_fail_asn1(ASN1_FAULT_OCTETS) ? 0 :
            __real_ASN1_OCTET_STRING_set(string, bytes, length);
+}
+
+
+PBKDF2PARAM *__real_PBKDF2PARAM_new(void);
+PBE2PARAM *__real_PBE2PARAM_new(void);
+X509_SIG *__real_X509_SIG_new(void);
+ASN1_OCTET_STRING *__real_ASN1_OCTET_STRING_new(void);
+ASN1_INTEGER *__real_ASN1_INTEGER_new(void);
+X509_ALGOR *__real_X509_ALGOR_new(void);
+int __real_i2d_X509_SIG(const X509_SIG *info, unsigned char **output);
+
+PBKDF2PARAM *__wrap_PBKDF2PARAM_new(void)
+{
+    return should_fail_asn1(ASN1_FAULT_PBKDF2_NEW) ? NULL :
+           __real_PBKDF2PARAM_new();
+}
+
+PBE2PARAM *__wrap_PBE2PARAM_new(void)
+{
+    return should_fail_asn1(ASN1_FAULT_PBE2_NEW) ? NULL :
+           __real_PBE2PARAM_new();
+}
+
+X509_SIG *__wrap_X509_SIG_new(void)
+{
+    return should_fail_asn1(ASN1_FAULT_SIG_NEW) ? NULL :
+           __real_X509_SIG_new();
+}
+
+ASN1_OCTET_STRING *__wrap_ASN1_OCTET_STRING_new(void)
+{
+    return should_fail_asn1(ASN1_FAULT_SALT_NEW) ? NULL :
+           __real_ASN1_OCTET_STRING_new();
+}
+
+ASN1_INTEGER *__wrap_ASN1_INTEGER_new(void)
+{
+    return should_fail_asn1(ASN1_FAULT_KEYLEN_NEW) ? NULL :
+           __real_ASN1_INTEGER_new();
+}
+
+X509_ALGOR *__wrap_X509_ALGOR_new(void)
+{
+    return should_fail_asn1(ASN1_FAULT_PRF_NEW) ? NULL :
+           __real_X509_ALGOR_new();
+}
+
+int __wrap_i2d_X509_SIG(const X509_SIG *info, unsigned char **output)
+{
+    return should_fail_asn1(ASN1_FAULT_DER_ENCODING) ? 0 :
+           __real_i2d_X509_SIG(info, output);
 }
 
 int main(void)
@@ -307,7 +365,7 @@ int main(void)
         if (plain == NULL)
             return 1;
 
-        for (kind = ASN1_FAULT_RANDOM; kind <= ASN1_FAULT_OCTETS; ++kind) {
+        for (kind = ASN1_FAULT_RANDOM; kind <= ASN1_FAULT_DER_ENCODING; ++kind) {
             int index, failures = 0, successes = 0;
 
             for (index = 1; index <= 6; ++index) {
