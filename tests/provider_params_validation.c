@@ -328,6 +328,47 @@ done:
     return ok;
 }
 
+
+/* Digest metadata is part of the provider contract.  Each wrong output
+ * parameter type must fail rather than silently reporting success. */
+static int check_digest_metadata(const char *algorithm, size_t digest_size,
+                                 size_t block_size)
+{
+    EVP_MD *md = EVP_MD_fetch(NULL, algorithm, "provider=bee2");
+    size_t output_size = 0, rate = 0;
+    int xof = -1;
+    char invalid[] = "wrong";
+    OSSL_PARAM good[] = {
+        OSSL_PARAM_size_t(OSSL_DIGEST_PARAM_SIZE, &output_size),
+        OSSL_PARAM_size_t(OSSL_DIGEST_PARAM_BLOCK_SIZE, &rate),
+        OSSL_PARAM_int(OSSL_DIGEST_PARAM_XOF, &xof),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM bad_size[] = {
+        OSSL_PARAM_utf8_string(OSSL_DIGEST_PARAM_SIZE, invalid, sizeof(invalid)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM bad_rate[] = {
+        OSSL_PARAM_utf8_string(OSSL_DIGEST_PARAM_BLOCK_SIZE, invalid, sizeof(invalid)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM bad_xof[] = {
+        OSSL_PARAM_utf8_string(OSSL_DIGEST_PARAM_XOF, invalid, sizeof(invalid)),
+        OSSL_PARAM_END
+    };
+    int ok = md != NULL &&
+             EVP_MD_get_params(md, good) > 0 &&
+             output_size == digest_size && rate == block_size && xof == 0 &&
+             EVP_MD_get_params(md, bad_size) <= 0 &&
+             EVP_MD_get_params(md, bad_rate) <= 0 &&
+             EVP_MD_get_params(md, bad_xof) <= 0;
+
+    if (!ok)
+        fprintf(stderr, "Digest metadata contract failed: %s\n", algorithm);
+    EVP_MD_free(md);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *default_provider = NULL, *bee2_provider = NULL;
@@ -350,7 +391,11 @@ int main(int argc, char **argv)
             !check_kwp(wraps[i], lengths[i]))
             goto done;
     }
-    ok = check_cipher_iv("belt-sde256", 32, 16, 1) &&
+    ok = check_digest_metadata("belt-hash", 32, 32) &&
+         check_digest_metadata("bash256", 32, 160) &&
+         check_digest_metadata("bash384", 48, 144) &&
+         check_digest_metadata("bash512", 64, 128) &&
+         check_cipher_iv("belt-sde256", 32, 16, 1) &&
          check_cipher_iv("belt-cbc256", 32, 16, 0) &&
          check_cipher_iv("belt-cfb256", 32, 16, 0) &&
          check_cipher_iv("belt-ctr256", 32, 16, 0) &&
