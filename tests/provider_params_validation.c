@@ -262,6 +262,72 @@ static int check_provider_metadata(OSSL_PROVIDER *provider)
     return 1;
 }
 
+
+/* An IV returned through EVP must match the initialized state.  Reject
+ * undersized output buffers and parameters of the wrong data type. */
+static int check_cipher_iv(const char *algorithm, size_t keylen, size_t ivlen,
+                           int updated_iv)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, algorithm, "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    unsigned char key[32] = {0}, iv[32], actual[32] = {0}, updated[32] = {0};
+    char bad_type[] = "invalid";
+    size_t got_keylen = 0, got_ivlen = 0;
+    size_t i;
+    int ok = 0;
+    OSSL_PARAM valid[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, actual, sizeof(actual)),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &got_keylen),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &got_ivlen),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM updated_param[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, updated, sizeof(updated)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM short_iv[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, actual, 1),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM short_updated[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, updated, 1),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM wrong_keylen[] = {
+        OSSL_PARAM_utf8_string(OSSL_CIPHER_PARAM_KEYLEN, bad_type, sizeof(bad_type)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM wrong_ivlen[] = {
+        OSSL_PARAM_utf8_string(OSSL_CIPHER_PARAM_IVLEN, bad_type, sizeof(bad_type)),
+        OSSL_PARAM_END
+    };
+
+    for (i = 0; i < sizeof(iv); ++i)
+        iv[i] = (unsigned char)(i * 17u + 1u);
+    if (cipher == NULL || ctx == NULL ||
+        EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL) <= 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, short_iv) > 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, wrong_keylen) > 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, wrong_ivlen) > 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, valid) <= 0 ||
+        got_keylen != keylen || got_ivlen != ivlen ||
+        memcmp(iv, actual, ivlen) != 0)
+        goto done;
+
+    if (updated_iv &&
+        (EVP_CIPHER_CTX_get_params(ctx, short_updated) > 0 ||
+         EVP_CIPHER_CTX_get_params(ctx, updated_param) <= 0 ||
+         memcmp(iv, updated, ivlen) != 0))
+        goto done;
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "Cipher IV metadata contract failed: %s\n", algorithm);
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *default_provider = NULL, *bee2_provider = NULL;
@@ -284,7 +350,16 @@ int main(int argc, char **argv)
             !check_kwp(wraps[i], lengths[i]))
             goto done;
     }
-    ok = check_pbkdf() && check_bign_encoding("bign-256") &&
+    ok = check_cipher_iv("belt-sde256", 32, 16, 1) &&
+         check_cipher_iv("belt-cbc256", 32, 16, 0) &&
+         check_cipher_iv("belt-cfb256", 32, 16, 0) &&
+         check_cipher_iv("belt-ctr256", 32, 16, 0) &&
+         check_cipher_iv("belt-dwp256", 32, 16, 0) &&
+         check_cipher_iv("belt-che256", 32, 16, 0) &&
+         check_cipher_iv("bash-prg-ae1281", 16, 16, 0) &&
+         check_cipher_iv("bash-prg-ae1921", 24, 24, 0) &&
+         check_cipher_iv("bash-prg-ae2561", 32, 32, 0) &&
+         check_pbkdf() && check_bign_encoding("bign-256") &&
          check_bign_encoding("bign-384") &&
          check_bign_encoding("bign-512");
 done:

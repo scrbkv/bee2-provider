@@ -1,5 +1,6 @@
 /* PBES2 iteration limits must be checked before starting password derivation. */
 #include "bign_stb_pbes2.h"
+#include "bee2_oids.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -24,7 +25,8 @@ static int set_algorithm(X509_ALGOR *alg, const char *oid, int type, void *value
     return 1;
 }
 
-static X509_SIG *make_pbes2(long iterations, const char *kdf_oid)
+static X509_SIG *make_pbes2(long iterations, const char *kdf_oid,
+                             const char *cipher_oid)
 {
     static const unsigned char salt_bytes[8] = {0};
     static const unsigned char aes_iv[16] = {0};
@@ -56,7 +58,7 @@ static X509_SIG *make_pbes2(long iterations, const char *kdf_oid)
         !set_algorithm(pbe->keyfunc, kdf_oid, V_ASN1_SEQUENCE, packed_kdf))
         goto end;
     packed_kdf = NULL;
-    if (!set_algorithm(pbe->encryption, "2.16.840.1.101.3.4.1.42",
+    if (!set_algorithm(pbe->encryption, cipher_oid,
                        V_ASN1_OCTET_STRING, iv))
         goto end;
     iv = NULL;
@@ -85,6 +87,50 @@ end:
     return info;
 }
 
+
+/* Classification of STB PBES2 depends on the KWP cipher OID.  A recognised
+ * envelope with unexpected cipher parameters must not be decrypted or
+ * silently treated as an ordinary AES PBES2 envelope. */
+static int check_stb_pbes2_classification(void)
+{
+    static const char *const ciphers[] = {
+        BEE2_OID_BELT_128_KWP, BEE2_OID_BELT_192_KWP, BEE2_OID_BELT_KWP
+    };
+    static const unsigned char password[] = "password";
+    X509_SIG *info = NULL;
+    PKCS8_PRIV_KEY_INFO *plain = NULL;
+    size_t i;
+    int recognised, ok = 0;
+
+    if (bee2_stb_pbes2_is_stb(NULL) ||
+        bee2_stb_pbes2_legacy_pbkdf2_allowed(NULL, 10000))
+        return 0;
+    for (i = 0; i < sizeof(ciphers) / sizeof(ciphers[0]); ++i) {
+        info = make_pbes2(10000, OID_PBKDF2, ciphers[i]);
+        if (info == NULL || !bee2_stb_pbes2_is_stb(info) ||
+            bee2_stb_pbes2_legacy_pbkdf2_allowed(info, 0))
+            goto end;
+
+        /* The fixture deliberately carries an AES-style IV rather than
+         * KWP's absent parameters.  Recognition precedes validation. */
+        recognised = 0;
+        plain = bee2_stb_pbes2_decrypt(info, password,
+                                       sizeof(password) - 1, 10000,
+                                       &recognised);
+        if (plain != NULL || !recognised)
+            goto end;
+        X509_SIG_free(info);
+        info = NULL;
+    }
+    ok = 1;
+end:
+    if (!ok)
+        fprintf(stderr, "STB PBES2 KWP classification contract failed\n");
+    PKCS8_PRIV_KEY_INFO_free(plain);
+    X509_SIG_free(info);
+    return ok;
+}
+
 int main(void)
 {
     static const struct {
@@ -103,7 +149,8 @@ int main(void)
     X509_SIG *unknown;
 
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-        X509_SIG *info = make_pbes2(cases[i].iterations, OID_PBKDF2);
+        X509_SIG *info = make_pbes2(cases[i].iterations, OID_PBKDF2,
+                                    "2.16.840.1.101.3.4.1.42");
         int result;
 
         if (!info) {
@@ -117,12 +164,12 @@ int main(void)
             return 1;
         }
     }
-    unknown = make_pbes2(1, OID_SCRYPT);
+    unknown = make_pbes2(1, OID_SCRYPT, "2.16.840.1.101.3.4.1.42");
     if (!unknown || bee2_stb_pbes2_legacy_pbkdf2_allowed(unknown, 10000u)) {
         fprintf(stderr, "Unrecognised PBES2 KDF was accepted\n");
         X509_SIG_free(unknown);
         return 1;
     }
     X509_SIG_free(unknown);
-    return 0;
+    return check_stb_pbes2_classification() ? 0 : 1;
 }
