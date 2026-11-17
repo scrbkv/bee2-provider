@@ -55,6 +55,97 @@ static int check_exported(const OSSL_PARAM params[], void *arg)
     return 1;
 }
 
+/* EVP keygen always requests a keypair. Direct dispatch exercises the
+ * public-only and private-only selections promised by KEYMGMT_GEN. */
+static int check_generation_selections(
+    OSSL_PROVIDER *provider,
+    OSSL_FUNC_keymgmt_gen_init_fn *gen_init,
+    OSSL_FUNC_keymgmt_gen_fn *generate,
+    OSSL_FUNC_keymgmt_gen_cleanup_fn *gen_cleanup,
+    OSSL_FUNC_keymgmt_free_fn *key_free,
+    OSSL_FUNC_keymgmt_has_fn *key_has,
+    OSSL_FUNC_keymgmt_validate_fn *key_validate,
+    OSSL_FUNC_keymgmt_get_params_fn *key_get_params,
+    OSSL_FUNC_keymgmt_dup_fn *key_dup)
+{
+    static const int selections[] = {
+        OSSL_KEYMGMT_SELECT_PUBLIC_KEY,
+        OSSL_KEYMGMT_SELECT_PRIVATE_KEY
+    };
+    unsigned char public_bytes[64], copied_bytes[64], private_bytes[32];
+    size_t i;
+    int ok = 0;
+
+    for (i = 0; i < sizeof(selections) / sizeof(selections[0]); ++i) {
+        const int selection = selections[i];
+        const int other = selection == OSSL_KEYMGMT_SELECT_PUBLIC_KEY ?
+                          OSSL_KEYMGMT_SELECT_PRIVATE_KEY : OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
+        OSSL_PARAM public_params[] = {
+            OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                    public_bytes, sizeof(public_bytes)),
+            OSSL_PARAM_END
+        };
+        OSSL_PARAM private_params[] = {
+            OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
+                                    private_bytes, sizeof(private_bytes)),
+            OSSL_PARAM_END
+        };
+        OSSL_PARAM copied_params[] = {
+            OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                    copied_bytes, sizeof(copied_bytes)),
+            OSSL_PARAM_END
+        };
+        void *genctx = gen_init(OSSL_PROVIDER_get0_provider_ctx(provider), selection, NULL);
+        void *native = NULL, *public_copy = NULL;
+        int valid = 0;
+
+        if (genctx != NULL)
+            native = generate(genctx, NULL, NULL);
+        if (native != NULL &&
+            key_has(native, selection) == 1 &&
+            key_has(native, other) == 0 &&
+            key_validate(native, selection, OSSL_KEYMGMT_VALIDATE_FULL_CHECK) == 1 &&
+            key_get_params(native, public_params) == 1) {
+            if (selection == OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
+                valid = key_get_params(native, private_params) == 0;
+            } else {
+                /* Deriving the public bytes must not modify the private-only key. */
+                public_copy = key_dup(native, OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
+                valid = key_has(native, OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 0 &&
+                        public_copy != NULL &&
+                        key_has(public_copy, OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 1 &&
+                        key_has(public_copy, OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0 &&
+                        key_get_params(public_copy, copied_params) == 1 &&
+                        CRYPTO_memcmp(public_bytes, copied_bytes,
+                                      sizeof(public_bytes)) == 0;
+            }
+        }
+        key_free(public_copy);
+        key_free(native);
+        if (genctx != NULL)
+            gen_cleanup(genctx);
+        if (!valid)
+            goto done;
+    }
+    {
+        void *invalid = gen_init(OSSL_PROVIDER_get0_provider_ctx(provider), 0, NULL);
+
+        if (invalid != NULL) {
+            gen_cleanup(invalid);
+            goto done;
+        }
+    }
+    ok = 1;
+
+done:
+    OPENSSL_cleanse(private_bytes, sizeof(private_bytes));
+    OPENSSL_cleanse(public_bytes, sizeof(public_bytes));
+    OPENSSL_cleanse(copied_bytes, sizeof(copied_bytes));
+    if (!ok)
+        fprintf(stderr, "BIGN KEYMGMT generation selection contract failed\n");
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     const OSSL_ALGORITHM *keyalgs = NULL, *decalgs = NULL, *alg;
@@ -65,6 +156,12 @@ int main(int argc, char **argv)
     OSSL_FUNC_keymgmt_import_fn *key_import = NULL;
     OSSL_FUNC_keymgmt_match_fn *key_match = NULL;
     OSSL_FUNC_keymgmt_dup_fn *key_dup = NULL;
+    OSSL_FUNC_keymgmt_gen_init_fn *key_gen_init = NULL;
+    OSSL_FUNC_keymgmt_gen_fn *key_generate = NULL;
+    OSSL_FUNC_keymgmt_gen_cleanup_fn *key_gen_cleanup = NULL;
+    OSSL_FUNC_keymgmt_has_fn *key_has = NULL;
+    OSSL_FUNC_keymgmt_validate_fn *key_validate = NULL;
+    OSSL_FUNC_keymgmt_get_params_fn *key_get_params = NULL;
     OSSL_FUNC_decoder_newctx_fn *decoder_new = NULL;
     OSSL_FUNC_decoder_freectx_fn *decoder_free = NULL;
     OSSL_FUNC_decoder_export_object_fn *decoder_export = NULL;
@@ -108,6 +205,18 @@ int main(int argc, char **argv)
             case OSSL_FUNC_KEYMGMT_IMPORT: key_import = OSSL_FUNC_keymgmt_import(fn); break;
             case OSSL_FUNC_KEYMGMT_MATCH: key_match = OSSL_FUNC_keymgmt_match(fn); break;
             case OSSL_FUNC_KEYMGMT_DUP: key_dup = OSSL_FUNC_keymgmt_dup(fn); break;
+            case OSSL_FUNC_KEYMGMT_GEN_INIT:
+                key_gen_init = OSSL_FUNC_keymgmt_gen_init(fn); break;
+            case OSSL_FUNC_KEYMGMT_GEN:
+                key_generate = OSSL_FUNC_keymgmt_gen(fn); break;
+            case OSSL_FUNC_KEYMGMT_GEN_CLEANUP:
+                key_gen_cleanup = OSSL_FUNC_keymgmt_gen_cleanup(fn); break;
+            case OSSL_FUNC_KEYMGMT_HAS:
+                key_has = OSSL_FUNC_keymgmt_has(fn); break;
+            case OSSL_FUNC_KEYMGMT_VALIDATE:
+                key_validate = OSSL_FUNC_keymgmt_validate(fn); break;
+            case OSSL_FUNC_KEYMGMT_GET_PARAMS:
+                key_get_params = OSSL_FUNC_keymgmt_get_params(fn); break;
             }
         }
         break;
@@ -126,7 +235,9 @@ int main(int argc, char **argv)
         }
         break;
     }
-    if (!key_new || !key_free || !key_import || !key_match || !key_dup || !decoder_new ||
+    if (!key_new || !key_free || !key_import || !key_match || !key_dup ||
+        !key_gen_init || !key_generate || !key_gen_cleanup || !key_has ||
+        !key_validate || !key_get_params || !decoder_new ||
         !decoder_free || !decoder_export)
         goto done;
 
@@ -177,6 +288,11 @@ int main(int argc, char **argv)
             key_match(key, different, OSSL_KEYMGMT_SELECT_PUBLIC_KEY))
             goto done;
     }
+
+    if (!check_generation_selections(provider, key_gen_init, key_generate,
+                                     key_gen_cleanup, key_free, key_has,
+                                     key_validate, key_get_params, key_dup))
+        goto done;
 
     reference = key;
     if (!decoder_export(decoder, &reference, sizeof(reference),
