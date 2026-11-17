@@ -601,3 +601,83 @@ if(UNIX AND NOT APPLE)
     set_tests_properties(bee2_bign_asn1_fault PROPERTIES
         LABELS "bign;asn1;negative;fault_injection;native")
 endif()
+
+# Isolate allocation-failure and constant-time helper contracts without
+# introducing test-only hooks into the provider.
+if(UNIX AND NOT APPLE)
+    add_executable(bee2_provider_util_contract
+        provider_util_contract.c ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+    target_include_directories(bee2_provider_util_contract PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(bee2_provider_util_contract PRIVATE OpenSSL::Crypto)
+    target_link_options(bee2_provider_util_contract PRIVATE "-Wl,--wrap=CRYPTO_memdup")
+    if(BEE2_PROVIDER_ENABLE_COVERAGE)
+        target_compile_options(bee2_provider_util_contract PRIVATE
+            --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(bee2_provider_util_contract PRIVATE --coverage)
+    endif()
+    add_test(NAME bee2_provider_util_contract COMMAND bee2_provider_util_contract)
+    set_tests_properties(bee2_provider_util_contract PROPERTIES
+        LABELS "regression;provider;negative;native")
+endif()
+
+# Public EVP validation of provider-controlled OSSL_PARAM types, sizes
+# and context reset behavior across all supported BELT key sizes.
+add_executable(bee2_provider_params_validation provider_params_validation.c)
+target_link_libraries(bee2_provider_params_validation PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_params_validation
+    COMMAND bee2_provider_params_validation $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_params_validation PROPERTIES
+    LABELS "regression;params;mac;cipher;kdf;native")
+
+# Check implicit BIGN digest selection separately from explicit digest KATs.
+add_executable(bee2_bign_default_digest bign_default_digest.c)
+target_link_libraries(bee2_bign_default_digest PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_default_digest
+    COMMAND bee2_bign_default_digest $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_default_digest PROPERTIES
+    LABELS "regression;bign;signature;native")
+# Exercise EVP BIGN signature parameter failures without modifying the key.
+add_executable(bee2_bign_signature_edge_contract bign_signature_edge_contract.c)
+target_link_libraries(bee2_bign_signature_edge_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_signature_edge_contract
+    COMMAND bee2_bign_signature_edge_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_signature_edge_contract PROPERTIES
+    LABELS "regression;bign;signature;params;native")
+
+# Confirm implicit BRNG IVs match explicitly provided zero/empty IVs.
+add_executable(bee2_brng_default_iv_contract brng_default_iv_contract.c)
+target_link_libraries(bee2_brng_default_iv_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_brng_default_iv_contract
+    COMMAND bee2_brng_default_iv_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_brng_default_iv_contract PROPERTIES
+    LABELS "regression;brng;rand;params;native")
+# Test all fifteen state-capacity checks with the real Bee2 size functions
+# and one deliberately oversized result at a time.
+if(UNIX AND NOT APPLE)
+    add_executable(bee2_backend_state_capacity backend_state_capacity.c)
+    target_include_directories(bee2_backend_state_capacity PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(bee2_backend_state_capacity SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/bee2/include)
+    target_link_libraries(bee2_backend_state_capacity PRIVATE bee2_static OpenSSL::Crypto)
+    foreach(fn IN ITEMS beltHash beltECB beltCBC beltCFB beltCTR beltBDE
+                        beltCHE beltDWP beltMAC beltHMAC beltSDE brngCTR
+                        brngHMAC bashHash bashPrg)
+        target_link_options(bee2_backend_state_capacity PRIVATE "-Wl,--wrap=${fn}_keep")
+    endforeach()
+    if(BEE2_PROVIDER_ENABLE_COVERAGE)
+        target_compile_options(bee2_backend_state_capacity PRIVATE
+            --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(bee2_backend_state_capacity PRIVATE --coverage)
+    endif()
+    add_test(NAME bee2_backend_state_capacity COMMAND bee2_backend_state_capacity)
+    set_tests_properties(bee2_backend_state_capacity PROPERTIES
+        LABELS "regression;provider;backend;negative;native")
+endif()
+
+# The PEM reader handles CRLF and records lacking a final line ending.
+add_executable(bee2_bign_pem_framing_contract bign_pem_framing_contract.c)
+target_link_libraries(bee2_bign_pem_framing_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_pem_framing_contract
+    COMMAND bee2_bign_pem_framing_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_pem_framing_contract PROPERTIES
+    LABELS "regression;bign;codec;negative;native")
