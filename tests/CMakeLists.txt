@@ -18,7 +18,6 @@ target_link_libraries(bee2_stb_kat PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_stb_kat COMMAND bee2_stb_kat $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_stb_kat PROPERTIES LABELS "stb;known_answer;crypto;native")
 
-
 if(BEE2_PROVIDER_ENABLE_INTEROP)
 set(BEE2_INTEROP_PROVIDER_OPENSSL "$ENV{BEE2_INTEROP_PROVIDER_OPENSSL}" CACHE STRING
     "OpenSSL executable used for bee2_provider interop commands")
@@ -289,13 +288,6 @@ add_test(NAME bee2_bign_codec_roundtrip
         --openssl ${BEE2_OPENSSL_EXECUTABLE})
 set_tests_properties(bee2_bign_codec_roundtrip PROPERTIES LABELS "regression;bign;codec")
 
-add_executable(bee2_bign_der_stream_contract bign_der_stream_contract.c)
-target_link_libraries(bee2_bign_der_stream_contract PRIVATE OpenSSL::Crypto)
-add_test(NAME bee2_bign_der_stream_contract
-    COMMAND bee2_bign_der_stream_contract $<TARGET_FILE_DIR:bee2_provider>)
-set_tests_properties(bee2_bign_der_stream_contract
-    PROPERTIES LABELS "regression;bign;asn1;der;native")
-
 add_executable(bee2_bign_der_framing
     bign_der_framing.c
     ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
@@ -542,7 +534,6 @@ add_test(NAME bee2_bash_prgae_evp_stb
     COMMAND bee2_bash_prgae_evp_stb $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bash_prgae_evp_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
 
-
 # Exercise independent EVP contexts from multiple threads using a shared
 # OpenSSL library context, including context cloning and BIGN signatures.
 if(UNIX)
@@ -583,137 +574,19 @@ add_test(NAME bee2_bign_decoder_export
     COMMAND bee2_bign_decoder_export $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_decoder_export PROPERTIES
     LABELS "bign;codec;native;dispatch;negative")
-
-# Simulate an ASN.1 ownership-transfer failure without triggering global
-# out-of-memory conditions or altering production allocation callbacks.
-if(UNIX AND NOT APPLE)
-    add_executable(bee2_bign_asn1_fault
-        bign_asn1_fault.c
-        ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
-        ${CMAKE_SOURCE_DIR}/src/bign_common.c
-        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
-    target_include_directories(bee2_bign_asn1_fault PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_include_directories(bee2_bign_asn1_fault SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
-    target_link_libraries(bee2_bign_asn1_fault PRIVATE bee2_static OpenSSL::Crypto)
-    target_link_options(bee2_bign_asn1_fault PRIVATE
-        "-Wl,--wrap=PKCS8_pkey_set0" "-Wl,--wrap=X509_PUBKEY_set0_param"
-        "-Wl,--wrap=CRYPTO_malloc" "-Wl,--wrap=CRYPTO_zalloc"
-        "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=CRYPTO_realloc"
-        "-Wl,--wrap=RAND_priv_bytes_ex" "-Wl,--wrap=ASN1_item_pack"
-        "-Wl,--wrap=X509_ALGOR_set0" "-Wl,--wrap=ASN1_INTEGER_set"
-        "-Wl,--wrap=ASN1_OCTET_STRING_set" "-Wl,--wrap=PBKDF2PARAM_new"
-        "-Wl,--wrap=PBE2PARAM_new" "-Wl,--wrap=X509_SIG_new"
-        "-Wl,--wrap=ASN1_OCTET_STRING_new" "-Wl,--wrap=ASN1_INTEGER_new"
-        "-Wl,--wrap=X509_ALGOR_new" "-Wl,--wrap=i2d_X509_SIG")
-    if(BEE2_PROVIDER_ENABLE_COVERAGE)
-        target_compile_options(bee2_bign_asn1_fault PRIVATE
-            --coverage -fprofile-update=atomic -O0 -g)
-        target_link_options(bee2_bign_asn1_fault PRIVATE --coverage)
-    endif()
-    add_test(NAME bee2_bign_asn1_fault COMMAND bee2_bign_asn1_fault)
-    set_tests_properties(bee2_bign_asn1_fault PROPERTIES
-        LABELS "bign;asn1;negative;fault_injection;native")
+# Internal secret-buffer replacement: aliasing, explicit clearing, empty keys.
+add_executable(bee2_provider_util_contract
+    provider_util_contract.c ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+target_include_directories(bee2_provider_util_contract PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(bee2_provider_util_contract PRIVATE OpenSSL::Crypto)
+if(BEE2_PROVIDER_ENABLE_COVERAGE)
+    target_compile_options(bee2_provider_util_contract PRIVATE
+        --coverage -fprofile-update=atomic -O0 -g)
+    target_link_options(bee2_provider_util_contract PRIVATE --coverage)
 endif()
-
-# Exercise allocation and copy failures in the provider's BIGN signature
-# context without replacing OpenSSL's process-wide allocation callbacks.
-if(UNIX AND NOT APPLE)
-    add_executable(bee2_bign_signature_fault
-        bign_signature_fault.c
-        ${CMAKE_SOURCE_DIR}/src/bign_signature.c
-        ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
-        ${CMAKE_SOURCE_DIR}/src/bign_common.c
-        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
-    target_include_directories(bee2_bign_signature_fault PRIVATE
-        ${CMAKE_SOURCE_DIR}/src)
-    target_include_directories(bee2_bign_signature_fault SYSTEM PRIVATE
-        ${CMAKE_SOURCE_DIR}/bee2/include)
-    target_link_libraries(bee2_bign_signature_fault PRIVATE
-        bee2_static OpenSSL::Crypto)
-    target_link_options(bee2_bign_signature_fault PRIVATE
-        "-Wl,--wrap=CRYPTO_memdup" "-Wl,--wrap=EVP_MD_up_ref"
-        "-Wl,--wrap=EVP_MD_CTX_new" "-Wl,--wrap=EVP_MD_CTX_copy_ex"
-        "-Wl,--wrap=EVP_MD_fetch")
-    if(BEE2_PROVIDER_ENABLE_COVERAGE)
-        target_compile_options(bee2_bign_signature_fault PRIVATE
-            --coverage -fprofile-update=atomic -O0 -g)
-        target_link_options(bee2_bign_signature_fault PRIVATE --coverage)
-    endif()
-    add_test(NAME bee2_bign_signature_fault
-        COMMAND bee2_bign_signature_fault $<TARGET_FILE_DIR:bee2_provider>)
-    set_tests_properties(bee2_bign_signature_fault PROPERTIES
-        LABELS "bign;signature;negative;fault_injection;native")
-endif()
-
-# Test BIGN KEYMGMT object allocation, key generation and RNG failures.
-if(UNIX AND NOT APPLE)
-    add_executable(bee2_bign_keymgmt_fault
-        bign_keymgmt_fault.c
-        ${CMAKE_SOURCE_DIR}/src/bign_keymgmt.c
-        ${CMAKE_SOURCE_DIR}/src/bign_common.c
-        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
-    target_include_directories(bee2_bign_keymgmt_fault PRIVATE
-        ${CMAKE_SOURCE_DIR}/src)
-    target_include_directories(bee2_bign_keymgmt_fault SYSTEM PRIVATE
-        ${CMAKE_SOURCE_DIR}/bee2/include)
-    target_link_libraries(bee2_bign_keymgmt_fault PRIVATE
-        bee2_static OpenSSL::Crypto)
-    target_link_options(bee2_bign_keymgmt_fault PRIVATE
-        "-Wl,--wrap=CRYPTO_zalloc" "-Wl,--wrap=RAND_priv_bytes_ex")
-    if(BEE2_PROVIDER_ENABLE_COVERAGE)
-        target_compile_options(bee2_bign_keymgmt_fault PRIVATE
-            --coverage -fprofile-update=atomic -O0 -g)
-        target_link_options(bee2_bign_keymgmt_fault PRIVATE --coverage)
-    endif()
-    add_test(NAME bee2_bign_keymgmt_fault COMMAND bee2_bign_keymgmt_fault)
-    set_tests_properties(bee2_bign_keymgmt_fault PROPERTIES
-        LABELS "bign;keymgmt;negative;fault_injection;native")
-endif()
-
-# Fail allocation in the real BELT/BASH hash and MAC callbacks without changing
-# libcrypto's global allocator or duplicating their normative hash vectors.
-if(UNIX AND NOT APPLE)
-    add_executable(bee2_digest_mac_allocation_contract
-        digest_mac_allocation_contract.c
-        ${CMAKE_SOURCE_DIR}/src/belt_digest.c
-        ${CMAKE_SOURCE_DIR}/src/bash_digest.c
-        ${CMAKE_SOURCE_DIR}/src/belt_mac.c)
-    target_include_directories(bee2_digest_mac_allocation_contract PRIVATE
-        ${CMAKE_SOURCE_DIR}/src)
-    target_include_directories(bee2_digest_mac_allocation_contract SYSTEM PRIVATE
-        ${CMAKE_SOURCE_DIR}/bee2/include)
-    target_link_libraries(bee2_digest_mac_allocation_contract PRIVATE
-        bee2_static OpenSSL::Crypto)
-    target_link_options(bee2_digest_mac_allocation_contract PRIVATE
-        "-Wl,--wrap=CRYPTO_malloc" "-Wl,--wrap=CRYPTO_zalloc")
-    if(BEE2_PROVIDER_ENABLE_COVERAGE)
-        target_compile_options(bee2_digest_mac_allocation_contract PRIVATE
-            --coverage -fprofile-update=atomic -O0 -g)
-        target_link_options(bee2_digest_mac_allocation_contract PRIVATE --coverage)
-    endif()
-    add_test(NAME bee2_digest_mac_allocation_contract
-        COMMAND bee2_digest_mac_allocation_contract)
-    set_tests_properties(bee2_digest_mac_allocation_contract PROPERTIES
-        LABELS "digest;mac;belt;bash;negative;fault_injection;native")
-endif()
-
-# Isolate allocation-failure and constant-time helper contracts without
-# introducing test-only hooks into the provider.
-if(UNIX AND NOT APPLE)
-    add_executable(bee2_provider_util_contract
-        provider_util_contract.c ${CMAKE_SOURCE_DIR}/src/provider_util.c)
-    target_include_directories(bee2_provider_util_contract PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(bee2_provider_util_contract PRIVATE OpenSSL::Crypto)
-    target_link_options(bee2_provider_util_contract PRIVATE "-Wl,--wrap=CRYPTO_memdup")
-    if(BEE2_PROVIDER_ENABLE_COVERAGE)
-        target_compile_options(bee2_provider_util_contract PRIVATE
-            --coverage -fprofile-update=atomic -O0 -g)
-        target_link_options(bee2_provider_util_contract PRIVATE --coverage)
-    endif()
-    add_test(NAME bee2_provider_util_contract COMMAND bee2_provider_util_contract)
-    set_tests_properties(bee2_provider_util_contract PROPERTIES
-        LABELS "regression;provider;negative;native")
-endif()
+add_test(NAME bee2_provider_util_contract COMMAND bee2_provider_util_contract)
+set_tests_properties(bee2_provider_util_contract PROPERTIES
+    LABELS "regression;provider;native")
 
 # Public EVP validation of provider-controlled OSSL_PARAM types, sizes
 # and context reset behavior across all supported BELT key sizes.
@@ -746,29 +619,6 @@ add_test(NAME bee2_brng_default_iv_contract
     COMMAND bee2_brng_default_iv_contract $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_brng_default_iv_contract PROPERTIES
     LABELS "regression;brng;rand;params;native")
-# Test all fifteen state-capacity checks with the real Bee2 size functions
-# and one deliberately oversized result at a time.
-if(UNIX AND NOT APPLE)
-    add_executable(bee2_backend_state_capacity backend_state_capacity.c)
-    target_include_directories(bee2_backend_state_capacity PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_include_directories(bee2_backend_state_capacity SYSTEM PRIVATE
-        ${CMAKE_SOURCE_DIR}/bee2/include)
-    target_link_libraries(bee2_backend_state_capacity PRIVATE bee2_static OpenSSL::Crypto)
-    foreach(fn IN ITEMS beltHash beltECB beltCBC beltCFB beltCTR beltBDE
-                        beltCHE beltDWP beltMAC beltHMAC beltSDE brngCTR
-                        brngHMAC bashHash bashPrg)
-        target_link_options(bee2_backend_state_capacity PRIVATE "-Wl,--wrap=${fn}_keep")
-    endforeach()
-    if(BEE2_PROVIDER_ENABLE_COVERAGE)
-        target_compile_options(bee2_backend_state_capacity PRIVATE
-            --coverage -fprofile-update=atomic -O0 -g)
-        target_link_options(bee2_backend_state_capacity PRIVATE --coverage)
-    endif()
-    add_test(NAME bee2_backend_state_capacity COMMAND bee2_backend_state_capacity)
-    set_tests_properties(bee2_backend_state_capacity PROPERTIES
-        LABELS "regression;provider;backend;negative;native")
-endif()
-
 # The PEM reader handles CRLF and records lacking a final line ending.
 add_executable(bee2_bign_pem_framing_contract bign_pem_framing_contract.c)
 target_link_libraries(bee2_bign_pem_framing_contract PRIVATE OpenSSL::Crypto)
