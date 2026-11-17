@@ -623,6 +623,37 @@ cleanup:
     return ok;
 }
 
+
+/* Failed cipher selection must not poison the encoder.  Writable output must
+ * still succeed; read-only BIO output must fail rather than losing the key. */
+static int check_encoder_failures(EVP_PKEY *key, const char *format)
+{
+    OSSL_ENCODER_CTX *encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, format, "PrivateKeyInfo",
+        "provider=bee2");
+    BIO *writable = BIO_new(BIO_s_mem());
+    BIO *read_only = BIO_new_mem_buf("", 0);
+    int ok = 0;
+
+    if (encoder == NULL || writable == NULL || read_only == NULL ||
+        OSSL_ENCODER_CTX_set_cipher(encoder, "AES-256-GCM", NULL) > 0 ||
+        OSSL_ENCODER_CTX_set_cipher(encoder, "belt-ctr256", NULL) > 0 ||
+        OSSL_ENCODER_CTX_set_cipher(encoder, "no-such-cipher", NULL) > 0 ||
+        OSSL_ENCODER_to_bio(encoder, writable) <= 0 ||
+        OSSL_ENCODER_to_bio(encoder, read_only) > 0)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN %s encoder error handling failed\n", format);
+    ERR_clear_error();
+    BIO_free(read_only);
+    BIO_free(writable);
+    OSSL_ENCODER_CTX_free(encoder);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *const names[] = {"bign-256", "bign-384", "bign-512"};
@@ -645,7 +676,9 @@ int main(int argc, char **argv)
         key = generate_key(names[i]);
         if (!key)
             goto cleanup;
-        if (!check_public_only_decoding(key) ||
+        if ((i == 0 && (!check_encoder_failures(key, "DER") ||
+                        !check_encoder_failures(key, "PEM"))) ||
+            !check_public_only_decoding(key) ||
             !check_key_stream(key, "DER") || !check_key_stream(key, "PEM"))
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {
