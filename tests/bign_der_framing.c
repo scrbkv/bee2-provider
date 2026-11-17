@@ -104,14 +104,15 @@ static int check_bign_key_der(void)
     const bee2_bign_variant_t *curve = bee2_bign_variant_256();
     unsigned char *private_der = NULL, *public_der = NULL, *damaged = NULL;
     size_t private_len = 0, public_len = 0;
-    unsigned int explicit_encoding;
+    unsigned int encoding_case;
     int ok = 0;
 
     key.variant = curve;
     key.has_priv = 1;
     key.priv[0] = 3;
-    for (explicit_encoding = 0; explicit_encoding < 2; ++explicit_encoding) {
-        key.encode_explicit = (int)explicit_encoding;
+    for (encoding_case = 0; encoding_case < 3; ++encoding_case) {
+        key.encode_explicit = encoding_case != 0;
+        key.encode_cofactor = encoding_case == 2;
         private_der = bee2_bign_asn1_encode_pkcs8_der(&key, &private_len);
         public_der = bee2_bign_asn1_encode_spki_der(&key, &public_len);
         if (!private_der || !public_der || private_len < 32 || public_len < 64 ||
@@ -123,14 +124,16 @@ static int check_bign_key_der(void)
         if (!bee2_bign_asn1_decode_pkcs8_der(private_der, private_len, curve, &parsed) ||
             !parsed.has_priv || !parsed.has_pub ||
             parsed.variant != curve ||
-            parsed.encode_explicit != (int)explicit_encoding ||
+            parsed.encode_explicit != key.encode_explicit ||
+            parsed.encode_cofactor != key.encode_cofactor ||
             CRYPTO_memcmp(key.priv, parsed.priv, 32) != 0)
             goto done;
 
         memset(&parsed, 0, sizeof(parsed));
         if (!bee2_bign_asn1_decode_spki_der(public_der, public_len, curve, &parsed) ||
             !parsed.has_pub || parsed.has_priv || parsed.variant != curve ||
-            parsed.encode_explicit != (int)explicit_encoding ||
+            parsed.encode_explicit != key.encode_explicit ||
+            parsed.encode_cofactor != key.encode_cofactor ||
             !bee2_bign_key_validate_public(&parsed))
             goto done;
 

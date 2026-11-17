@@ -243,6 +243,19 @@ static int check_oneshot_signature(const char *curve, const char *digest)
     if (EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
         EVP_DigestVerify(verify, signature, siglen, message, sizeof(message)) > 0)
         goto done;
+
+    /* An empty message is valid; its signature must authenticate the empty
+     * digest and reject a modified signature. */
+    siglen = sizeof(signature);
+    if (EVP_DigestSignInit_ex(sign, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSign(sign, signature, &siglen, message, 0) <= 0 ||
+        EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, 0) <= 0)
+        goto done;
+    signature[0] ^= 1;
+    if (EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, 0) > 0)
+        goto done;
     ok = 1;
 done:
     if (!ok)
