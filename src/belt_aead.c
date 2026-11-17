@@ -282,7 +282,7 @@ static int belt_aead_final(void *vctx, unsigned char *out, size_t *outl, size_t 
 
         c->algorithm->get_tag(&c->backend_state, computed);
 
-        valid = bee2_constant_time_equal(computed, c->tag, BELT_AEAD_TAG_SIZE);
+        valid = CRYPTO_memcmp(computed, c->tag, BELT_AEAD_TAG_SIZE) == 0;
         OPENSSL_cleanse(computed, sizeof(computed));
         if (!valid)
             return 0;

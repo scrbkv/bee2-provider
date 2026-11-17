@@ -288,7 +288,7 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
             return 0;
         bashPrgSqueeze(computed, c->variant->mac_size, &c->backend_state.state);
 
-        valid = bee2_constant_time_equal(computed, c->tag, c->variant->mac_size);
+        valid = CRYPTO_memcmp(computed, c->tag, c->variant->mac_size) == 0;
         OPENSSL_cleanse(computed, sizeof(computed));
         if (!valid)
             return 0;

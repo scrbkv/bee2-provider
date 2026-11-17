@@ -178,13 +178,13 @@ static int bign_match(const void *vkey1, const void *vkey2, int selection) {
     if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
         if (!k1->has_priv || !k2->has_priv)
             return 0;
-        if (!bee2_constant_time_equal(k1->priv, k2->priv, priv_len))
+        if (CRYPTO_memcmp(k1->priv, k2->priv, priv_len) != 0)
             return 0;
     }
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
         if (!k1->has_pub || !k2->has_pub)
             return 0;
-        if (!bee2_constant_time_equal(k1->pub, k2->pub, pub_len))
+        if (CRYPTO_memcmp(k1->pub, k2->pub, pub_len) != 0)
             return 0;
     }
     return 1;
@@ -357,7 +357,7 @@ int bee2_bign_import_params(void *vkey, int selection, const OSSL_PARAM params[]
         int valid = bee2_bign_derive_pubkey(candidate.variant, derived, candidate.priv);
 
         if (valid && candidate.has_pub)
-            valid = bee2_constant_time_equal(derived, candidate.pub, pub_len);
+            valid = CRYPTO_memcmp(derived, candidate.pub, pub_len) == 0;
         if (valid && !candidate.has_pub &&
             (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) {
             memcpy(candidate.pub, derived, pub_len);
