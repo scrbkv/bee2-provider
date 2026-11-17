@@ -4,6 +4,9 @@
 #include "../src/bign_asn1.h"
 
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/objects.h>
+#include <openssl/x509.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -267,6 +270,83 @@ end:
     return ok;
 }
 
+
+/* Validate DER AlgorithmIdentifier construction, including its optional
+ * digest OID, through the same helpers used for BIGN signatures. */
+static int check_signature_algid(void)
+{
+    static const char signature_oid[] = "1.2.112.0.2.0.34.101.45.12";
+    static const char digest_oid[] = "1.2.3.4";
+    ASN1_OBJECT *expected_sig = NULL, *expected_md = NULL;
+    const ASN1_OBJECT *actual = NULL;
+    const void *parameter = NULL;
+    X509_ALGOR *alg = NULL;
+    unsigned char der[128];
+    char resolved[80];
+    const unsigned char *p;
+    size_t length;
+    int parameter_type = 0, with_digest, ok = 0;
+
+    expected_sig = OBJ_txt2obj(signature_oid, 1);
+    expected_md = OBJ_txt2obj(digest_oid, 1);
+    if (expected_sig == NULL || expected_md == NULL)
+        goto end;
+
+    if (!bee2_bign_asn1_resolve_hash_oid(EVP_sha256(), "SHA256", NULL,
+                                         resolved, sizeof(resolved)) ||
+        strcmp(resolved, "2.16.840.1.101.3.4.2.1") != 0 ||
+        bee2_bign_asn1_resolve_hash_oid(EVP_sha256(), "SHA256", NULL,
+                                       resolved, 2) ||
+        !bee2_bign_asn1_resolve_hash_oid(EVP_sha256(), "SHA256",
+                                          digest_oid, resolved, sizeof(resolved)) ||
+        strcmp(resolved, digest_oid) != 0 ||
+        bee2_bign_asn1_resolve_hash_oid(EVP_sha256(), "SHA256",
+                                       digest_oid, resolved, strlen(digest_oid)))
+        goto end;
+
+    for (with_digest = 0; with_digest < 2; ++with_digest) {
+        length = 0;
+        if (!bee2_bign_asn1_build_algid(signature_oid,
+                                        with_digest ? digest_oid : NULL,
+                                        der, sizeof(der), &length) ||
+            length == 0 || length > sizeof(der))
+            goto end;
+        p = der;
+        alg = d2i_X509_ALGOR(NULL, &p, (long)length);
+        if (alg == NULL || p != der + length)
+            goto end;
+        X509_ALGOR_get0(&actual, &parameter_type, &parameter, alg);
+        if (actual == NULL || OBJ_cmp(actual, expected_sig) != 0 ||
+            (with_digest ? (parameter_type != V_ASN1_OBJECT ||
+                            OBJ_cmp((const ASN1_OBJECT *)parameter, expected_md) != 0) :
+                           parameter_type != V_ASN1_NULL))
+            goto end;
+        X509_ALGOR_free(alg);
+        alg = NULL;
+    }
+
+    length = 1234;
+    if (bee2_bign_asn1_build_algid(signature_oid, digest_oid, der, 1, &length) ||
+        bee2_bign_asn1_build_algid("not-an-oid", NULL,
+                                  der, sizeof(der), &length) ||
+        bee2_bign_asn1_build_algid(signature_oid, "not-an-oid",
+                                  der, sizeof(der), &length) ||
+        bee2_bign_asn1_build_algid(NULL, NULL, der, sizeof(der), &length) ||
+        bee2_bign_asn1_build_algid(signature_oid, NULL, NULL, 0, &length) ||
+        bee2_bign_asn1_build_algid(signature_oid, NULL, der, sizeof(der), NULL) ||
+        length != 1234)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN AlgorithmIdentifier ASN.1 contract failed\n");
+    X509_ALGOR_free(alg);
+    ASN1_OBJECT_free(expected_md);
+    ASN1_OBJECT_free(expected_sig);
+    return ok;
+}
+
 int main(void)
 {
     static const unsigned char valid_empty[] = {0x30, 0x00};
@@ -299,6 +379,7 @@ int main(void)
     ok &= check("oversized", oversized, BIGN_MAX_KEY_INPUT + 1u, 0);
     free(oversized);
 
+    ok &= check_signature_algid();
     ok &= check_bign_key_der();
     ok &= check_encrypted_key_der();
     return ok ? 0 : 1;

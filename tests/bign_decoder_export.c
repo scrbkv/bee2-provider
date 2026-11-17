@@ -146,6 +146,43 @@ done:
     return ok;
 }
 
+
+/* Check KEYMGMT's operation-name routing, which determines whether EVP
+ * can find the matching signature, key exchange and transport algorithms. */
+static int check_operation_names(const OSSL_ALGORITHM *keyalgs)
+{
+    static const char *const names[] = {
+        "bign", "bign-256", "bign-384", "bign-512"
+    };
+    const OSSL_ALGORITHM *alg;
+    const OSSL_DISPATCH *fn;
+    OSSL_FUNC_keymgmt_query_operation_name_fn *query;
+    size_t i;
+
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        for (alg = keyalgs; alg->algorithm_names != NULL; ++alg)
+            if (has_name(alg->algorithm_names, names[i]))
+                break;
+        if (alg->algorithm_names == NULL)
+            return 0;
+
+        query = NULL;
+        for (fn = alg->implementation; fn->function_id != 0; ++fn)
+            if (fn->function_id == OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME)
+                query = OSSL_FUNC_keymgmt_query_operation_name(fn);
+        if (query == NULL ||
+            query(OSSL_OP_SIGNATURE) == NULL ||
+            strcmp(query(OSSL_OP_SIGNATURE), names[i]) != 0 ||
+            query(OSSL_OP_KEYEXCH) == NULL ||
+            strcmp(query(OSSL_OP_KEYEXCH), names[i]) != 0 ||
+            query(OSSL_OP_ASYM_CIPHER) == NULL ||
+            strcmp(query(OSSL_OP_ASYM_CIPHER), "bign-keytransport") != 0 ||
+            query(OSSL_OP_CIPHER) != NULL)
+            return 0;
+    }
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     const OSSL_ALGORITHM *keyalgs = NULL, *decalgs = NULL, *alg;
@@ -192,7 +229,7 @@ int main(int argc, char **argv)
 
     keyalgs = OSSL_PROVIDER_query_operation(provider, OSSL_OP_KEYMGMT, &nocache);
     decalgs = OSSL_PROVIDER_query_operation(provider, OSSL_OP_DECODER, &nocache);
-    if (!keyalgs || !decalgs)
+    if (!keyalgs || !decalgs || !check_operation_names(keyalgs))
         goto done;
 
     for (alg = keyalgs; alg->algorithm_names; ++alg) {
