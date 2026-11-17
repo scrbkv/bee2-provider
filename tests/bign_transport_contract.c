@@ -28,12 +28,25 @@ static int roundtrip(EVP_PKEY_CTX *encrypt, EVP_PKEY_CTX *decrypt,
     unsigned char ciphertext[512], recovered[512];
     size_t ciphertext_len = 0;
     size_t recovered_len = sizeof(recovered);
+    size_t needed = 0;
     int ok = 0;
 
-    if (EVP_PKEY_encrypt(encrypt, NULL, &ciphertext_len, plaintext, length) <= 0 ||
+    /* libcrypto passes a null outlen to provider callbacks for size queries. */
+    if (EVP_PKEY_encrypt(encrypt, NULL, NULL, plaintext, length) > 0 ||
+        EVP_PKEY_encrypt(encrypt, NULL, &ciphertext_len, plaintext, length) <= 0 ||
         ciphertext_len > sizeof(ciphertext) ||
-        EVP_PKEY_encrypt(encrypt, ciphertext, &ciphertext_len, plaintext, length) <= 0 ||
-        EVP_PKEY_decrypt(decrypt, recovered, &recovered_len,
+        EVP_PKEY_encrypt(encrypt, ciphertext, &ciphertext_len, plaintext, length) <= 0)
+        goto end;
+    if (EVP_PKEY_decrypt(decrypt, NULL, NULL, ciphertext, ciphertext_len) > 0 ||
+        EVP_PKEY_decrypt(decrypt, NULL, &needed, ciphertext, ciphertext_len) <= 0 ||
+        needed != length)
+        goto end;
+    recovered_len = length - 1;
+    if (EVP_PKEY_decrypt(decrypt, recovered, &recovered_len,
+                         ciphertext, ciphertext_len) > 0)
+        goto end;
+    recovered_len = sizeof(recovered);
+    if (EVP_PKEY_decrypt(decrypt, recovered, &recovered_len,
                          ciphertext, ciphertext_len) <= 0 ||
         recovered_len != length ||
         CRYPTO_memcmp(recovered, plaintext, length) != 0)

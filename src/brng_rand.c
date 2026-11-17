@@ -234,7 +234,6 @@ static int brng_instantiate(void *vctx,
                                                 : (unsigned int)(c->key_len * 8u);
     if (strength > max_strength)
         return 0;
-    brng_clear_backend(c);
     if (c->mode == BRNG_MODE_CTR_HBELT) {
         brngCTRStart(&c->backend, c->key, c->have_iv ? c->iv : zero_iv);
     } else {

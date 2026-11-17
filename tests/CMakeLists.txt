@@ -473,6 +473,31 @@ add_test(NAME bee2_hmac_bash_crypto
     COMMAND bee2_hmac_bash_crypto $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_hmac_bash_crypto PROPERTIES LABELS "crypto;hmac;bash;native")
 
+# Provider state transitions that are reachable through public OpenSSL APIs.
+foreach(test IN ITEMS brng_split_contract bign_private_selection
+                      hmac_params_contract aead_phase_contract)
+    add_executable(bee2_${test} ${test}.c)
+    target_link_libraries(bee2_${test} PRIVATE OpenSSL::Crypto)
+    add_test(NAME bee2_${test}
+        COMMAND bee2_${test} $<TARGET_FILE_DIR:bee2_provider>)
+endforeach()
+set_tests_properties(bee2_brng_split_contract PROPERTIES
+    LABELS "regression;rand;brng;native")
+set_tests_properties(bee2_bign_private_selection PROPERTIES
+    LABELS "regression;bign;keymgmt;native")
+set_tests_properties(bee2_hmac_params_contract PROPERTIES
+    LABELS "regression;mac;params;native")
+set_tests_properties(bee2_aead_phase_contract PROPERTIES
+    LABELS "regression;aead;evp;native")
+
+# BIGN signing and verification with a digest properties-only update.
+add_executable(bee2_bign_signature_properties bign_signature_properties.c)
+target_link_libraries(bee2_bign_signature_properties PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_signature_properties
+    COMMAND bee2_bign_signature_properties $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_signature_properties PROPERTIES
+    LABELS "bign;signature;regression;native")
+
 add_executable(bee2_bign_bake_crypto bign_bake_crypto.c)
 target_include_directories(bee2_bign_bake_crypto SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
 target_link_libraries(bee2_bign_bake_crypto PRIVATE bee2_static OpenSSL::Crypto)

@@ -56,8 +56,8 @@ bign_apply_encoding_params(int *encode_explicit, int *encode_cofactor, const OSS
     int explicit_encoding, cofactor_encoding;
     int ok = 0;
 
-    if (!encode_explicit || !encode_cofactor || !params)
-        return encode_explicit && encode_cofactor;
+    if (params == NULL)
+        return 1;
 
     explicit_encoding = *encode_explicit;
     cofactor_encoding = *encode_cofactor;
@@ -99,11 +99,6 @@ static int bign_set_variant_from_params(bee2_bign_key_t *key, const OSSL_PARAM p
     const OSSL_PARAM *p;
     char *group = NULL;
     const bee2_bign_variant_t *variant = NULL;
-
-    if (!key)
-        return 0;
-    if (!params)
-        return key->variant != NULL;
 
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME);
     if (!p)
@@ -201,10 +196,6 @@ static int bign_match(const void *vkey1, const void *vkey2, int selection) {
 static int bign_validate(const void *vkey, int selection, int checktype) {
     const bee2_bign_key_t *key = vkey;
     (void)checktype;
-    if (!key)
-        return 0;
-    if (!key->variant)
-        return 0;
     if (!bign_has(vkey, selection))
         return 0;
 
@@ -323,8 +314,6 @@ int bee2_bign_import_params(void *vkey, int selection, const OSSL_PARAM params[]
     if (!bign_apply_encoding_params(&candidate.encode_explicit, &candidate.encode_cofactor, params))
         goto cleanup;
     if (!bign_set_variant_from_params(&candidate, params))
-        goto cleanup;
-    if (!candidate.variant)
         goto cleanup;
 
     priv_len = bee2_bign_priv_len(candidate.variant);

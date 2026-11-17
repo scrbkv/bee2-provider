@@ -203,11 +203,6 @@ static int variant_matches_params(const bee2_bign_variant_t *variant,
 }
 
 static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARAMS *ecp) {
-    const bee2_bign_variant_t *variants[] = {
-        bee2_bign_variant_256(),
-        bee2_bign_variant_384(),
-        bee2_bign_variant_512(),
-    };
     unsigned char p_le[BEE2_BIGN_MAX_WORDS * 8];
     unsigned char a_le[BEE2_BIGN_MAX_WORDS * 8];
     unsigned char b_le[BEE2_BIGN_MAX_WORDS * 8];
@@ -222,11 +217,8 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
     const bee2_bign_variant_t *variant = NULL;
     int bits = 0;
     size_t bytes = 0;
-    size_t i;
 
-    if (!ecp || ecp->version != 1)
-        return NULL;
-    if (!ecp->fieldID || !ecp->fieldID->fieldType || !ecp->fieldID->prime)
+    if (ecp->version != 1)
         return NULL;
     if (!oid_equals(ecp->fieldID->fieldType, BEE2_OID_BIGN_PRIMEFIELD))
         return NULL;
@@ -241,8 +233,6 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
 
     if (!bn_to_fixed_le(p_bn, p_le, bytes))
         goto cleanup;
-    if (!ecp->curve || !ecp->curve->a || !ecp->curve->b)
-        goto cleanup;
     a_data = ASN1_STRING_get0_data(ecp->curve->a);
     b_data = ASN1_STRING_get0_data(ecp->curve->b);
     if (!a_data || !b_data)
@@ -253,15 +243,13 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
     memcpy(a_le, a_data, bytes);
     memcpy(b_le, b_data, bytes);
 
-    if (!ecp->base || bign_asn1_string_length(ecp->base) != (int)bytes)
+    if (bign_asn1_string_length(ecp->base) != (int)bytes)
         goto cleanup;
     base_data = ASN1_STRING_get0_data(ecp->base);
     if (!base_data)
         goto cleanup;
     memcpy(y_le, base_data, bytes);
 
-    if (!ecp->order)
-        goto cleanup;
     q_bn = ASN1_INTEGER_to_BN(ecp->order, NULL);
     if (!q_bn)
         goto cleanup;
@@ -276,30 +264,40 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
             goto cleanup;
     }
 
-    for (i = 0; i < sizeof(variants) / sizeof(variants[0]); ++i) {
-        bign_params standard;
-
-        if (!variant_matches_params(variants[i], p_le, a_le, b_le, q_le, y_le, bytes))
-            continue;
-        if (ecp->curve->seed != NULL) {
-            const ASN1_BIT_STRING *seed = ecp->curve->seed;
-            unsigned char *seed_der = NULL;
-            int der_len, valid;
-
-            if (bign_asn1_string_length((const ASN1_STRING *)seed) != 8 ||
-                !bee2_bign_curve_init_std(variants[i], &standard))
-                continue;
-            der_len = i2d_ASN1_BIT_STRING(seed, &seed_der);
-            valid = der_len == 11 && seed_der != NULL &&
-                    seed_der[0] == V_ASN1_BIT_STRING &&
-                    seed_der[1] == 9 && seed_der[2] == 0 &&
-                    memcmp(seed_der + 3, standard.seed, 8) == 0;
-            OPENSSL_free(seed_der);
-            if (!valid)
-                continue;
-        }
-        variant = variants[i];
+    switch (bits) {
+    case 256:
+        variant = bee2_bign_variant_256();
         break;
+    case 384:
+        variant = bee2_bign_variant_384();
+        break;
+    case 512:
+        variant = bee2_bign_variant_512();
+        break;
+    }
+    if (!variant_matches_params(variant, p_le, a_le, b_le, q_le, y_le, bytes)) {
+        variant = NULL;
+        goto cleanup;
+    }
+    if (ecp->curve->seed != NULL) {
+        const ASN1_BIT_STRING *seed = ecp->curve->seed;
+        bign_params standard;
+        unsigned char *seed_der = NULL;
+        int der_len, valid;
+
+        if (bign_asn1_string_length((const ASN1_STRING *)seed) != 8 ||
+            !bee2_bign_curve_init_std(variant, &standard)) {
+            variant = NULL;
+            goto cleanup;
+        }
+        der_len = i2d_ASN1_BIT_STRING(seed, &seed_der);
+        valid = der_len == 11 && seed_der != NULL &&
+                seed_der[0] == V_ASN1_BIT_STRING &&
+                seed_der[1] == 9 && seed_der[2] == 0 &&
+                memcmp(seed_der + 3, standard.seed, 8) == 0;
+        OPENSSL_free(seed_der);
+        if (!valid)
+            variant = NULL;
     }
 
 cleanup:
@@ -1115,31 +1113,19 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     if (bio == NULL)
         goto end;
 
-    if (ctx->input_pem) {
-        if (!read_one_object(bio, &buf, &len))
+    if (!read_one_object(bio, &buf, &len))
+        goto end;
+    if (len == 0) {
+        ok = 1;
+        goto end;
+    }
+    if (ctx->input_pem && buf[0] != 0x30) {
+        converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
+        if (converted == NULL || payload_len == 0 ||
+            payload_len > BIGN_MAX_KEY_INPUT)
             goto end;
-        if (len == 0) {
-            ok = 1;
-            goto end;
-        }
-        if (buf[0] == 0x30) {
-            /* A generic loader may invoke this adapter on DER input. */
-            payload = buf;
-            payload_len = len;
-        } else {
-            converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
-            if (converted == NULL || payload_len == 0 ||
-                payload_len > BIGN_MAX_KEY_INPUT)
-                goto end;
-            payload = converted;
-        }
+        payload = converted;
     } else {
-        if (!read_one_object(bio, &buf, &len))
-            goto end;
-        if (len == 0) {
-            ok = 1;
-            goto end;
-        }
         payload = buf;
         payload_len = len;
     }
@@ -1459,12 +1445,8 @@ end:
 
 static size_t asn_length(const ASN1_STRING *value)
 {
-#if OPENSSL_VERSION_NUMBER >= 0x40100000L
-    return ASN1_STRING_get_length(value);
-#else
-    int n = ASN1_STRING_length(value);
-    return n >= 0 ? (size_t)n : SIZE_MAX;
-#endif
+    int len = bign_asn1_string_length(value);
+    return len < 0 ? SIZE_MAX : (size_t)len;
 }
 
 
@@ -1488,7 +1470,7 @@ int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
         type != V_ASN1_SEQUENCE || value == NULL)
         return 0;
     pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
-    if (pbe != NULL && pbe->encryption != NULL) {
+    if (pbe != NULL) {
         X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
         for (key_len = 16; key_len <= 32; key_len += 8) {
             if (oid_equals(obj, kwp_oid(key_len))) {
@@ -1526,14 +1508,14 @@ int bee2_stb_pbes2_legacy_pbkdf2_allowed(const X509_SIG *encrypted,
         type != V_ASN1_SEQUENCE || !value)
         return 0;
     pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
-    if (!pbe || !pbe->keyfunc)
+    if (!pbe)
         goto end;
     X509_ALGOR_get0(&oid, &type, &value, pbe->keyfunc);
     if (!oid_equals(oid, BEE2_OID_PBKDF2) ||
         type != V_ASN1_SEQUENCE || !value)
         goto end;
     kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
-    if (!kdf || !kdf->iter)
+    if (!kdf)
         goto end;
     iterations = ASN1_INTEGER_get(kdf->iter);
     allowed = iterations > 0 && (unsigned long)iterations <= max_iterations;
@@ -1575,7 +1557,8 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     if (!oid_equals(obj, BEE2_OID_PBES2) || type != V_ASN1_SEQUENCE || value == NULL)
         return NULL;
     pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
-    if (pbe == NULL || pbe->encryption == NULL || pbe->keyfunc == NULL)
+    /* PBE2PARAM decoding enforces both mandatory AlgorithmIdentifiers. */
+    if (pbe == NULL)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
     for (k = 16; k <= 32; k += 8) {
@@ -1593,9 +1576,9 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     if (!oid_equals(obj, BEE2_OID_PBKDF2) || type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
     kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
-    if (kdf == NULL || kdf->salt == NULL || kdf->iter == NULL || kdf->prf == NULL ||
-        kdf->salt->type != V_ASN1_OCTET_STRING ||
-        kdf->salt->value.octet_string == NULL)
+    /* salt and iter are mandatory ASN.1 fields; the STB PRF is not. */
+    if (kdf == NULL || kdf->prf == NULL ||
+        kdf->salt->type != V_ASN1_OCTET_STRING)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, kdf->prf);
     if (!oid_equals(obj, BEE2_OID_HMAC_HBELT) ||
@@ -1655,7 +1638,7 @@ unsigned char *bee2_bign_asn1_encrypt_standard_pkcs8(const unsigned char *der, s
     if (out_len == NULL)
         return NULL;
     *out_len = 0;
-    if (!der || !pass || !cipher || der_len > LONG_MAX || pass_len > INT_MAX ||
+    if (!der || !pass || !cipher || pass_len > INT_MAX ||
         salt_len > INT_MAX || iterations > INT_MAX ||
         !bign_der_sequence_body(der, der_len, &p))
         return NULL;

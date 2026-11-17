@@ -170,15 +170,12 @@ static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     return 1;
 }
 
-static int bign_encoder_does_selection(void *provctx, int selection) {
+/* The supported selections are identical for encoder and decoder. */
+static int bign_codec_does_selection(void *provctx, int selection) {
     (void)provctx;
-    if (selection == 0)
-        return 1;
-    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
-        return 1;
-    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
-        return 1;
-    return 0;
+    return selection == 0 ||
+           (selection & (OSSL_KEYMGMT_SELECT_PRIVATE_KEY |
+                         OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) != 0;
 }
 
 static int bign_encoder_encode(void *vctx,
@@ -272,8 +269,7 @@ static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PA
     const bee2_bign_encoder_ctx_t *ctx = vctx;
     bee2_bign_key_t *key;
 
-    if (ctx == NULL || params == NULL ||
-        OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME) == NULL)
+    if (params == NULL)
         return NULL;
     key = bee2_bign_key_new(ctx->variant);
     if (key == NULL)
@@ -330,16 +326,6 @@ static int bign_decoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     return 1;
 }
 
-static int bign_decoder_does_selection(void *provctx, int selection) {
-    (void)provctx;
-    if (selection == 0)
-        return 1;
-    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
-        return 1;
-    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
-        return 1;
-    return 0;
-}
 
 static int bign_decoder_export_object(void *vctx,
                                       const void *objref,
@@ -401,7 +387,7 @@ static void *bign_der_encoder_newctx(void *provctx) {
         {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params}, \
         {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, \
          (void (*)(void))bign_encoder_settable_ctx_params}, \
-        {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection}, \
+        {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection}, \
         {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode}, \
         {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object}, \
         {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object}, \
@@ -419,7 +405,7 @@ const OSSL_DISPATCH bee2_bign_pem_encoder_functions[] = {
     {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},
     {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params},
     {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_encoder_settable_ctx_params},
-    {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection},
+    {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection},
     {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
     {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},
     {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object},
@@ -430,7 +416,7 @@ const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
     {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},
     {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params},
     {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_encoder_settable_ctx_params},
-    {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_encoder_does_selection},
+    {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection},
     {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
     {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},
     {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object},
@@ -460,7 +446,7 @@ const OSSL_DISPATCH bee2_bign_decoder_functions[] = {
     {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
      (void (*)(void))bign_decoder_settable_ctx_params},
     {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
-    {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_decoder_does_selection},
+    {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection},
     {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bee2_bign_asn1_decoder_decode},
     {OSSL_FUNC_DECODER_EXPORT_OBJECT, (void (*)(void))bign_decoder_export_object},
     {0, NULL}};

@@ -86,30 +86,28 @@ static int bign_keytransport_set_ctx_params(void *vctx, const OSSL_PARAM params[
     return 1;
 }
 
-static int bign_keytransport_encrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
+static int bign_keytransport_init(void *vctx, void *vkey,
+                                  const OSSL_PARAM params[], int encrypt) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
+
     ctx->key = NULL;
     ctx->encrypt = 0;
-    if (!key || !key->variant || !key->has_pub ||
+    if (!key || !key->variant ||
+        (encrypt ? !key->has_pub : !key->has_priv) ||
         !bign_keytransport_set_ctx_params(ctx, params))
         return 0;
     ctx->key = key;
-    ctx->encrypt = 1;
+    ctx->encrypt = encrypt;
     return 1;
 }
 
+static int bign_keytransport_encrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
+    return bign_keytransport_init(vctx, vkey, params, 1);
+}
+
 static int bign_keytransport_decrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
-    bee2_bign_keytransport_ctx_t *ctx = vctx;
-    bee2_bign_key_t *key = vkey;
-    ctx->key = NULL;
-    ctx->encrypt = 0;
-    if (!key || !key->variant || !key->has_priv ||
-        !bign_keytransport_set_ctx_params(ctx, params))
-        return 0;
-    ctx->key = key;
-    ctx->encrypt = 0;
-    return 1;
+    return bign_keytransport_init(vctx, vkey, params, 0);
 }
 
 static int bign_keytransport_encrypt(void *vctx,
@@ -123,7 +121,7 @@ static int bign_keytransport_encrypt(void *vctx,
     bee2_bign_rng_t rng = {0};
     size_t need;
     int ok = 0;
-    if (!ctx || !ctx->encrypt || !ctx->key || !outlen || !in || inlen < 16)
+    if (!ctx->encrypt || !ctx->key || !outlen || !in || inlen < 16)
         return 0;
     need = bee2_bign_priv_len(ctx->key->variant) + 16u;
     if (inlen > SIZE_MAX - need)
@@ -164,7 +162,7 @@ static int bign_keytransport_decrypt(void *vctx,
     size_t overhead;
     size_t need;
     int ok = 0;
-    if (!ctx || ctx->encrypt || !ctx->key || !outlen || !in)
+    if (ctx->encrypt || !ctx->key || !outlen || !in)
         return 0;
     overhead = bee2_bign_priv_len(ctx->key->variant) + 16u;
     if (inlen < overhead + 16u)

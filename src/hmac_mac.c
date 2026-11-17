@@ -122,7 +122,6 @@ static const OSSL_PARAM *hmac_gettable_ctx_params(void *vctx, void *provctx) {
 static int hmac_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     const bee2_hmac_ctx_t *ctx = vctx;
     OSSL_PARAM *param;
-    size_t digest_size = ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE;
     size_t block_size = ctx->bash_digest ? ctx->bash_digest->block_size : BELT_HMAC_BLOCK_SIZE;
 
     param = OSSL_PARAM_locate(params, OSSL_MAC_PARAM_SIZE);
@@ -131,7 +130,7 @@ static int hmac_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     param = OSSL_PARAM_locate(params, OSSL_MAC_PARAM_BLOCK_SIZE);
     if (param && !OSSL_PARAM_set_size_t(param, block_size))
         return 0;
-    return ctx->output_size <= digest_size;
+    return 1;
 }
 
 static const OSSL_PARAM bee2_hmac_settable_ctx_params[] = {
@@ -222,7 +221,7 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     static const unsigned char empty_key = 0;
     size_t i;
 
-    if (!ctx || !ctx->key_set)
+    if (!ctx->key_set)
         return 0;
     if (!ctx->bash_digest) {
         beltHMACStart(&ctx->backend_state,
@@ -304,7 +303,7 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
         *output_len = ctx->output_size;
         return 1;
     }
-    if (output_size < ctx->output_size || ctx->output_size > digest_size)
+    if (output_size < ctx->output_size)
         return 0;
 
     if (ctx->bash_digest) {
