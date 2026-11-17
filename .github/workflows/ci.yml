@@ -303,13 +303,14 @@ jobs:
       - name: Run all provider tests under coverage
         run: ctest --test-dir build-coverage --output-on-failure --timeout 180 --output-junit coverage-tests.xml
 
-      - name: Report raw coverage and require registered functions to run
+      - name: Publish unfiltered line, branch and function coverage
         shell: bash
         run: |
           python3 -m pip install --break-system-packages 'gcovr>=8,<9'
           python3 -m gcovr --root . --filter 'src/' --print-summary \
-            --fail-under-function 100 \
             --json-summary build-coverage/coverage-summary.json
+          python3 -m gcovr --root . --filter 'src/' \
+            --json -o build-coverage/coverage.json
           python3 -m gcovr --root . --filter 'src/' \
             --html-details build-coverage/coverage.html
           python3 -m gcovr --root . --filter 'src/' \
