@@ -116,82 +116,48 @@ KATs check the standard's 256-bit ciphertext examples.
 The provider uses Bee2 `beltKeyExpand2()` with `u32To()` to expand
 keys; tests verify its output against the normative STB values.
 
-## Instrumented provider coverage
+## Instrumented coverage and regression tests
 
-Configure with `-DBEE2_PROVIDER_ENABLE_COVERAGE=ON` (GCC and tests required),
-run the full CTest suite, then generate gcovr reports restricted to `src/`.
-GitHub Actions publishes per-line HTML, XML and JSON summary artifacts. Only
-the provider, not Bee2, is instrumented. The measured percentage is not the
-same as the percentage of tests that pass. No unreachable branches should be
-silently excluded merely to improve the number.
+Use `-DBEE2_PROVIDER_BUILD_TESTS=ON -DBEE2_PROVIDER_ENABLE_COVERAGE=ON`
+with GCC, then run the complete CTest suite. GitHub Actions publishes gcovr
+HTML, XML and JSON reports for production `src/` code, including ASN.1 sources
+compiled directly into unit tests. The Bee2 dependency and test harnesses do
+not contribute to the reported percentages.
 
-The engine matrix replaces duplicate fixed-only cipher/MAC/digest cases.
-BIGN CSR/certificate interop verifies certificate signatures using both
-implementations rather than merely printing their ASN.1 descriptions.
+The coverage job enforces 100% function execution and regression floors of
+80% line and 60% branch coverage. Successful tests are not equivalent to
+complete behavioral coverage. Do not hide defensive error-handling branches
+or exclude them merely to improve the numbers. Atomic GCC coverage counters
+are required because the native concurrency test exercises shared provider
+code from eight threads; ordinary counters produced invalid gcov branch data.
 
-## Legacy AEAD and key-wrap interop
+The native contract suite exercises one-shot and streaming EVP operations,
+copying cipher, MAC and BIGN contexts, BIGN signing and key agreement,
+`EVP_KDF_CTX_reset`, and BIGN generic aliases, template-based generation,
+key comparison and decoder object exports. The BIGN DER tests check PKCS#8
+and SPKI with named and explicit curves, including malformed points,
+scalars and framing. On Linux, linker-wrapped PKCS#8 and SPKI ownership
+transfer failures verify ASN.1 cleanup without fault hooks in the provider.
 
-The extended interop job compiles `interop_cipher_tool.c` once with OpenSSL
-3.x and once with OpenSSL 1.1.1. The harness normalizes legacy appended AEAD
-tags into the provider's explicit-tag wire representation and cross-decrypts
-both sides. It covers 128/192/256-bit BELT-DWP, BELT-CHE, BELT-KWP, and the
-legacy BASH-PRG-AE2561 profile (empty announcement), with zero, patterned,
-and deterministic pseudorandom inputs, boundary lengths, AAD and tag tampering.
-BELT-KWP uses the legacy engine's zero-header profile.
+Published ECB/CBC ciphertext-stealing vectors A.9-2, A.10-2, A.11-2 and
+A.12-2 (36/47 bytes) accompany the full-block KATs. These cases supply the
+entire final partial block in one EVP Update, matching the API contract.
 
-## Multithreading and EVP context duplication
+## Legacy bee2evp interoperability
 
-The native `bee2_provider_concurrent` test uses eight threads that share an
-`OSSL_LIB_CTX` but independently create and duplicate digest/MAC contexts,
-then generate, sign and verify BIGN keys. It is included automatically in the
-sanitizer and coverage jobs. Production should never share a mutable EVP
-operation context between threads without its own synchronization.
+The CI interoperability job builds pinned OpenSSL 1.1.1 with bee2evp alongside
+OpenSSL 3.x with the provider. The engine matrix compares fixed, boundary and
+pseudorandom input cases for supported BELT modes, digests and MACs. The
+extended matrix compares 128/192/256-bit BELT-DWP, BELT-CHE and BELT-KWP,
+plus BASH-PRG-AE2561, using zero, patterned and deterministic pseudorandom
+data, cross-decryption, AAD and tampered authentication tags. BELT-KWP uses the
+legacy engine's zero-header profile.
 
-ECB/CBC normative ciphertext-stealing vectors A.9-2, A.10-2, A.11-2 and
-A.12-2 (47/36-byte inputs) are kept alongside the 48-byte KATs in the
-native `stb_kat.c` test. Only one final partial block is passed per Update,
-matching the provider's documented CTS API contract.
+The old engine cannot decrypt its own zero-plaintext BASH-PRG-AE2561 result
+(tag-only payload). This does not limit Bee2 or the provider: zero-length BASH
+cases remain tested directly with Bee2, and only the failing legacy case is
+excluded from that matrix.
 
-The legacy BASH-PRG-AE2561 engine's decryption path fails its own
-zero-plaintext case (tag-only payload); this is **not** a restriction of Bee2
-or the provider. The cross-version matrix excludes only that legacy failure;
-the direct Bee2 matrix retains zero-length BASH inputs.
-
-Coverage uses GCC `-fprofile-update=atomic` because the native thread test
-shares an instrumented provider module across threads. Without atomic profile
-counters, gcov can report negative branch hits and mismeasure coverage.
-
-The coverage job also instruments the production ASN.1 sources compiled into
-`bee2_bign_der_framing` and `bee2_bign_legacy_pbkdf2_limit`; otherwise
-those legitimate tests would appear as uncovered implementation lines. The
-BIGN digest test now checks actual one-shot `EVP_DigestSign`/`EVP_DigestVerify`
-with the matching BELT/BASH digests and a modified-message rejection.
-
-Context-cloning checks are integrated into the owning contract tests rather
-than new redundant test binaries: BIGN raw/BAKE derived secret equality after
-`EVP_PKEY_CTX_dup`, BIGN key-transport header copy independence, a partially
-updated BELT-MAC copy via `EVP_MAC_CTX_dup`, and `EVP_KDF_reset` with required
-parameter reinstallation and deterministic repeatability.
-
-BIGN signature and parameter-contract tests now exercise the generic
-`bign` alias using an explicit named curve for key import, signing and
-verification, as well as key generation from an existing BIGN key's domain
-parameters. These exercise distinct provider dispatch paths rather than
-repeating fixed-curve KATs.
-
-The decoder object-reference test constructs a real BIGN key via the provider's
-KEYMGMT import callbacks, then invokes DECODER_EXPORT_OBJECT and compares its
-exported key material with an independently imported EVP key. The Linux-only
-ASN.1 fault-injection test uses a linker wrapper for PKCS8_pkey_set0 to test
-parameter cleanup on a failed ownership transfer for both named and explicit
-curve encodings. This avoids global allocation failure or arbitrary test-only
-hooks in production code.
-
-The BIGN digest-binding tests also validate published digest sizes, the
-`sig=deterministic` parameter, rejection of unsupported signature modes and
-nonmutation of the deterministic flag on a rejected parameter batch.
-
-The ASN.1 fault-injection target also simulates failure of the SPKI
-`X509_PUBKEY_set0_param` ownership transfer with named and explicit BIGN
-parameters, including public-key allocation and cleanup. No production
-allocator hooks or injected failure logic are introduced.
+BIGN interoperability checks cross-load private PKCS#8 keys, verify signatures
+in both directions, and verify CSRs and self-signed X.509 certificates using
+both implementations, including explicit curve parameters.
