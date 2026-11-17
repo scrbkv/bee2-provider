@@ -289,6 +289,13 @@ add_test(NAME bee2_bign_codec_roundtrip
         --openssl ${BEE2_OPENSSL_EXECUTABLE})
 set_tests_properties(bee2_bign_codec_roundtrip PROPERTIES LABELS "regression;bign;codec")
 
+add_executable(bee2_bign_der_stream_contract bign_der_stream_contract.c)
+target_link_libraries(bee2_bign_der_stream_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_der_stream_contract
+    COMMAND bee2_bign_der_stream_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_der_stream_contract
+    PROPERTIES LABELS "regression;bign;asn1;der;native")
+
 add_executable(bee2_bign_der_framing
     bign_der_framing.c
     ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
