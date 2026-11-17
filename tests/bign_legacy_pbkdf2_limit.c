@@ -110,7 +110,7 @@ int main(void)
             fprintf(stderr, "PBES2 test fixture construction failed at case %zu\n", i);
             return 1;
         }
-        result = bee2_stb_pbes2_legacy_pbkdf2_allowed(info, cases[i].maximum);
+        result = bee2_pkcs8_standard_pbkdf2_allowed(info, cases[i].maximum);
         X509_SIG_free(info);
         if (result != cases[i].allowed) {
             fprintf(stderr, "PBES2 iteration limit mismatch at case %zu\n", i);
@@ -118,7 +118,7 @@ int main(void)
         }
     }
     unknown = make_pbes2(1, OID_SCRYPT);
-    if (!unknown || bee2_stb_pbes2_legacy_pbkdf2_allowed(unknown, 10000u)) {
+    if (!unknown || bee2_pkcs8_standard_pbkdf2_allowed(unknown, 10000u)) {
         fprintf(stderr, "Unrecognised PBES2 KDF was accepted\n");
         X509_SIG_free(unknown);
         return 1;
