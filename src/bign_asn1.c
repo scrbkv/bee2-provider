@@ -144,7 +144,7 @@ static int oid_equals(const ASN1_OBJECT *obj, const char *oid) {
     char buf[80];
     int n;
 
-    if (!obj || !oid)
+    if (!obj)
         return 0;
     n = OBJ_obj2txt(buf, sizeof(buf), obj, 1);
     if (n <= 0 || n >= (int)sizeof(buf))
@@ -167,9 +167,8 @@ static const bee2_bign_variant_t *variant_from_curve_obj(const ASN1_OBJECT *obj)
 }
 
 static int bn_to_fixed_le(const BIGNUM *bn, unsigned char *out, size_t len) {
-    if (!bn || !out || BN_is_negative(bn) || len > BEE2_BIGN_MAX_WORDS * 8u)
-        return 0;
-    return BN_bn2lebinpad(bn, out, (int)len) == (int)len;
+    return !BN_is_negative(bn) &&
+           BN_bn2lebinpad(bn, out, (int)len) == (int)len;
 }
 
 static int variant_matches_params(const bee2_bign_variant_t *variant,
@@ -180,13 +179,7 @@ static int variant_matches_params(const bee2_bign_variant_t *variant,
                                   const unsigned char *y_le,
                                   size_t bytes) {
     bign_params curve;
-    if (!variant)
-        return 0;
-    if (bee2_bign_priv_len(variant) != bytes)
-        return 0;
     if (!bee2_bign_curve_init_std(variant, &curve))
-        return 0;
-    if (curve.l / 4u != bytes)
         return 0;
 
     if (memcmp(curve.p, p_le, bytes) != 0)
@@ -301,12 +294,9 @@ static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARA
     }
 
 cleanup:
-    if (p_bn)
-        BN_free(p_bn);
-    if (q_bn)
-        BN_free(q_bn);
-    if (cof_bn)
-        BN_free(cof_bn);
+    BN_free(p_bn);
+    BN_free(q_bn);
+    BN_free(cof_bn);
     return variant;
 }
 
@@ -369,8 +359,6 @@ static ASN1_INTEGER *asn1_integer_from_le(const unsigned char *value, size_t len
     BIGNUM *bn = NULL;
     ASN1_INTEGER *integer = NULL;
 
-    if (!value || len > INT_MAX)
-        return NULL;
     bn = BN_lebin2bn(value, (int)len, NULL);
     if (!bn)
         return NULL;
@@ -752,8 +740,6 @@ static int read_one_object(BIO *bio, unsigned char **out, size_t *len) {
     unsigned char first;
     size_t n = 0;
 
-    if (!bio || !out || !len)
-        return 0;
     *out = NULL;
     *len = 0;
     if (!BIO_read_ex(bio, &first, 1, &n) || n == 0)
@@ -775,8 +761,6 @@ pem_to_der_buf(const unsigned char *buf, size_t len, size_t *out_len, char **out
     long dlen = 0;
     unsigned char *der = NULL;
 
-    if (!out_len)
-        return NULL;
     *out_len = 0;
     if (out_name)
         *out_name = NULL;

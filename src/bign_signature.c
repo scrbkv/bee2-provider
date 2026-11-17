@@ -57,8 +57,6 @@ static const OSSL_PARAM bee2_bign_sig_settable_ctx_params[] = {
 
 static int bign_str_copy(char *dst, size_t dst_size, const char *src) {
     size_t n;
-    if (!dst || dst_size == 0u)
-        return 0;
     if (!src) {
         dst[0] = '\0';
         return 1;
@@ -109,17 +107,16 @@ static const char *bign_sig_mdname_to_hash_oid(const char *name)
 
 /* Bee2 signs the DER OID of the hash function, not of the signature scheme. */
 static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
-    if (ctx->hspec)
-        return ctx->md && ctx->hash_oid[0] != '\0' ? ctx->hash_oid : NULL;
-    if (ctx->hash_oid[0] != '\0')
-        return ctx->hash_oid;
+    const char *name;
+
+    /* bign_sig_set_md() resolves the hash OID together with the digest. */
     if (ctx->md)
-        return bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(ctx->md));
-    if (ctx->mdname[0] != '\0')
-        return bign_sig_mdname_to_hash_oid(ctx->mdname);
-    if (ctx->fixed_digest)
-        return bign_sig_mdname_to_hash_oid(ctx->fixed_digest);
-    return ctx->variant ? bign_sig_mdname_to_hash_oid(ctx->variant->default_digest) : NULL;
+        return ctx->hash_oid[0] != '\0' ? ctx->hash_oid : NULL;
+    if (ctx->hspec)
+        return NULL;
+    name = ctx->fixed_digest ? ctx->fixed_digest :
+           (ctx->variant ? ctx->variant->default_digest : NULL);
+    return bign_sig_mdname_to_hash_oid(name);
 }
 
 static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
@@ -134,13 +131,8 @@ static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
         /* An identified, externally selected digest is bign-with-hspec. */
         return ctx->hash_oid[0] != '\0' ? BEE2_OID_BIGN_WITH_HSPEC : NULL;
     }
-    if (ctx->mdname[0] != '\0')
-        return bign_sig_mdname_to_oid(ctx->mdname);
-    if (ctx->fixed_digest)
-        return bign_sig_mdname_to_oid(ctx->fixed_digest);
-    if (ctx->variant && ctx->variant->default_digest)
-        return bign_sig_mdname_to_oid(ctx->variant->default_digest);
-    return NULL;
+    return bign_sig_mdname_to_oid(ctx->fixed_digest ? ctx->fixed_digest :
+           (ctx->variant ? ctx->variant->default_digest : NULL));
 }
 
 static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
@@ -159,10 +151,8 @@ static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
 }
 
 static void bign_sig_reset_md(bee2_bign_sig_ctx_t *ctx, int keep_algorithm) {
-    if (ctx->mdctx) {
-        EVP_MD_CTX_free(ctx->mdctx);
-        ctx->mdctx = NULL;
-    }
+    EVP_MD_CTX_free(ctx->mdctx);
+    ctx->mdctx = NULL;
     if (!keep_algorithm) {
         EVP_MD_free(ctx->md);
         ctx->md = NULL;
@@ -258,7 +248,7 @@ static int bign_sig_hash_oneshot(const EVP_MD *md,
                                  size_t *outlen) {
     unsigned int mdlen = 0;
 
-    if (!md || !out || !outlen || (inlen != 0 && in == NULL) ||
+    if ((inlen != 0 && in == NULL) ||
         !EVP_Digest(in, inlen, out, &mdlen, md, NULL))
         return 0;
     *outlen = (size_t)mdlen;
@@ -760,7 +750,7 @@ static const OSSL_PARAM *bign_sig_settable_ctx_params(void *vctx, void *provctx)
 static int bign_sig_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     bee2_bign_sig_ctx_t *ctx = vctx;
     OSSL_PARAM *p;
-    int md_size;
+
 
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID);
@@ -780,10 +770,10 @@ static int bign_sig_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_DIGEST_SIZE);
     if (p && (ctx->md || ctx->fixed_digest)) {
-        md_size = ctx->md ? EVP_MD_get_size(ctx->md) : (int)bee2_bign_priv_len(ctx->variant);
-        if (md_size <= 0)
-            return 0;
-        if (!OSSL_PARAM_set_size_t(p, (size_t)md_size))
+        size_t md_size = ctx->md ? (size_t)EVP_MD_get_size(ctx->md) :
+                                       bee2_bign_priv_len(ctx->variant);
+
+        if (!OSSL_PARAM_set_size_t(p, md_size))
             return 0;
     }
 

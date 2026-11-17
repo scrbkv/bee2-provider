@@ -35,10 +35,9 @@ static int write_all(BIO *bio, const void *data, size_t len) {
     const unsigned char *p = data;
 
     while (len > 0) {
-        size_t chunk = len > INT_MAX ? (size_t)INT_MAX : len;
         size_t written = 0;
 
-        if (!BIO_write_ex(bio, p, chunk, &written) || written == 0)
+        if (!BIO_write_ex(bio, p, len, &written) || written == 0)
             return 0;
         p += written;
         len -= written;
@@ -55,7 +54,7 @@ static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len
     size_t password_len = 0;
     size_t key_len;
 
-    if (!ctx || !ctx->encrypt || !cb || !out_len)
+    if (!cb)
         return NULL;
     *out_len = 0;
     key_len = ctx->kwp_key_len;
@@ -249,8 +248,7 @@ static int bign_encoder_encode(void *vctx,
 
     if (bio != NULL) {
         if (ctx->output_pem) {
-            if (der_len <= LONG_MAX)
-                ok = PEM_write_bio(bio, label, NULL, der, (long)der_len);
+            ok = PEM_write_bio(bio, label, NULL, der, (long)der_len);
         } else {
             ok = write_all(bio, der, der_len);
         }

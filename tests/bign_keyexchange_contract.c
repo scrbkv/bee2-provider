@@ -73,10 +73,55 @@ static int derive_secret(EVP_PKEY *local_key,
     }
     if (EVP_PKEY_derive(ctx, NULL, &required) <= 0 || required == 0u)
         goto cleanup;
+    {
+        char unsupported[] = "unsupported-kdf";
+        OSSL_PARAM invalid[] = {
+            OSSL_PARAM_utf8_string(OSSL_EXCHANGE_PARAM_KDF_TYPE, unsupported, 0),
+            OSSL_PARAM_END
+        };
+        size_t unchanged = 0;
+
+        if (EVP_PKEY_CTX_set_params(ctx, invalid) > 0 ||
+            EVP_PKEY_derive(ctx, NULL, &unchanged) <= 0 ||
+            unchanged != required)
+            goto cleanup;
+        ERR_clear_error();
+    }
+    if (use_bake_kdf) {
+        char name[16] = {0};
+        char short_name[2] = {0};
+        OSSL_PARAM valid[] = {
+            OSSL_PARAM_utf8_string(OSSL_EXCHANGE_PARAM_KDF_TYPE, name, sizeof(name)),
+            OSSL_PARAM_END
+        };
+        OSSL_PARAM too_short[] = {
+            OSSL_PARAM_utf8_string(OSSL_EXCHANGE_PARAM_KDF_TYPE,
+                                   short_name, sizeof(short_name)),
+            OSSL_PARAM_END
+        };
+
+        if (EVP_PKEY_CTX_get_params(ctx, valid) <= 0 ||
+            strcmp(name, "bake-kdf") != 0 ||
+            EVP_PKEY_CTX_get_params(ctx, too_short) > 0)
+            goto cleanup;
+        ERR_clear_error();
+    }
     *secret = OPENSSL_malloc(required);
     if (!*secret)
         goto cleanup;
     *secret_length = required;
+    {
+        size_t short_length = required - 1u;
+        size_t i;
+
+        memset(*secret, 0xa5, required);
+        if (EVP_PKEY_derive(ctx, *secret, &short_length) > 0)
+            goto cleanup;
+        for (i = 0; i < required; ++i)
+            if ((*secret)[i] != 0xa5)
+                goto cleanup;
+        ERR_clear_error();
+    }
     clone = EVP_PKEY_CTX_dup(ctx);
     clone_secret = OPENSSL_malloc(required);
     clone_length = required;
