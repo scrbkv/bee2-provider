@@ -30,6 +30,45 @@ static int get_encoding(EVP_PKEY *key, const char *expected)
            strcmp(value, expected) == 0;
 }
 
+/* Query-only output parameters must report sizes; undersized or wrongly
+ * typed output buffers must fail without changing the existing key. */
+static int check_key_get_params(EVP_PKEY *key)
+{
+    static const char *const typed_names[] = {
+        OSSL_PKEY_PARAM_GROUP_NAME,
+        OSSL_PKEY_PARAM_BITS,
+        OSSL_PKEY_PARAM_SECURITY_BITS,
+        OSSL_PKEY_PARAM_MAX_SIZE,
+        OSSL_PKEY_PARAM_DEFAULT_DIGEST,
+        OSSL_PKEY_PARAM_PUB_KEY,
+        OSSL_PKEY_PARAM_PRIV_KEY,
+        OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
+        OSSL_PKEY_PARAM_EC_ENCODING
+    };
+    unsigned char tiny[1] = {0};
+    size_t pub_len = 0, priv_len = 0, i;
+
+    if (EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
+                                        NULL, 0, &pub_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        NULL, 0, &priv_len) <= 0 ||
+        pub_len != (size_t)EVP_PKEY_get_bits(key) / 4u ||
+        priv_len != (size_t)EVP_PKEY_get_bits(key) / 8u)
+        return 0;
+
+    for (i = 0; i < sizeof(typed_names) / sizeof(typed_names[0]); ++i) {
+        OSSL_PARAM invalid[] = {
+            OSSL_PARAM_octet_string(typed_names[i], tiny, sizeof(tiny)),
+            OSSL_PARAM_END
+        };
+        /* PUB_KEY and PRIV_KEY expect octets, but one byte is too short.
+         * All other names expect a different type (or larger buffer). */
+        if (EVP_PKEY_get_params(key, invalid) > 0)
+            return 0;
+    }
+    return 1;
+}
+
 static int check_key_params(EVP_PKEY *key)
 {
     char explicit_name[] = OSSL_PKEY_EC_ENCODING_EXPLICIT;
@@ -237,7 +276,8 @@ int main(int argc, char **argv)
     for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         alice = generate_key(names[i]);
         bob = generate_key(names[i]);
-        if (alice == NULL || bob == NULL || !check_key_params(alice) ||
+        if (alice == NULL || bob == NULL || !check_key_get_params(alice) ||
+            !check_key_params(alice) ||
             !check_exchange_params(alice, bob) ||
             !check_mismatched_pair(alice, bob, names[i]) ||
             !check_keygen_from_template(alice)) {
