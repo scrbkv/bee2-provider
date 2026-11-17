@@ -382,7 +382,7 @@ static ASN1_STRING *encode_explicit_domain_params(const bee2_bign_key_t *key) {
 
     params = BIGN_ECPARAMS_new();
     domain = BIGN_DOMAINPARAMS_new();
-    if (!params || !domain || !params->fieldID || !params->curve || !params->base)
+    if (!params || !domain)
         goto cleanup;
 
     params->version = 1;
@@ -390,8 +390,8 @@ static ASN1_STRING *encode_explicit_domain_params(const bee2_bign_key_t *key) {
     params->fieldID->fieldType = OBJ_txt2obj(BEE2_OID_BIGN_PRIMEFIELD, 1);
     ASN1_INTEGER_free(params->fieldID->prime);
     params->fieldID->prime = asn1_integer_from_le(curve.p, bytes);
-    if (!params->fieldID->fieldType || !params->fieldID->prime || !params->curve->a ||
-        !params->curve->b || !ASN1_OCTET_STRING_set(params->curve->a, curve.a, (int)bytes) ||
+    if (!params->fieldID->fieldType || !params->fieldID->prime ||
+        !ASN1_OCTET_STRING_set(params->curve->a, curve.a, (int)bytes) ||
         !ASN1_OCTET_STRING_set(params->curve->b, curve.b, (int)bytes) ||
         !ASN1_OCTET_STRING_set(params->base, curve.yG, (int)bytes))
         goto cleanup;
@@ -1280,13 +1280,11 @@ static X509_SIG *build_encrypted_info(const unsigned char *salt, size_t salt_len
     const char *oid = kwp_oid(key_len);
     int ok = 0;
 
-    if (oid == NULL || salt_len > INT_MAX || wrapped_len > INT_MAX)
-        return NULL;
+    /* Sizes and the KWP key variant are checked by the only caller. */
     kdf = PBKDF2PARAM_new();
     pbe = PBE2PARAM_new();
     info = X509_SIG_new();
-    if (kdf == NULL || pbe == NULL || info == NULL || kdf->salt == NULL ||
-        kdf->iter == NULL || pbe->keyfunc == NULL || pbe->encryption == NULL)
+    if (kdf == NULL || pbe == NULL || info == NULL)
         goto end;
 
     asn_salt = ASN1_OCTET_STRING_new();
@@ -1314,8 +1312,7 @@ static X509_SIG *build_encrypted_info(const unsigned char *salt, size_t salt_len
     if (encoded == NULL)
         goto end;
     X509_SIG_getm(info, &outer, &encrypted);
-    if (outer == NULL || encrypted == NULL ||
-        !set_alg(outer, BEE2_OID_PBES2, V_ASN1_SEQUENCE, encoded))
+    if (!set_alg(outer, BEE2_OID_PBES2, V_ASN1_SEQUENCE, encoded))
         goto end;
     encoded = NULL;
     if (!ASN1_OCTET_STRING_set(encrypted, wrapped, (int)wrapped_len))

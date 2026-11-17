@@ -20,10 +20,7 @@ static void *bign_keytransport_newctx(void *provctx) {
 }
 
 static void bign_keytransport_freectx(void *vctx) {
-    bee2_bign_keytransport_ctx_t *ctx = vctx;
-    if (!ctx)
-        return;
-    OPENSSL_clear_free(ctx, sizeof(*ctx));
+    OPENSSL_clear_free(vctx, sizeof(bee2_bign_keytransport_ctx_t));
 }
 
 static void *bign_keytransport_dupctx(void *vctx) {

@@ -141,10 +141,7 @@ static void *bign_new(void *provctx) {
 }
 
 static void bign_key_free(void *vkey) {
-    bee2_bign_key_t *key = vkey;
-    if (!key)
-        return;
-    bee2_bign_key_free(key);
+    bee2_bign_key_free(vkey);
 }
 
 static int bign_has(const void *vkey, int selection) {
@@ -640,8 +637,7 @@ cleanup:
 
 static void bign_gen_cleanup(void *vgenctx) {
     bee2_bign_gen_ctx_t *gctx = vgenctx;
-    if (!gctx)
-        return;
+
     bee2_bign_cleanse(gctx, sizeof(*gctx));
     OPENSSL_clear_free(gctx, sizeof(*gctx));
 }
