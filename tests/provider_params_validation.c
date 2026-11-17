@@ -369,6 +369,78 @@ static int check_digest_metadata(const char *algorithm, size_t digest_size,
     return ok;
 }
 
+
+/* BASH PRGAE advertises both algorithm metadata and context metadata.
+ * Bad result types must be rejected by each callback independently. */
+static int check_prgae_metadata(const char *algorithm, size_t expected_key,
+                                size_t expected_iv)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, algorithm, "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    unsigned char key[32] = {0}, iv[32] = {0};
+    char invalid[] = "invalid";
+    size_t key_len = 0, iv_len = 0, block_size = 0, tag_len = 0;
+    int aead = -1, ok = 0;
+    const char *const names[] = {
+        OSSL_CIPHER_PARAM_KEYLEN, OSSL_CIPHER_PARAM_IVLEN,
+        OSSL_CIPHER_PARAM_BLOCK_SIZE, OSSL_CIPHER_PARAM_AEAD_TAGLEN,
+        OSSL_CIPHER_PARAM_AEAD
+    };
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &key_len),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &iv_len),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_BLOCK_SIZE, &block_size),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_AEAD_TAGLEN, &tag_len),
+        OSSL_PARAM_int(OSSL_CIPHER_PARAM_AEAD, &aead),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM ctx_params[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &key_len),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &iv_len),
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_AEAD_TAGLEN, &tag_len),
+        OSSL_PARAM_END
+    };
+    size_t i;
+
+    if (cipher == NULL || ctx == NULL ||
+        EVP_CIPHER_get_params(cipher, params) <= 0 ||
+        key_len != expected_key || iv_len != expected_iv ||
+        block_size != 1 || tag_len == 0 || aead != 1)
+        goto end;
+
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        OSSL_PARAM invalid_param[] = {
+            OSSL_PARAM_utf8_string(names[i], invalid, sizeof(invalid)),
+            OSSL_PARAM_END
+        };
+        if (EVP_CIPHER_get_params(cipher, invalid_param) > 0)
+            goto end;
+    }
+
+    if (EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL) <= 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, ctx_params) <= 0 ||
+        key_len != expected_key || iv_len != expected_iv)
+        goto end;
+
+    for (i = 0; i < 3; ++i) {
+        OSSL_PARAM invalid_param[] = {
+            OSSL_PARAM_utf8_string(names[i == 2 ? 3 : i],
+                                   invalid, sizeof(invalid)),
+            OSSL_PARAM_END
+        };
+        if (EVP_CIPHER_CTX_get_params(ctx, invalid_param) > 0)
+            goto end;
+    }
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BASH PRGAE metadata contract failed: %s\n", algorithm);
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *default_provider = NULL, *bee2_provider = NULL;
@@ -391,7 +463,10 @@ int main(int argc, char **argv)
             !check_kwp(wraps[i], lengths[i]))
             goto done;
     }
-    ok = check_digest_metadata("belt-hash", 32, 32) &&
+    ok = check_prgae_metadata("bash-prg-ae1281", 16, 16) &&
+         check_prgae_metadata("bash-prg-ae1921", 24, 24) &&
+         check_prgae_metadata("bash-prg-ae2561", 32, 32) &&
+         check_digest_metadata("belt-hash", 32, 32) &&
          check_digest_metadata("bash256", 32, 160) &&
          check_digest_metadata("bash384", 48, 144) &&
          check_digest_metadata("bash512", 64, 128) &&
