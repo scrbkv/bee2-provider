@@ -3,6 +3,7 @@
  * The linker redirects PKCS8_pkey_set0 and X509_PUBKEY_set0_param in this executable.
  */
 #include "bign_asn1.h"
+#include "bign_stb_pbes2.h"
 
 #include <openssl/crypto.h>
 #include <openssl/x509.h>
@@ -172,6 +173,58 @@ int main(void)
             }
         }
     }
+
+    /* Exercise STB encrypted PKCS#8 allocation rollback as well as plain
+     * DER.  The injected failures affect provider-owned allocations only;
+     * ASan/LSan check that no sensitive buffers survive any failed attempt. */
+    {
+        static const unsigned char password[] = "allocation-fault-test";
+        unsigned char *plain = NULL;
+        size_t plain_len = 0;
+        int attempt, successes = 0, failures = 0;
+
+        plain = bee2_bign_asn1_encode_pkcs8_der(&key, &plain_len);
+        if (plain == NULL)
+            return 1;
+        for (attempt = 1; attempt <= 8; ++attempt) {
+            unsigned char *der = NULL;
+            const unsigned char *p;
+            X509_SIG *info = NULL;
+            size_t der_len = 1234;
+            int valid;
+
+            fail_allocation_at = attempt;
+            allocation_count = 0;
+            der = bee2_stb_pbes2_encrypt(
+                plain, plain_len, password, sizeof(password) - 1,
+                32, BEE2_STB_PBKDF2_MIN_ITER, BEE2_STB_PBKDF2_MIN_SALT,
+                NULL, &der_len);
+            fail_allocation_at = 0;
+            valid = der == NULL ? der_len == 0 : der_len != 0;
+            if (der != NULL) {
+                p = der;
+                info = d2i_X509_SIG(NULL, &p, (long)der_len);
+                valid = valid && info != NULL &&
+                        p == der + der_len && bee2_stb_pbes2_is_stb(info);
+                ++successes;
+            } else {
+                ++failures;
+            }
+            X509_SIG_free(info);
+            OPENSSL_clear_free(der, der_len);
+            if (!valid) {
+                fprintf(stderr, "STB PBES2 encryption allocation rollback failed\n");
+                OPENSSL_clear_free(plain, plain_len);
+                return 1;
+            }
+        }
+        OPENSSL_clear_free(plain, plain_len);
+        if (successes == 0 || failures == 0) {
+            fprintf(stderr, "STB PBES2 allocation failures were not exercised\n");
+            return 1;
+        }
+    }
+
     OPENSSL_cleanse(&key, sizeof(key));
     return 0;
 }
