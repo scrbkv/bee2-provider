@@ -441,6 +441,84 @@ end:
     return ok;
 }
 
+
+/* Changing the PRGAE announcement length invalidates the old IV.
+ * A caller must provide a new IV before processing more data. */
+static int check_prgae_iv_reset(void)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, "bash-prg-ae2561",
+                                          "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    unsigned char key[32] = {0}, iv[32] = {0}, aad[4] = {1, 2, 3, 4};
+    unsigned char input[5] = {8}, output[16] = {0}, tag[32] = {0};
+    char wrong[] = "wrong";
+    size_t short_iv = 16, invalid_iv = 19, restored_iv = 32, invalid_key = 36;
+    size_t keylen = sizeof(key);
+    int written = 0, final_len = 0, ok = 0;
+    OSSL_PARAM short_iv_param[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &short_iv),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM invalid_iv_param[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &invalid_iv),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM full_iv_param[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, &restored_iv),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM invalid_key_param[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &invalid_key),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM current_key_param[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &keylen),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM wrong_type[] = {
+        OSSL_PARAM_utf8_string(OSSL_CIPHER_PARAM_KEYLEN, wrong, sizeof(wrong)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM full_tag[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, sizeof(tag)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM short_tag[] = {
+        OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, 1),
+        OSSL_PARAM_END
+    };
+
+    if (cipher == NULL || ctx == NULL ||
+        EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL) <= 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, invalid_key_param) > 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, invalid_iv_param) > 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, wrong_type) > 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, current_key_param) <= 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, full_tag) > 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, full_tag) > 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, short_iv_param) <= 0 ||
+        EVP_EncryptUpdate(ctx, output, &written, input, sizeof(input)) > 0 ||
+        EVP_EncryptInit_ex2(ctx, NULL, NULL, iv, NULL) <= 0 ||
+        EVP_EncryptUpdate(ctx, NULL, &written, aad, sizeof(aad)) <= 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, full_iv_param) > 0 ||
+        EVP_EncryptUpdate(ctx, output, &written, input, sizeof(input)) <= 0 ||
+        written != (int)sizeof(input) ||
+        EVP_EncryptFinal_ex(ctx, output + written, &final_len) <= 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, short_tag) > 0 ||
+        EVP_CIPHER_CTX_get_params(ctx, full_tag) <= 0)
+        goto end;
+    ok = 1;
+end:
+    if (!ok)
+        fprintf(stderr, "BASH PRGAE IV reset contract failed\n");
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
+    OPENSSL_cleanse(key, sizeof(key));
+    OPENSSL_cleanse(output, sizeof(output));
+    OPENSSL_cleanse(tag, sizeof(tag));
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *default_provider = NULL, *bee2_provider = NULL;
@@ -463,7 +541,8 @@ int main(int argc, char **argv)
             !check_kwp(wraps[i], lengths[i]))
             goto done;
     }
-    ok = check_prgae_metadata("bash-prg-ae1281", 16, 16) &&
+    ok = check_prgae_iv_reset() &&
+         check_prgae_metadata("bash-prg-ae1281", 16, 16) &&
          check_prgae_metadata("bash-prg-ae1921", 24, 24) &&
          check_prgae_metadata("bash-prg-ae2561", 32, 32) &&
          check_digest_metadata("belt-hash", 32, 32) &&
