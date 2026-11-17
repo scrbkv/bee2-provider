@@ -79,6 +79,12 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
         OSSL_PARAM_END
     };
     void *ctx = NULL;
+    unsigned char wrong_type_bytes[3] = {1, 2, 3};
+    static const char *const typed_parameter_names[] = {
+        OSSL_SIGNATURE_PARAM_DETERMINISTIC, "sig",
+        OSSL_SIGNATURE_PARAM_DIGEST, OSSL_SIGNATURE_PARAM_PROPERTIES
+    };
+    size_t i;
     int ok = 0;
 
     for (function = alg->implementation; function->function_id != 0; ++function) {
@@ -121,6 +127,22 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
         set(ctx, reject_mode) > 0 ||
         get(ctx, query_state) <= 0 || deterministic != 0 ||
         set(ctx, enable_mode) <= 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 1)
+        goto end;
+    for (i = 0; i < sizeof(typed_parameter_names) /
+                    sizeof(typed_parameter_names[0]); ++i) {
+        OSSL_PARAM wrong_type[] = {
+            OSSL_PARAM_construct_octet_string(typed_parameter_names[i],
+                                              wrong_type_bytes,
+                                              sizeof(wrong_type_bytes)),
+            OSSL_PARAM_END
+        };
+        if (set(ctx, wrong_type) > 0)
+            goto end;
+    }
+    memset(reported, 0, sizeof(reported));
+    if (get(ctx, query) <= 0 ||
+        OPENSSL_strcasecmp(reported, test->digest) != 0 ||
         get(ctx, query_state) <= 0 || deterministic != 1)
         goto end;
     ok = 1;
