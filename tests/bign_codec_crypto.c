@@ -500,10 +500,17 @@ static int check_pbes2_plaintext_trailing_der(const BUF_MEM *encoded, EVP_PKEY *
         pbkdf2->salt->value.octet_string == NULL ||
         pbkdf2->iter == NULL)
         goto end;
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    salt_len = ASN1_STRING_get_length(pbkdf2->salt->value.octet_string);
+#else
     typ = ASN1_STRING_length(pbkdf2->salt->value.octet_string);
-    if (typ <= 0 || ASN1_INTEGER_get(pbkdf2->iter) <= 0)
+    if (typ <= 0)
         goto end;
     salt_len = (size_t)typ;
+#endif
+    if (salt_len == 0 || salt_len > INT_MAX ||
+        ASN1_INTEGER_get(pbkdf2->iter) <= 0)
+        goto end;
     salt = ASN1_STRING_get0_data(pbkdf2->salt->value.octet_string);
     iterations = (uint64_t)ASN1_INTEGER_get(pbkdf2->iter);
 
