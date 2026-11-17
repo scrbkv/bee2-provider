@@ -192,6 +192,81 @@ done:
 
 
 
+/* The generic decoder normally unwraps encrypted PKCS#8 through an
+ * intermediate decoder. Keep the BIGN direct decoding fallback tested too:
+ * it must enforce password, iteration and curve-selection boundaries. */
+static int test_passphrase(char *pass, size_t size, size_t *length,
+                           const OSSL_PARAM params[], void *arg)
+{
+    const char *value = arg;
+    size_t n = strlen(value);
+
+    (void)params;
+    if (n > size)
+        return 0;
+    memcpy(pass, value, n);
+    *length = n;
+    return 1;
+}
+
+static int check_encrypted_key_der(void)
+{
+    static const unsigned char secret[] = "bign-encrypted-key-test";
+    static const unsigned char wrong[] = "incorrect-password";
+    bee2_bign_key_t original = {0}, parsed = {0};
+    unsigned char *plain = NULL, *encrypted = NULL;
+    size_t plain_len = 0, encrypted_len = 0;
+    int ok = 0;
+
+    original.variant = bee2_bign_variant_256();
+    original.has_priv = 1;
+    original.priv[0] = 3;
+    plain = bee2_bign_asn1_encode_pkcs8_der(&original, &plain_len);
+    if (!plain)
+        goto end;
+    encrypted = bee2_bign_asn1_encrypt_standard_pkcs8(
+        plain, plain_len, secret, sizeof(secret) - 1,
+        EVP_aes_256_cbc(), 12000, 16, NULL, &encrypted_len);
+    if (!encrypted)
+        goto end;
+    if (!bee2_bign_asn1_decode_encrypted_pkcs8_der(
+            encrypted, encrypted_len, original.variant, &parsed, NULL,
+            12000, test_passphrase, (void *)secret) ||
+        parsed.variant != original.variant || !parsed.has_priv ||
+        !parsed.has_pub ||
+        CRYPTO_memcmp(parsed.priv, original.priv, 32) != 0 ||
+        !bee2_bign_key_validate_public(&parsed))
+        goto end;
+
+    OPENSSL_cleanse(&parsed, sizeof(parsed));
+    if (bee2_bign_asn1_decode_encrypted_pkcs8_der(
+            encrypted, encrypted_len, original.variant, &parsed, NULL,
+            12000, test_passphrase, (void *)wrong) ||
+        bee2_bign_asn1_decode_encrypted_pkcs8_der(
+            encrypted, encrypted_len, original.variant, &parsed, NULL,
+            11999, test_passphrase, (void *)secret) ||
+        bee2_bign_asn1_decode_encrypted_pkcs8_der(
+            encrypted, encrypted_len, original.variant, &parsed, NULL,
+            12000, NULL, NULL) ||
+        bee2_bign_asn1_decode_encrypted_pkcs8_der(
+            encrypted, encrypted_len, bee2_bign_variant_384(), &parsed, NULL,
+            12000, test_passphrase, (void *)secret) ||
+        bee2_bign_asn1_decode_encrypted_pkcs8_der(
+            encrypted, encrypted_len - 1, original.variant, &parsed, NULL,
+            12000, test_passphrase, (void *)secret))
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN direct encrypted PKCS#8 DER contract failed\n");
+    OPENSSL_clear_free(encrypted, encrypted_len);
+    OPENSSL_clear_free(plain, plain_len);
+    OPENSSL_cleanse(&original, sizeof(original));
+    OPENSSL_cleanse(&parsed, sizeof(parsed));
+    return ok;
+}
+
 int main(void)
 {
     static const unsigned char valid_empty[] = {0x30, 0x00};
@@ -225,5 +300,6 @@ int main(void)
     free(oversized);
 
     ok &= check_bign_key_der();
+    ok &= check_encrypted_key_der();
     return ok ? 0 : 1;
 }

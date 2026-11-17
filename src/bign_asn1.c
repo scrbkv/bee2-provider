@@ -687,39 +687,21 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
     return 1;
 }
 
-static int append_bytes(unsigned char **buffer,
-                        size_t *length,
-                        size_t *capacity,
-                        const unsigned char *data,
-                        size_t data_length) {
-    size_t required;
-    size_t new_capacity;
-    unsigned char *expanded;
+/* Only used by read_pem_object(), whose input is capped at 1 MiB.
+ * A byte-at-a-time append needs no generic size/overflow negotiation. */
+static int append_pem_byte(unsigned char **buffer, size_t *used,
+                           size_t *capacity, unsigned char byte)
+{
+    if (*used == *capacity) {
+        size_t next = *capacity != 0 ? *capacity * 2u : 4096u;
+        unsigned char *expanded = OPENSSL_realloc(*buffer, next);
 
-    if (!buffer || !length || !capacity || (!data && data_length != 0) ||
-        data_length > SIZE_MAX - *length)
-        return 0;
-
-    required = *length + data_length;
-    if (required > *capacity) {
-        new_capacity = *capacity ? *capacity : 4096u;
-        while (new_capacity < required) {
-            if (new_capacity > SIZE_MAX / 2u) {
-                new_capacity = required;
-                break;
-            }
-            new_capacity *= 2u;
-        }
-        expanded = OPENSSL_realloc(*buffer, new_capacity);
         if (!expanded)
             return 0;
         *buffer = expanded;
-        *capacity = new_capacity;
+        *capacity = next;
     }
-
-    if (data_length != 0)
-        memcpy(*buffer + *length, data, data_length);
-    *length = required;
+    (*buffer)[(*used)++] = byte;
     return 1;
 }
 
@@ -734,7 +716,7 @@ static int read_pem_object(BIO *bio, unsigned char first,
     /* Read one PEM record, including its line terminator, without read-ahead. */
     for (;;) {
         if (used == BIGN_MAX_KEY_INPUT ||
-            !append_bytes(&buf, &used, &capacity, &ch, 1))
+            !append_pem_byte(&buf, &used, &capacity, ch))
             break;
         if (closed) {
             if (ch == '\n') {
