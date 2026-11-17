@@ -133,13 +133,12 @@ conversion and validation, fixed STB key/IV/tag requirements, actual
 sequences. `set_ctx_params(NULL)` must remain a successful no-op where the
 provider API specifies it. A KDF must itself reject unsupported output sizes.
 
-OpenSSL 3.5 and newer also have `EVP_CipherInit_SKEY()`. When a cipher
-does not implement an SKEY-specific initialization callback, libcrypto may
-pass the raw key and its actual length to the ordinary provider initializer.
-Therefore the provider must still validate fixed key and IV lengths in that
-callback; the EVP cipher's advertised fixed length is not sufficient on its
-own. The native negative-contract test covers this public SKEY fallback
-when building against OpenSSL 3.5+.
+OpenSSL 3.5+ `EVP_CipherInit_SKEY()` verifies that SKEY management and the
+cipher belong to the same provider before calling its init callback. Bee2
+Provider currently does not implement SKEY management. A generic SKEY imported
+from the default provider therefore cannot exercise Bee2 cipher initialization
+and is not a valid regression test for its fixed key/IV lengths. These
+algorithm-specific length checks are retained in cipher initialization.
 
 Tests should preferentially exercise malformed inputs through public EVP,
 encoder/decoder, and STORE interfaces. Direct provider dispatch is useful for
