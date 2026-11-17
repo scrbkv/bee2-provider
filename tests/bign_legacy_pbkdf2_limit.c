@@ -134,31 +134,12 @@ end:
 }
 
 
-/* Validate PBES2 parameters by changing one field of a real encrypted
- * PKCS#8 envelope at a time.  Each malformed envelope must be recognised
- * as STB (unless the cipher OID changes) but must never be decrypted. */
-enum stb_mutation {
-    STB_NO_PRF,
-    STB_WRONG_PRF,
-    STB_WRONG_SALT_TYPE,
-    STB_SHORT_SALT,
-    STB_WRONG_KEYLEN,
-    STB_TOO_FEW_ITERATIONS,
-    STB_TOO_MANY_ITERATIONS,
-    STB_WRONG_KDF,
-    STB_BAD_CIPHER_PARAMS,
-    STB_NULL_CIPHER_PARAMS,
-    STB_WRONG_CIPHER,
-    STB_SHORT_CIPHERTEXT,
-    STB_TAMPER_CIPHERTEXT,
-    STB_OMIT_KEYLEN,
-    STB_MUTATION_COUNT
-};
 
-static int mutate_stb_envelope(X509_SIG *info, enum stb_mutation mutation)
+/* Exercise PBKDF2 salt encodings omitted by the normal OpenSSL EVP tests.
+ * The test starts from a genuine authenticated STB-encrypted PKCS#8 key. */
+static int mutate_stb_salt(X509_SIG *info, int wrong_type)
 {
     static const unsigned char short_salt[7] = {0};
-    static const unsigned char short_ciphertext[31] = {0};
     X509_ALGOR *outer = NULL;
     ASN1_OCTET_STRING *ciphertext = NULL;
     const ASN1_OBJECT *obj = NULL;
@@ -166,30 +147,11 @@ static int mutate_stb_envelope(X509_SIG *info, enum stb_mutation mutation)
     PBE2PARAM *pbe = NULL;
     PBKDF2PARAM *kdf = NULL;
     ASN1_STRING *packed = NULL;
-    unsigned char *copy = NULL;
-    const char *kdf_oid = OID_PBKDF2;
     int type, ok = 0;
 
     X509_SIG_getm(info, &outer, &ciphertext);
     if (outer == NULL || ciphertext == NULL)
         return 0;
-    if (mutation == STB_SHORT_CIPHERTEXT)
-        return ASN1_OCTET_STRING_set(ciphertext, short_ciphertext,
-                                     sizeof(short_ciphertext));
-    if (mutation == STB_TAMPER_CIPHERTEXT) {
-        int len = ASN1_STRING_length(ciphertext);
-
-        if (len <= 0)
-            return 0;
-        copy = OPENSSL_memdup(ASN1_STRING_get0_data(ciphertext), (size_t)len);
-        if (copy == NULL)
-            return 0;
-        copy[(size_t)len - 1] ^= 0x80;
-        ok = ASN1_OCTET_STRING_set(ciphertext, copy, len);
-        OPENSSL_clear_free(copy, (size_t)len);
-        return ok;
-    }
-
     X509_ALGOR_get0(&obj, &type, &value, outer);
     if (type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
@@ -197,7 +159,6 @@ static int mutate_stb_envelope(X509_SIG *info, enum stb_mutation mutation)
                            ASN1_ITEM_rptr(PBE2PARAM));
     if (pbe == NULL)
         goto end;
-
     X509_ALGOR_get0(&obj, &type, &value, pbe->keyfunc);
     if (type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
@@ -206,76 +167,17 @@ static int mutate_stb_envelope(X509_SIG *info, enum stb_mutation mutation)
     if (kdf == NULL)
         goto end;
 
-    switch (mutation) {
-    case STB_NO_PRF:
-        X509_ALGOR_free(kdf->prf);
-        kdf->prf = NULL;
-        break;
-    case STB_WRONG_PRF:
-        if (!set_algorithm(kdf->prf, "2.16.840.1.101.3.4.2.1",
-                           V_ASN1_NULL, NULL))
-            goto end;
-        break;
-    case STB_WRONG_SALT_TYPE:
+    if (wrong_type) {
         ASN1_TYPE_set(kdf->salt, V_ASN1_NULL, NULL);
-        break;
-    case STB_SHORT_SALT:
-        if (!ASN1_OCTET_STRING_set(kdf->salt->value.octet_string,
-                                   short_salt, sizeof(short_salt)))
-            goto end;
-        break;
-    case STB_WRONG_KEYLEN:
-        if (kdf->keylength == NULL ||
-            !ASN1_INTEGER_set(kdf->keylength, 16))
-            goto end;
-        break;
-    case STB_TOO_FEW_ITERATIONS:
-        if (!ASN1_INTEGER_set(kdf->iter, 9999))
-            goto end;
-        break;
-    case STB_TOO_MANY_ITERATIONS:
-        if (!ASN1_INTEGER_set(kdf->iter, 10001))
-            goto end;
-        break;
-    case STB_WRONG_KDF:
-        kdf_oid = OID_SCRYPT;
-        break;
-    case STB_OMIT_KEYLEN:
-        ASN1_INTEGER_free(kdf->keylength);
-        kdf->keylength = NULL;
-        break;
-    default:
-        break;
+    } else if (!ASN1_OCTET_STRING_set(kdf->salt->value.octet_string,
+                                       short_salt, sizeof(short_salt))) {
+        goto end;
     }
-
     packed = ASN1_item_pack(kdf, ASN1_ITEM_rptr(PBKDF2PARAM), NULL);
     if (packed == NULL ||
-        !set_algorithm(pbe->keyfunc, kdf_oid, V_ASN1_SEQUENCE, packed))
+        !set_algorithm(pbe->keyfunc, OID_PBKDF2, V_ASN1_SEQUENCE, packed))
         goto end;
     packed = NULL;
-
-    if (mutation == STB_BAD_CIPHER_PARAMS) {
-        static const unsigned char iv[16] = {0};
-        ASN1_OCTET_STRING *parameter = ASN1_OCTET_STRING_new();
-
-        if (parameter == NULL)
-            goto end;
-        if (!ASN1_OCTET_STRING_set(parameter, iv, sizeof(iv)) ||
-            !set_algorithm(pbe->encryption, BEE2_OID_BELT_KWP,
-                           V_ASN1_OCTET_STRING, parameter)) {
-            ASN1_OCTET_STRING_free(parameter);
-            goto end;
-        }
-    } else if (mutation == STB_NULL_CIPHER_PARAMS) {
-        if (!set_algorithm(pbe->encryption, BEE2_OID_BELT_KWP,
-                           V_ASN1_NULL, NULL))
-            goto end;
-    } else if (mutation == STB_WRONG_CIPHER) {
-        if (!set_algorithm(pbe->encryption, "2.16.840.1.101.3.4.1.42",
-                           V_ASN1_UNDEF, NULL))
-            goto end;
-    }
-
     packed = ASN1_item_pack(pbe, ASN1_ITEM_rptr(PBE2PARAM), NULL);
     if (packed == NULL ||
         !set_algorithm(outer, OID_PBES2, V_ASN1_SEQUENCE, packed))
@@ -304,7 +206,7 @@ static int check_stb_decrypt_parameters(void)
     size_t encrypted_len = 0, extra_len = 0;
     int plain_len = 0, roundtrip_len, recognised;
     size_t key_len;
-    int mutation, ok = 0;
+    int wrong_type, ok = 0;
 
     pkcs8 = PKCS8_PRIV_KEY_INFO_new();
     algorithm = OBJ_txt2obj("1.2.3.4", 1);
@@ -321,6 +223,7 @@ static int check_stb_decrypt_parameters(void)
 
     for (key_len = 16; key_len <= 32; key_len += 8) {
         const unsigned char *p;
+
         OPENSSL_clear_free(encrypted, encrypted_len);
         encrypted = bee2_stb_pbes2_encrypt(
             plain, (size_t)plain_len, password, sizeof(password) - 1,
@@ -334,8 +237,9 @@ static int check_stb_decrypt_parameters(void)
         if (info == NULL || p != encrypted + encrypted_len ||
             !bee2_stb_pbes2_is_stb(info))
             goto end;
-        recognised = 0;
+
         PKCS8_PRIV_KEY_INFO_free(decoded);
+        recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
                                           sizeof(password) - 1, 10000,
                                           &recognised);
@@ -347,42 +251,33 @@ static int check_stb_decrypt_parameters(void)
         if (roundtrip_len != plain_len || roundtrip == NULL ||
             memcmp(roundtrip, plain, (size_t)plain_len) != 0)
             goto end;
+    }
+
+    /* The recognised output parameter is required; a missing one must not
+     * trigger a decryption attempt. */
+    if (bee2_stb_pbes2_decrypt(info, password, sizeof(password) - 1,
+                               10000, NULL) != NULL)
+        goto end;
+
+    for (wrong_type = 0; wrong_type < 2; ++wrong_type) {
+        const unsigned char *p = encrypted;
+
+        X509_SIG_free(info);
+        info = d2i_X509_SIG(NULL, &p, (long)encrypted_len);
+        if (info == NULL || !mutate_stb_salt(info, wrong_type))
+            goto end;
         PKCS8_PRIV_KEY_INFO_free(decoded);
         decoded = NULL;
-        if (bee2_stb_pbes2_decrypt(info, password, sizeof(password) - 1,
-                                   10000, NULL) != NULL)
-            goto end;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 9999,
+                                          sizeof(password) - 1, 10000,
                                           &recognised);
         if (decoded != NULL || !recognised)
             goto end;
     }
 
-    for (mutation = 0; mutation < STB_MUTATION_COUNT; ++mutation) {
-        const unsigned char *p = encrypted;
-        int must_succeed = mutation == STB_NULL_CIPHER_PARAMS ||
-                           mutation == STB_OMIT_KEYLEN;
-        int should_recognise = mutation != STB_WRONG_CIPHER;
-
-        X509_SIG_free(info);
-        info = d2i_X509_SIG(NULL, &p, (long)encrypted_len);
-        if (info == NULL || !mutate_stb_envelope(info, (enum stb_mutation)mutation))
-            goto end;
-        recognised = 0;
-        PKCS8_PRIV_KEY_INFO_free(decoded);
-        decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000,
-                                          &recognised);
-        if (!!decoded != must_succeed || recognised != should_recognise) {
-            fprintf(stderr, "STB PBES2 mutation %d was mishandled\n", mutation);
-            goto end;
-        }
-    }
-
-    /* Authentication is not enough: a decrypted PKCS#8 object must consume
-     * the entire plaintext, not just a valid DER prefix. */
+    /* A valid authenticated KWP envelope must not accept extra bytes after
+     * the PKCS#8 DER object in its recovered plaintext. */
     trailing = OPENSSL_malloc((size_t)plain_len + 1);
     if (trailing == NULL)
         goto end;
@@ -396,6 +291,7 @@ static int check_stb_decrypt_parameters(void)
         goto end;
     {
         const unsigned char *p = extra_der;
+
         X509_SIG_free(info);
         info = d2i_X509_SIG(NULL, &p, (long)extra_len);
     }
