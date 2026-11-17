@@ -670,6 +670,33 @@ if(UNIX AND NOT APPLE)
         LABELS "bign;keymgmt;negative;fault_injection;native")
 endif()
 
+# Fail allocation in the real BELT/BASH hash and MAC callbacks without changing
+# libcrypto's global allocator or duplicating their normative hash vectors.
+if(UNIX AND NOT APPLE)
+    add_executable(bee2_digest_mac_allocation_contract
+        digest_mac_allocation_contract.c
+        ${CMAKE_SOURCE_DIR}/src/belt_digest.c
+        ${CMAKE_SOURCE_DIR}/src/bash_digest.c
+        ${CMAKE_SOURCE_DIR}/src/belt_mac.c)
+    target_include_directories(bee2_digest_mac_allocation_contract PRIVATE
+        ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(bee2_digest_mac_allocation_contract SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/bee2/include)
+    target_link_libraries(bee2_digest_mac_allocation_contract PRIVATE
+        bee2_static OpenSSL::Crypto)
+    target_link_options(bee2_digest_mac_allocation_contract PRIVATE
+        "-Wl,--wrap=CRYPTO_malloc" "-Wl,--wrap=CRYPTO_zalloc")
+    if(BEE2_PROVIDER_ENABLE_COVERAGE)
+        target_compile_options(bee2_digest_mac_allocation_contract PRIVATE
+            --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(bee2_digest_mac_allocation_contract PRIVATE --coverage)
+    endif()
+    add_test(NAME bee2_digest_mac_allocation_contract
+        COMMAND bee2_digest_mac_allocation_contract)
+    set_tests_properties(bee2_digest_mac_allocation_contract PROPERTIES
+        LABELS "digest;mac;belt;bash;negative;fault_injection;native")
+endif()
+
 # Isolate allocation-failure and constant-time helper contracts without
 # introducing test-only hooks into the provider.
 if(UNIX AND NOT APPLE)
