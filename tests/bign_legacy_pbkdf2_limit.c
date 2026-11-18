@@ -306,14 +306,18 @@ int main(int argc, char **argv)
     };
     size_t i;
     X509_SIG *unknown = NULL;
-    OSSL_PROVIDER *bee2 = NULL;
+    OSSL_PROVIDER *bee2 = NULL, *def = NULL;
     int ok = 0;
 
     if (argc != 2 || !OSSL_PROVIDER_set_default_search_path(NULL, argv[1]))
         return 2;
+    def = OSSL_PROVIDER_load(NULL, "default");
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
-    if (bee2 == NULL)
+    if (def == NULL || bee2 == NULL) {
+        OSSL_PROVIDER_unload(bee2);
+        OSSL_PROVIDER_unload(def);
         return 1;
+    }
 
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         X509_SIG *info = make_pbes2(cases[i].iterations, OID_PBKDF2,
@@ -341,5 +345,6 @@ int main(int argc, char **argv)
 end:
     X509_SIG_free(unknown);
     OSSL_PROVIDER_unload(bee2);
+    OSSL_PROVIDER_unload(def);
     return ok ? 0 : 1;
 }
