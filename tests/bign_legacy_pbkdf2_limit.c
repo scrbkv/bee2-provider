@@ -9,6 +9,7 @@
 #include <openssl/asn1t.h>
 #include <openssl/objects.h>
 #include <openssl/x509.h>
+#include <openssl/provider.h>
 
 #define OID_PBES2 "1.2.840.113549.1.5.13"
 #define OID_PBKDF2 "1.2.840.113549.1.5.12"
@@ -289,7 +290,7 @@ end:
     return ok;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     static const struct {
         long iterations;
@@ -304,7 +305,15 @@ int main(void)
         {LONG_MAX, 10000u, 0},
     };
     size_t i;
-    X509_SIG *unknown;
+    X509_SIG *unknown = NULL;
+    OSSL_PROVIDER *bee2 = NULL;
+    int ok = 0;
+
+    if (argc != 2 || !OSSL_PROVIDER_set_default_search_path(NULL, argv[1]))
+        return 2;
+    bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
+    if (bee2 == NULL)
+        return 1;
 
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         X509_SIG *info = make_pbes2(cases[i].iterations, OID_PBKDF2,
@@ -313,22 +322,24 @@ int main(void)
 
         if (!info) {
             fprintf(stderr, "PBES2 test fixture construction failed at case %zu\n", i);
-            return 1;
+            goto end;
         }
         result = bee2_pkcs8_standard_pbkdf2_allowed(info, cases[i].maximum);
         X509_SIG_free(info);
         if (result != cases[i].allowed) {
             fprintf(stderr, "PBES2 iteration limit mismatch at case %zu\n", i);
-            return 1;
+            goto end;
         }
     }
     unknown = make_pbes2(1, OID_SCRYPT, "2.16.840.1.101.3.4.1.42");
     if (!unknown || bee2_pkcs8_standard_pbkdf2_allowed(unknown, 10000u)) {
         fprintf(stderr, "Unrecognised PBES2 KDF was accepted\n");
-        X509_SIG_free(unknown);
-        return 1;
+        goto end;
     }
+    ok = check_stb_pbes2_classification() && check_stb_decrypt_parameters();
+
+end:
     X509_SIG_free(unknown);
-    return check_stb_pbes2_classification() &&
-           check_stb_decrypt_parameters() ? 0 : 1;
+    OSSL_PROVIDER_unload(bee2);
+    return ok ? 0 : 1;
 }

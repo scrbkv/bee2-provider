@@ -468,7 +468,7 @@ target_include_directories(bee2_bign_legacy_pbkdf2_limit SYSTEM PRIVATE
 target_link_libraries(bee2_bign_legacy_pbkdf2_limit PRIVATE
     bee2_static OpenSSL::Crypto)
 add_test(NAME bee2_bign_legacy_pbkdf2_limit
-    COMMAND bee2_bign_legacy_pbkdf2_limit)
+    COMMAND bee2_bign_legacy_pbkdf2_limit $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_legacy_pbkdf2_limit
     PROPERTIES LABELS "regression;bign;pbkdf2;native")
 
