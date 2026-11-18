@@ -4,17 +4,17 @@
 #include "bign_stb_pbes2.h"
 #include "bee2_oids.h"
 #include "provider_util.h"
-#include <bee2/crypto/belt.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/asn1t.h>
-#include <openssl/bn.h>
 #include <openssl/core_object.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/kdf.h>
+#include <openssl/core_names.h>
 #include <openssl/objects.h>
 #include <openssl/pem.h>
 #include <openssl/pkcs12.h>
@@ -68,6 +68,8 @@ static int bign_asn1_string_set(ASN1_STRING *str, const unsigned char *data, int
 #endif
 }
 
+/* OpenSSL describes the optional STB fields; Bee2 encodes, decodes and
+ * validates the ECParameters payload itself. */
 typedef struct {
     ASN1_OBJECT *fieldType;
     ASN1_INTEGER *prime;
@@ -88,361 +90,230 @@ typedef struct {
     ASN1_INTEGER *cofactor;
 } BIGN_ECPARAMS;
 
-typedef struct {
-    int type;
-    union {
-        ASN1_OBJECT *named;
-        BIGN_ECPARAMS *specified;
-        ASN1_NULL *implicit;
-    } value;
-} BIGN_DOMAINPARAMS;
-
 DECLARE_ASN1_ITEM(BIGN_FIELDID)
 DECLARE_ASN1_ITEM(BIGN_CURVE)
 DECLARE_ASN1_ITEM(BIGN_ECPARAMS)
-DECLARE_ASN1_ITEM(BIGN_DOMAINPARAMS)
 
-ASN1_SEQUENCE(BIGN_FIELDID) = {ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT),
-                               ASN1_SIMPLE(BIGN_FIELDID,
-                                           prime,
-                                           ASN1_INTEGER)} ASN1_SEQUENCE_END(BIGN_FIELDID)
+ASN1_SEQUENCE(BIGN_FIELDID) = {
+    ASN1_SIMPLE(BIGN_FIELDID, fieldType, ASN1_OBJECT),
+    ASN1_SIMPLE(BIGN_FIELDID, prime, ASN1_INTEGER)
+} ASN1_SEQUENCE_END(BIGN_FIELDID)
 
-    ASN1_SEQUENCE(BIGN_CURVE) = {ASN1_SIMPLE(BIGN_CURVE, a, ASN1_OCTET_STRING),
-                                 ASN1_SIMPLE(BIGN_CURVE, b, ASN1_OCTET_STRING),
-                                 ASN1_OPT(BIGN_CURVE,
-                                          seed,
-                                          ASN1_BIT_STRING)} ASN1_SEQUENCE_END(BIGN_CURVE)
+ASN1_SEQUENCE(BIGN_CURVE) = {
+    ASN1_SIMPLE(BIGN_CURVE, a, ASN1_OCTET_STRING),
+    ASN1_SIMPLE(BIGN_CURVE, b, ASN1_OCTET_STRING),
+    ASN1_OPT(BIGN_CURVE, seed, ASN1_BIT_STRING)
+} ASN1_SEQUENCE_END(BIGN_CURVE)
 
-        ASN1_SEQUENCE(BIGN_ECPARAMS) = {ASN1_SIMPLE(BIGN_ECPARAMS, version, LONG),
-                                        ASN1_SIMPLE(BIGN_ECPARAMS, fieldID, BIGN_FIELDID),
-                                        ASN1_SIMPLE(BIGN_ECPARAMS, curve, BIGN_CURVE),
-                                        ASN1_SIMPLE(BIGN_ECPARAMS, base, ASN1_OCTET_STRING),
-                                        ASN1_SIMPLE(BIGN_ECPARAMS, order, ASN1_INTEGER),
-                                        ASN1_OPT(BIGN_ECPARAMS,
-                                                 cofactor,
-                                                 ASN1_INTEGER)} ASN1_SEQUENCE_END(BIGN_ECPARAMS)
+ASN1_SEQUENCE(BIGN_ECPARAMS) = {
+    ASN1_SIMPLE(BIGN_ECPARAMS, version, LONG),
+    ASN1_SIMPLE(BIGN_ECPARAMS, fieldID, BIGN_FIELDID),
+    ASN1_SIMPLE(BIGN_ECPARAMS, curve, BIGN_CURVE),
+    ASN1_SIMPLE(BIGN_ECPARAMS, base, ASN1_OCTET_STRING),
+    ASN1_SIMPLE(BIGN_ECPARAMS, order, ASN1_INTEGER),
+    ASN1_OPT(BIGN_ECPARAMS, cofactor, ASN1_INTEGER)
+} ASN1_SEQUENCE_END(BIGN_ECPARAMS)
 
-            DECLARE_ASN1_ALLOC_FUNCTIONS(BIGN_ECPARAMS)
-                IMPLEMENT_ASN1_ALLOC_FUNCTIONS(BIGN_ECPARAMS)
+DECLARE_ASN1_FUNCTIONS(BIGN_ECPARAMS)
+IMPLEMENT_ASN1_FUNCTIONS(BIGN_ECPARAMS)
 
-                    ASN1_CHOICE(BIGN_DOMAINPARAMS) =
-                        {ASN1_SIMPLE(BIGN_DOMAINPARAMS, value.named, ASN1_OBJECT),
-                         ASN1_SIMPLE(BIGN_DOMAINPARAMS, value.specified, BIGN_ECPARAMS),
-                         ASN1_SIMPLE(BIGN_DOMAINPARAMS,
-                                     value.implicit,
-                                     ASN1_NULL)} ASN1_CHOICE_END(BIGN_DOMAINPARAMS)
-
-
-                            DECLARE_ASN1_FUNCTIONS(BIGN_DOMAINPARAMS)
-                                DECLARE_ASN1_ENCODE_FUNCTIONS_name(BIGN_DOMAINPARAMS,
-                                                                   BIGN_DOMAINPARAMS)
-                                    IMPLEMENT_ASN1_FUNCTIONS(BIGN_DOMAINPARAMS)
-
-
-                                        
-static int oid_equals(const ASN1_OBJECT *obj, const char *oid) {
+static int oid_equals(const ASN1_OBJECT *obj, const char *oid)
+{
     char buf[80];
     int n;
 
     if (!obj)
         return 0;
     n = OBJ_obj2txt(buf, sizeof(buf), obj, 1);
-    if (n <= 0 || n >= (int)sizeof(buf))
-        return 0;
-    return strcmp(buf, oid) == 0;
+    return n > 0 && n < (int)sizeof(buf) && strcmp(buf, oid) == 0;
 }
 
-static const bee2_bign_variant_t *variant_from_curve_obj(const ASN1_OBJECT *obj) {
-    const bee2_bign_variant_t *v256 = bee2_bign_variant_256();
-    const bee2_bign_variant_t *v384 = bee2_bign_variant_384();
-    const bee2_bign_variant_t *v512 = bee2_bign_variant_512();
+static const bee2_bign_variant_t *variant_from_curve_obj(const ASN1_OBJECT *obj)
+{
+    const bee2_bign_variant_t *variants[] = {
+        bee2_bign_variant_256(), bee2_bign_variant_384(),
+        bee2_bign_variant_512()
+    };
+    size_t i;
 
-    if (oid_equals(obj, v256->curve_oid))
-        return v256;
-    if (oid_equals(obj, v384->curve_oid))
-        return v384;
-    if (oid_equals(obj, v512->curve_oid))
-        return v512;
+    for (i = 0; i < sizeof(variants) / sizeof(variants[0]); ++i)
+        if (oid_equals(obj, variants[i]->curve_oid))
+            return variants[i];
     return NULL;
 }
 
-static int bn_to_fixed_le(const BIGNUM *bn, unsigned char *out, size_t len) {
-    return !BN_is_negative(bn) &&
-           BN_bn2lebinpad(bn, out, (int)len) == (int)len;
-}
-
-static int variant_matches_params(const bee2_bign_variant_t *variant,
-                                  const unsigned char *p_le,
-                                  const unsigned char *a_le,
-                                  const unsigned char *b_le,
-                                  const unsigned char *q_le,
-                                  const unsigned char *y_le,
-                                  size_t bytes) {
-    bign_params curve;
-    if (!bee2_bign_curve_init_std(variant, &curve))
-        return 0;
-
-    if (memcmp(curve.p, p_le, bytes) != 0)
-        return 0;
-    if (memcmp(curve.a, a_le, bytes) != 0)
-        return 0;
-    if (memcmp(curve.b, b_le, bytes) != 0)
-        return 0;
-    if (memcmp(curve.q, q_le, bytes) != 0)
-        return 0;
-    if (memcmp(curve.yG, y_le, bytes) != 0)
-        return 0;
-    return 1;
-}
-
-static const bee2_bign_variant_t *variant_from_explicit_params(const BIGN_ECPARAMS *ecp) {
-    unsigned char p_le[BEE2_BIGN_MAX_WORDS * 8];
-    unsigned char a_le[BEE2_BIGN_MAX_WORDS * 8];
-    unsigned char b_le[BEE2_BIGN_MAX_WORDS * 8];
-    unsigned char q_le[BEE2_BIGN_MAX_WORDS * 8];
-    unsigned char y_le[BEE2_BIGN_MAX_WORDS * 8];
-    BIGNUM *p_bn = NULL;
-    BIGNUM *q_bn = NULL;
-    BIGNUM *cof_bn = NULL;
-    const unsigned char *a_data = NULL;
-    const unsigned char *b_data = NULL;
-    const unsigned char *base_data = NULL;
-    const bee2_bign_variant_t *variant = NULL;
-    int bits = 0;
-    size_t bytes = 0;
-
-    if (ecp->version != 1)
-        return NULL;
-    if (!oid_equals(ecp->fieldID->fieldType, BEE2_OID_BIGN_PRIMEFIELD))
-        return NULL;
-
-    p_bn = ASN1_INTEGER_to_BN(ecp->fieldID->prime, NULL);
-    if (!p_bn)
-        goto cleanup;
-    bits = BN_num_bits(p_bn);
-    if (bits != 256 && bits != 384 && bits != 512)
-        goto cleanup;
-    bytes = (size_t)bits / 8u;
-
-    if (!bn_to_fixed_le(p_bn, p_le, bytes))
-        goto cleanup;
-    a_data = ASN1_STRING_get0_data(ecp->curve->a);
-    b_data = ASN1_STRING_get0_data(ecp->curve->b);
-    if (!a_data || !b_data)
-        goto cleanup;
-    if (bign_asn1_string_length(ecp->curve->a) != (int)bytes ||
-        bign_asn1_string_length(ecp->curve->b) != (int)bytes)
-        goto cleanup;
-    memcpy(a_le, a_data, bytes);
-    memcpy(b_le, b_data, bytes);
-
-    if (bign_asn1_string_length(ecp->base) != (int)bytes)
-        goto cleanup;
-    base_data = ASN1_STRING_get0_data(ecp->base);
-    if (!base_data)
-        goto cleanup;
-    memcpy(y_le, base_data, bytes);
-
-    q_bn = ASN1_INTEGER_to_BN(ecp->order, NULL);
-    if (!q_bn)
-        goto cleanup;
-    if (BN_num_bits(q_bn) != bits)
-        goto cleanup;
-    if (!bn_to_fixed_le(q_bn, q_le, bytes))
-        goto cleanup;
-
-    if (ecp->cofactor) {
-        cof_bn = ASN1_INTEGER_to_BN(ecp->cofactor, NULL);
-        if (!cof_bn || !BN_is_one(cof_bn))
-            goto cleanup;
-    }
-
-    switch (bits) {
-    case 256:
-        variant = bee2_bign_variant_256();
-        break;
-    case 384:
-        variant = bee2_bign_variant_384();
-        break;
-    case 512:
-        variant = bee2_bign_variant_512();
-        break;
-    }
-    if (!variant_matches_params(variant, p_le, a_le, b_le, q_le, y_le, bytes)) {
-        variant = NULL;
-        goto cleanup;
-    }
-    if (ecp->curve->seed != NULL) {
-        const ASN1_BIT_STRING *seed = ecp->curve->seed;
-        bign_params standard;
-        unsigned char *seed_der = NULL;
-        int der_len, valid;
-
-        if (bign_asn1_string_length((const ASN1_STRING *)seed) != 8 ||
-            !bee2_bign_curve_init_std(variant, &standard)) {
-            variant = NULL;
-            goto cleanup;
-        }
-        der_len = i2d_ASN1_BIT_STRING(seed, &seed_der);
-        valid = der_len == 11 && seed_der != NULL &&
-                seed_der[0] == V_ASN1_BIT_STRING &&
-                seed_der[1] == 9 && seed_der[2] == 0 &&
-                memcmp(seed_der + 3, standard.seed, 8) == 0;
-        OPENSSL_free(seed_der);
-        if (!valid)
-            variant = NULL;
-    }
-
-cleanup:
-    BN_free(p_bn);
-    BN_free(q_bn);
-    BN_free(cof_bn);
-    return variant;
-}
-
-static const bee2_bign_variant_t *variant_from_domain_params(const ASN1_STRING *params,
-                                                             int *explicit_encoding,
-                                                             int *cofactor_encoding) {
-    const unsigned char *p = NULL;
-    long len = 0;
-    BIGN_DOMAINPARAMS *dp = NULL;
-    const bee2_bign_variant_t *variant = NULL;
-
-    if (!params)
-        return NULL;
-    p = ASN1_STRING_get0_data(params);
-    len = bign_asn1_string_length(params);
-    if (!p || len <= 0)
-        return NULL;
-
-    dp = d2i_BIGN_DOMAINPARAMS(NULL, &p, len);
-    if (!dp)
-        return NULL;
-    if (p != ASN1_STRING_get0_data(params) + len) {
-        BIGN_DOMAINPARAMS_free(dp);
-        return NULL;
-    }
-
-    if (dp->type == 0) {
-        variant = variant_from_curve_obj(dp->value.named);
-    } else if (dp->type == 1) {
-        variant = variant_from_explicit_params(dp->value.specified);
-        if (variant && explicit_encoding)
-            *explicit_encoding = 1;
-        if (variant && cofactor_encoding)
-            *cofactor_encoding = dp->value.specified->cofactor != NULL;
-    }
-
-    BIGN_DOMAINPARAMS_free(dp);
-    return variant;
-}
-
-static const bee2_bign_variant_t *variant_from_alg_params(int ptype,
-                                                          const void *pval,
-                                                          int *explicit_encoding,
-                                                          int *cofactor_encoding) {
-    if (explicit_encoding)
-        *explicit_encoding = 0;
-    if (cofactor_encoding)
-        *cofactor_encoding = 0;
-    if (!pval)
-        return NULL;
-    if (ptype == V_ASN1_OBJECT)
-        return variant_from_curve_obj((const ASN1_OBJECT *)pval);
-    if (ptype == V_ASN1_SEQUENCE)
-        return variant_from_domain_params(
-            (const ASN1_STRING *)pval, explicit_encoding, cofactor_encoding);
-    return NULL;
-}
-
-static ASN1_INTEGER *asn1_integer_from_le(const unsigned char *value, size_t len) {
-    BIGNUM *bn = NULL;
-    ASN1_INTEGER *integer = NULL;
-
-    bn = BN_lebin2bn(value, (int)len, NULL);
-    if (!bn)
-        return NULL;
-    integer = BN_to_ASN1_INTEGER(bn, NULL);
-    BN_clear_free(bn);
-    return integer;
-}
-
-static ASN1_STRING *encode_explicit_domain_params(const bee2_bign_key_t *key) {
-    bign_params curve;
-    BIGN_DOMAINPARAMS *domain = NULL;
-    BIGN_ECPARAMS *params = NULL;
-    ASN1_STRING *sequence = NULL;
+/* A few existing STB keys omit the optional seed.  Fill it with the
+ * standard seed before passing the complete ECParameters DER to Bee2.
+ * Do not use this normalization for malformed, present seeds. */
+static unsigned char *encode_missing_seed(BIGN_ECPARAMS *ecp, size_t *len)
+{
+    const bee2_bign_variant_t *variant;
+    bign_params standard;
     unsigned char *der = NULL;
-    size_t bytes;
-    int der_len;
+    int n;
 
-    if (!key || !key->variant || !bee2_bign_curve_init_std(key->variant, &curve))
+    if (ecp->curve == NULL || ecp->curve->a == NULL ||
+        ecp->curve->seed != NULL)
         return NULL;
-    bytes = bee2_bign_priv_len(key->variant);
-
-    params = BIGN_ECPARAMS_new();
-    domain = BIGN_DOMAINPARAMS_new();
-    if (!params || !domain)
-        goto cleanup;
-
-    params->version = 1;
-    ASN1_OBJECT_free(params->fieldID->fieldType);
-    params->fieldID->fieldType = OBJ_txt2obj(BEE2_OID_BIGN_PRIMEFIELD, 1);
-    ASN1_INTEGER_free(params->fieldID->prime);
-    params->fieldID->prime = asn1_integer_from_le(curve.p, bytes);
-    if (!params->fieldID->fieldType || !params->fieldID->prime ||
-        !ASN1_OCTET_STRING_set(params->curve->a, curve.a, (int)bytes) ||
-        !ASN1_OCTET_STRING_set(params->curve->b, curve.b, (int)bytes) ||
-        !ASN1_OCTET_STRING_set(params->base, curve.yG, (int)bytes))
-        goto cleanup;
-
-    if (!params->curve->seed)
-        params->curve->seed = ASN1_BIT_STRING_new();
-    if (!params->curve->seed)
-        goto cleanup;
-#if OPENSSL_VERSION_MAJOR >= 4
-    if (!ASN1_BIT_STRING_set1(params->curve->seed, curve.seed, 8, 0))
-        goto cleanup;
-#else
-    params->curve->seed->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 7);
-    params->curve->seed->flags |= ASN1_STRING_FLAG_BITS_LEFT;
-    if (!ASN1_BIT_STRING_set(params->curve->seed, curve.seed, 8))
-        goto cleanup;
-#endif
-
-    ASN1_INTEGER_free(params->order);
-    params->order = asn1_integer_from_le(curve.q, bytes);
-    if (!params->order)
-        goto cleanup;
-    if (key->encode_cofactor) {
-        params->cofactor = ASN1_INTEGER_new();
-        if (!params->cofactor || !ASN1_INTEGER_set(params->cofactor, 1))
-            goto cleanup;
+    switch (bign_asn1_string_length(ecp->curve->a)) {
+    case 32: variant = bee2_bign_variant_256(); break;
+    case 48: variant = bee2_bign_variant_384(); break;
+    case 64: variant = bee2_bign_variant_512(); break;
+    default: return NULL;
     }
+    if (!bee2_bign_curve_init_std(variant, &standard))
+        return NULL;
+    ecp->curve->seed = ASN1_BIT_STRING_new();
+    if (ecp->curve->seed == NULL)
+        goto end;
+#if OPENSSL_VERSION_MAJOR >= 4
+    if (!ASN1_BIT_STRING_set1(ecp->curve->seed, standard.seed, 8, 0))
+        goto end;
+#else
+    ecp->curve->seed->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 7);
+    ecp->curve->seed->flags |= ASN1_STRING_FLAG_BITS_LEFT;
+    if (!ASN1_BIT_STRING_set(ecp->curve->seed, standard.seed, 8))
+        goto end;
+#endif
+    n = i2d_BIGN_ECPARAMS(ecp, &der);
+    if (n > 0) {
+        *len = (size_t)n;
+    } else {
+        OPENSSL_free(der);
+        der = NULL;
+    }
+end:
+    bee2_bign_cleanse(&standard, sizeof(standard));
+    return der;
+}
 
-    domain->type = 1;
-    domain->value.specified = params;
-    params = NULL;
-    der_len = i2d_BIGN_DOMAINPARAMS(domain, &der);
-    if (der_len <= 0)
-        goto cleanup;
+static const bee2_bign_variant_t *variant_from_domain_params(
+    const ASN1_STRING *params, int *cofactor_encoding)
+{
+    const bee2_bign_variant_t *variant = NULL;
+    const unsigned char *data, *p;
+    BIGN_ECPARAMS *ecp = NULL;
+    const unsigned char *body;
+    bign_params parsed, standard;
+    unsigned char *normalized = NULL;
+    size_t length, bytes;
+    int n;
+
+    data = ASN1_STRING_get0_data(params);
+    n = bign_asn1_string_length(params);
+    if (data == NULL || n <= 0 ||
+        !bign_der_sequence_body(data, (size_t)n, &body))
+        return NULL;
+    length = (size_t)n;
+    p = data;
+    ecp = d2i_BIGN_ECPARAMS(NULL, &p, n);
+    if (ecp == NULL || p != data + n || ecp->curve == NULL)
+        goto end;
+    if (ecp->cofactor != NULL && ASN1_INTEGER_get(ecp->cofactor) != 1)
+        goto end;
+    if (ecp->curve->seed == NULL) {
+        normalized = encode_missing_seed(ecp, &length);
+        if (normalized == NULL)
+            goto end;
+        data = normalized;
+    }
+    if (bignParamsDec(&parsed, data, length) != ERR_OK)
+        goto end;
+    switch (parsed.l) {
+    case 128: variant = bee2_bign_variant_256(); break;
+    case 192: variant = bee2_bign_variant_384(); break;
+    case 256: variant = bee2_bign_variant_512(); break;
+    default: goto end;
+    }
+    if (!bee2_bign_curve_init_std(variant, &standard)) {
+        variant = NULL;
+        goto end;
+    }
+    bytes = bee2_bign_priv_len(variant);
+    if (memcmp(parsed.p, standard.p, bytes) != 0 ||
+        memcmp(parsed.a, standard.a, bytes) != 0 ||
+        memcmp(parsed.b, standard.b, bytes) != 0 ||
+        memcmp(parsed.yG, standard.yG, bytes) != 0 ||
+        memcmp(parsed.q, standard.q, bytes) != 0 ||
+        memcmp(parsed.seed, standard.seed, sizeof(parsed.seed)) != 0)
+        variant = NULL;
+    if (variant != NULL && cofactor_encoding != NULL)
+        *cofactor_encoding = ecp->cofactor != NULL;
+end:
+    BIGN_ECPARAMS_free(ecp);
+    OPENSSL_free(normalized);
+    bee2_bign_cleanse(&parsed, sizeof(parsed));
+    bee2_bign_cleanse(&standard, sizeof(standard));
+    return variant;
+}
+
+static const bee2_bign_variant_t *variant_from_alg_params(
+    int ptype, const void *pval, int *explicit_encoding,
+    int *cofactor_encoding)
+{
+    const bee2_bign_variant_t *variant = NULL;
+
+    if (explicit_encoding != NULL)
+        *explicit_encoding = 0;
+    if (cofactor_encoding != NULL)
+        *cofactor_encoding = 0;
+    if (ptype == V_ASN1_OBJECT && pval != NULL)
+        return variant_from_curve_obj((const ASN1_OBJECT *)pval);
+    if (ptype == V_ASN1_SEQUENCE && pval != NULL) {
+        variant = variant_from_domain_params((const ASN1_STRING *)pval,
+                                             cofactor_encoding);
+        if (variant != NULL && explicit_encoding != NULL)
+            *explicit_encoding = 1;
+    }
+    return variant;
+}
+
+static ASN1_STRING *encode_explicit_domain_params(const bee2_bign_key_t *key)
+{
+    bign_params curve;
+    unsigned char *der = NULL, *with_cofactor = NULL;
+    const unsigned char *p;
+    BIGN_ECPARAMS *ecp = NULL;
+    ASN1_STRING *sequence = NULL;
+    size_t n = 0;
+    int length;
+
+    if (!key || !key->variant || !bee2_bign_curve_init_std(key->variant, &curve) ||
+        bignParamsEnc(NULL, &n, &curve) != ERR_OK || n > INT_MAX)
+        goto end;
+    der = OPENSSL_malloc(n);
+    if (der == NULL || bignParamsEnc(der, &n, &curve) != ERR_OK)
+        goto end;
+    if (key->encode_cofactor) {
+        p = der;
+        ecp = d2i_BIGN_ECPARAMS(NULL, &p, (long)n);
+        if (ecp == NULL || p != der + n || ecp->cofactor != NULL)
+            goto end;
+        ecp->cofactor = ASN1_INTEGER_new();
+        if (ecp->cofactor == NULL || !ASN1_INTEGER_set(ecp->cofactor, 1))
+            goto end;
+        length = i2d_BIGN_ECPARAMS(ecp, &with_cofactor);
+        if (length <= 0)
+            goto end;
+        n = (size_t)length;
+    }
     sequence = ASN1_STRING_type_new(V_ASN1_SEQUENCE);
-    if (!sequence || !bign_asn1_string_set(sequence, der, der_len)) {
+    if (sequence == NULL ||
+        !bign_asn1_string_set(sequence, with_cofactor ? with_cofactor : der, (int)n)) {
         ASN1_STRING_free(sequence);
         sequence = NULL;
     }
-
-cleanup:
+end:
+    BIGN_ECPARAMS_free(ecp);
+    OPENSSL_free(with_cofactor);
     OPENSSL_free(der);
-    BIGN_ECPARAMS_free(params);
-    BIGN_DOMAINPARAMS_free(domain);
     bee2_bign_cleanse(&curve, sizeof(curve));
     return sequence;
 }
 
 static int bign_encode_algorithm_params(const bee2_bign_key_t *key,
-                                        int *parameter_type,
-                                        void **parameter_value) {
+                                        int *parameter_type, void **parameter_value)
+{
     if (!key || !key->variant || !parameter_type || !parameter_value)
         return 0;
     if (key->encode_explicit) {
@@ -455,7 +326,8 @@ static int bign_encode_algorithm_params(const bee2_bign_key_t *key,
     return *parameter_value != NULL;
 }
 
-static void bign_free_algorithm_params(int parameter_type, void *parameter_value) {
+static void bign_free_algorithm_params(int parameter_type, void *parameter_value)
+{
     if (parameter_type == V_ASN1_OBJECT)
         ASN1_OBJECT_free(parameter_value);
     else if (parameter_type == V_ASN1_SEQUENCE)
@@ -612,9 +484,9 @@ int bee2_bign_asn1_decode_encrypted_pkcs8_der(const unsigned char *buf, size_t l
         password_len > sizeof(password) || password_len > INT_MAX)
         goto clear_password;
     p8 = bee2_stb_pbes2_decrypt(encrypted, (const unsigned char *)password,
-                                password_len, max_pbkdf2_iterations, &recognised);
+                                password_len, max_pbkdf2_iterations, libctx, &recognised);
     if (!recognised && p8 == NULL &&
-        bee2_stb_pbes2_legacy_pbkdf2_allowed(encrypted, max_pbkdf2_iterations))
+        bee2_pkcs8_standard_pbkdf2_allowed(encrypted, max_pbkdf2_iterations))
         p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
     if (p8)
         ok = decode_pkcs8_info(p8, expected, key);
@@ -675,21 +547,39 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
     return 1;
 }
 
-/* Only used by read_pem_object(), whose input is capped at 1 MiB.
- * A byte-at-a-time append needs no generic size/overflow negotiation. */
-static int append_pem_byte(unsigned char **buffer, size_t *used,
-                           size_t *capacity, unsigned char byte)
-{
-    if (*used == *capacity) {
-        size_t next = *capacity != 0 ? *capacity * 2u : 4096u;
-        unsigned char *expanded = OPENSSL_realloc(*buffer, next);
+static int append_bytes(unsigned char **buffer,
+                        size_t *length,
+                        size_t *capacity,
+                        const unsigned char *data,
+                        size_t data_length) {
+    size_t required;
+    size_t new_capacity;
+    unsigned char *expanded;
 
+    if (!buffer || !length || !capacity || (!data && data_length != 0) ||
+        data_length > SIZE_MAX - *length)
+        return 0;
+
+    required = *length + data_length;
+    if (required > *capacity) {
+        new_capacity = *capacity ? *capacity : 4096u;
+        while (new_capacity < required) {
+            if (new_capacity > SIZE_MAX / 2u) {
+                new_capacity = required;
+                break;
+            }
+            new_capacity *= 2u;
+        }
+        expanded = OPENSSL_realloc(*buffer, new_capacity);
         if (!expanded)
             return 0;
         *buffer = expanded;
-        *capacity = next;
+        *capacity = new_capacity;
     }
-    (*buffer)[(*used)++] = byte;
+
+    if (data_length != 0)
+        memcpy(*buffer + *length, data, data_length);
+    *length = required;
     return 1;
 }
 
@@ -704,7 +594,7 @@ static int read_pem_object(BIO *bio, unsigned char first,
     /* Read one PEM record, including its line terminator, without read-ahead. */
     for (;;) {
         if (used == BIGN_MAX_KEY_INPUT ||
-            !append_pem_byte(&buf, &used, &capacity, ch))
+            !append_bytes(&buf, &used, &capacity, &ch, 1))
             break;
         if (closed) {
             if (ch == '\n') {
@@ -740,6 +630,8 @@ static int read_one_object(BIO *bio, unsigned char **out, size_t *len) {
     unsigned char first;
     size_t n = 0;
 
+    if (!bio || !out || !len)
+        return 0;
     *out = NULL;
     *len = 0;
     if (!BIO_read_ex(bio, &first, 1, &n) || n == 0)
@@ -761,6 +653,8 @@ pem_to_der_buf(const unsigned char *buf, size_t len, size_t *out_len, char **out
     long dlen = 0;
     unsigned char *der = NULL;
 
+    if (!out_len)
+        return NULL;
     *out_len = 0;
     if (out_name)
         *out_name = NULL;
@@ -936,48 +830,75 @@ cleanup:
 
 
 int bee2_bign_asn1_decoder_decode(void *vctx,
-                                 OSSL_CORE_BIO *in,
-                                 int selection,
-                                 OSSL_CALLBACK *data_cb,
-                                 void *data_cbarg,
-                                 OSSL_PASSPHRASE_CALLBACK *pw_cb,
-                                 void *pw_cbarg)
-{
+                               OSSL_CORE_BIO *in,
+                               int selection,
+                               OSSL_CALLBACK *data_cb,
+                               void *data_cbarg,
+                               OSSL_PASSPHRASE_CALLBACK *pw_cb,
+                               void *pw_cbarg) {
     bee2_bign_decoder_ctx_t *ctx = vctx;
-    BIO *bio;
-    bee2_bign_key_t *key;
-    unsigned char *buf = NULL;
-    size_t len = 0;
-    int decoded, ok;
-
     if (!ctx || !data_cb)
         return 0;
-    bio = BIO_new_from_core_bio(ctx->libctx, in);
-    if (!bio)
+
+    BIO *bio = BIO_new_from_core_bio(ctx->libctx, in);
+    size_t len = 0;
+    unsigned char *buf;
+    int read_ok;
+
+    if (bio == NULL)
         return 0;
-    ok = read_one_object(bio, &buf, &len);
+    read_ok = read_one_object(bio, &buf, &len);
     BIO_free(bio);
-    if (!ok)
+    if (!read_ok)
         return 0;
-    /* This implementation is advertised as input=der. PEM is handled by
-     * the separate PEM-to-DER decoder, not parsed a second time here. */
-    if (len == 0 || buf[0] != 0x30) {
+    if (len == 0) {
         OPENSSL_clear_free(buf, len);
         return 1;
     }
 
-    key = bee2_bign_key_new(NULL);
+    unsigned char *der = buf;
+    size_t der_len = len;
+    int is_pem = buf[0] != 0x30;
+    char *pem_name = NULL;
+    if (is_pem) {
+        der = pem_to_der_buf(buf, len, &der_len, &pem_name);
+        if (!der || der_len == 0) {
+            OPENSSL_clear_free(buf, len);
+            OPENSSL_free(der);
+            OPENSSL_free(pem_name);
+            return 1;
+        }
+    }
+
+    bee2_bign_key_t *key = bee2_bign_key_new(NULL);
     if (!key) {
+        if (der != buf)
+            OPENSSL_clear_free(der, der_len);
         OPENSSL_clear_free(buf, len);
+        OPENSSL_free(pem_name);
         return 0;
     }
-    decoded = bee2_bign_asn1_decode_pkcs8_der(buf, len, ctx->variant, key);
-    if (!decoded)
-        decoded = bee2_bign_asn1_decode_encrypted_pkcs8_der(
-            buf, len, ctx->variant, key, ctx->libctx,
-            ctx->max_pbkdf2_iterations, pw_cb, pw_cbarg);
-    if (!decoded)
-        decoded = bee2_bign_asn1_decode_spki_der(buf, len, ctx->variant, key);
+
+    int decoded = 0;
+    if (pem_name) {
+        if (strcmp(pem_name, BIGN_PEM_LABEL) == 0) {
+            decoded = bee2_bign_asn1_decode_pkcs8_der(der, der_len, ctx->variant, key);
+        } else if (strcmp(pem_name, BIGN_ENCRYPTED_PEM_LABEL) == 0) {
+            decoded = bee2_bign_asn1_decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
+                                                 ctx->libctx, ctx->max_pbkdf2_iterations,
+                                                 pw_cb, pw_cbarg);
+        } else if (strcmp(pem_name, BIGN_PUB_PEM_LABEL) == 0) {
+            decoded = bee2_bign_asn1_decode_spki_der(der, der_len, ctx->variant, key);
+        }
+    } else {
+        decoded = bee2_bign_asn1_decode_pkcs8_der(der, der_len, ctx->variant, key);
+        if (!decoded)
+            decoded = bee2_bign_asn1_decode_encrypted_pkcs8_der(der, der_len, ctx->variant, key,
+                                                 ctx->libctx, ctx->max_pbkdf2_iterations,
+                                                 pw_cb, pw_cbarg);
+        if (!decoded)
+            decoded = bee2_bign_asn1_decode_spki_der(der, der_len, ctx->variant, key);
+    }
 
     if (decoded && selection != 0) {
         if (((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && !key->has_priv) ||
@@ -992,29 +913,32 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
 
     if (!decoded) {
         bee2_bign_key_free(key);
+        if (der != buf)
+            OPENSSL_clear_free(der, der_len);
         OPENSSL_clear_free(buf, len);
+        OPENSSL_free(pem_name);
         /* EncryptedPrivateKeyInfo is shared by all key algorithms.
          * An unsuccessful BIGN decode must not abort other decoders. */
         return 1;
     }
 
-    {
-        int obj_type = OSSL_OBJECT_PKEY;
-        const char *data_type = "bign";
-        void *objref = key;
-        OSSL_PARAM params[] = {
-            OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
-            OSSL_PARAM_construct_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE,
-                                             (char *)data_type, 0),
-            OSSL_PARAM_construct_octet_string(OSSL_OBJECT_PARAM_REFERENCE,
-                                              &objref, sizeof(objref)),
-            OSSL_PARAM_construct_end()
-        };
+    int obj_type = OSSL_OBJECT_PKEY;
+    const char *data_type = "bign";
+    void *objref = key;
 
-        ok = data_cb(params, data_cbarg);
-    }
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
+        OSSL_PARAM_construct_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, (char *)data_type, 0),
+        OSSL_PARAM_construct_octet_string(OSSL_OBJECT_PARAM_REFERENCE, &objref, sizeof(objref)),
+        OSSL_PARAM_construct_end()};
+
+    int ok = data_cb(params, data_cbarg);
+
     bee2_bign_key_free(key);
+    if (der != buf)
+        OPENSSL_clear_free(der, der_len);
     OPENSSL_clear_free(buf, len);
+    OPENSSL_free(pem_name);
     return ok;
 }
 
@@ -1049,19 +973,31 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     if (bio == NULL)
         goto end;
 
-    if (!read_one_object(bio, &buf, &len))
-        goto end;
-    if (len == 0) {
-        ok = 1;
-        goto end;
-    }
-    if (ctx->input_pem && buf[0] != 0x30) {
-        converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
-        if (converted == NULL || payload_len == 0 ||
-            payload_len > BIGN_MAX_KEY_INPUT)
+    if (ctx->input_pem) {
+        if (!read_one_object(bio, &buf, &len))
             goto end;
-        payload = converted;
+        if (len == 0) {
+            ok = 1;
+            goto end;
+        }
+        if (buf[0] == 0x30) {
+            /* A generic loader may invoke this adapter on DER input. */
+            payload = buf;
+            payload_len = len;
+        } else {
+            converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
+            if (converted == NULL || payload_len == 0 ||
+                payload_len > BIGN_MAX_KEY_INPUT)
+                goto end;
+            payload = converted;
+        }
     } else {
+        if (!read_one_object(bio, &buf, &len))
+            goto end;
+        if (len == 0) {
+            ok = 1;
+            goto end;
+        }
         payload = buf;
         payload_len = len;
     }
@@ -1126,7 +1062,7 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     p8 = bee2_stb_pbes2_decrypt(encrypted,
                                 (const unsigned char *)password,
                                 password_len, ctx->max_pbkdf2_iterations,
-                                &recognised);
+                                ctx->libctx, &recognised);
     if (!recognised || p8 == NULL ||
         !PKCS8_pkey_get0(&key_oid, NULL, NULL, NULL, p8) ||
         key_oid == NULL ||
@@ -1261,76 +1197,116 @@ static int set_alg(X509_ALGOR *alg, const char *oid, int type, void *value)
     return 1;
 }
 
-static ASN1_STRING *pack_param(const ASN1_VALUE *value, const ASN1_ITEM *item)
+/* Reuse the provider's BELT-PBKDF KDF. It derives 32 bytes; PBKDF2's
+ * first 16/24 bytes equal the corresponding shorter derived keys. This
+ * does not require any process-wide PBE registration or default-provider
+ * PBKDF2. */
+static int stb_pbkdf2_derive(OSSL_LIB_CTX *libctx,
+                             const unsigned char *password, size_t password_len,
+                             const unsigned char *salt, size_t salt_len,
+                             unsigned int iterations,
+                             unsigned char *key, size_t key_len)
 {
-    return ASN1_item_pack((void *)value, item, NULL);
+    EVP_KDF *kdf = EVP_KDF_fetch(libctx, "belt-pbkdf", "provider=bee2");
+    EVP_KDF_CTX *kctx = kdf != NULL ? EVP_KDF_CTX_new(kdf) : NULL;
+    uint64_t iter = iterations;
+    unsigned char full_key[32] = {0};
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD, (void *)password, password_len),
+        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, (void *)salt, salt_len),
+        OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &iter),
+        OSSL_PARAM_END
+    };
+    int ok = kctx != NULL && key_len <= sizeof(full_key) &&
+             EVP_KDF_derive(kctx, full_key, sizeof(full_key), params) > 0;
+
+    if (ok)
+        memcpy(key, full_key, key_len);
+    OPENSSL_cleanse(full_key, sizeof(full_key));
+    EVP_KDF_CTX_free(kctx);
+    EVP_KDF_free(kdf);
+    return ok;
 }
 
-static X509_SIG *build_encrypted_info(const unsigned char *salt, size_t salt_len,
-                                      unsigned int iterations, size_t key_len,
-                                      unsigned char **wrapped, size_t wrapped_len)
+static const char *kwp_cipher_name(size_t key_len)
 {
-    PBKDF2PARAM *kdf = NULL;
-    PBE2PARAM *pbe = NULL;
-    X509_SIG *info = NULL;
-    X509_ALGOR *outer = NULL;
-    ASN1_OCTET_STRING *encrypted = NULL;
-    ASN1_OCTET_STRING *asn_salt = NULL;
-    ASN1_STRING *encoded = NULL;
-    const char *oid = kwp_oid(key_len);
+    switch (key_len) {
+    case 16: return "belt-kwp128";
+    case 24: return "belt-kwp192";
+    case 32: return "belt-kwp256";
+    default: return NULL;
+    }
+}
+
+/* The provider cipher already checks the KWP length constraints and the
+ * authentication header. No KWP primitive is implemented in the codec. */
+static int stb_kwp_crypt(OSSL_LIB_CTX *libctx, int encrypt,
+                         const unsigned char *key, size_t key_len,
+                         const unsigned char *in, size_t in_len,
+                         unsigned char *out, size_t *out_len)
+{
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(libctx, kwp_cipher_name(key_len), NULL);
+    EVP_CIPHER_CTX *ctx = cipher != NULL ? EVP_CIPHER_CTX_new() : NULL;
+    int processed = 0, final = 0;
     int ok = 0;
 
-    /* Sizes and the KWP key variant are checked by the only caller. */
-    kdf = PBKDF2PARAM_new();
-    pbe = PBE2PARAM_new();
-    info = X509_SIG_new();
-    if (kdf == NULL || pbe == NULL || info == NULL)
-        goto end;
-
-    asn_salt = ASN1_OCTET_STRING_new();
-    if (asn_salt == NULL || !ASN1_OCTET_STRING_set(asn_salt, salt, (int)salt_len))
-        goto end;
-    ASN1_TYPE_set(kdf->salt, V_ASN1_OCTET_STRING, asn_salt);
-    asn_salt = NULL;
-    if (!ASN1_INTEGER_set(kdf->iter, (long)iterations))
-        goto end;
-    kdf->keylength = ASN1_INTEGER_new();
-    if (kdf->keylength == NULL || !ASN1_INTEGER_set(kdf->keylength, (long)key_len))
-        goto end;
-    kdf->prf = X509_ALGOR_new();
-    if (kdf->prf == NULL || !set_alg(kdf->prf, BEE2_OID_HMAC_HBELT, V_ASN1_NULL, NULL))
-        goto end;
-
-    encoded = pack_param((const ASN1_VALUE *)kdf, ASN1_ITEM_rptr(PBKDF2PARAM));
-    if (encoded == NULL || !set_alg(pbe->keyfunc, BEE2_OID_PBKDF2, V_ASN1_SEQUENCE, encoded))
-        goto end;
-    encoded = NULL;
-    /* KWP has no IV; the mandatory 16-byte header is all zeroes. */
-    if (!set_alg(pbe->encryption, oid, V_ASN1_UNDEF, NULL))
-        goto end;
-    encoded = pack_param((const ASN1_VALUE *)pbe, ASN1_ITEM_rptr(PBE2PARAM));
-    if (encoded == NULL)
-        goto end;
-    X509_SIG_getm(info, &outer, &encrypted);
-    if (!set_alg(outer, BEE2_OID_PBES2, V_ASN1_SEQUENCE, encoded))
-        goto end;
-    encoded = NULL;
-    /* Hand the ciphertext to ASN.1 rather than copying it.
-     * ASN1_STRING_set0 takes ownership of the allocation. */
-    ASN1_STRING_set0(encrypted, *wrapped, (int)wrapped_len);
-    *wrapped = NULL;
-    ok = 1;
-
-end:
-    ASN1_OCTET_STRING_free(asn_salt);
-    ASN1_STRING_free(encoded);
-    PBKDF2PARAM_free(kdf);
-    PBE2PARAM_free(pbe);
-    if (!ok) {
-        X509_SIG_free(info);
-        info = NULL;
+    *out_len = 0;
+    if (ctx != NULL && in_len <= INT_MAX &&
+        EVP_CipherInit_ex2(ctx, cipher, key, NULL, encrypt, NULL) > 0 &&
+        EVP_CipherUpdate(ctx, out, &processed, in, (int)in_len) > 0 &&
+        EVP_CipherFinal_ex(ctx, out + processed, &final) > 0) {
+        *out_len = (size_t)processed + (size_t)final;
+        ok = 1;
     }
-    return info;
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
+    return ok;
+}
+
+/* Pack standard EncryptedPrivateKeyInfo and PBES2 parameters with OpenSSL. */
+static X509_SIG *stb_pbes2_pack(const unsigned char *salt, size_t salt_len,
+                               unsigned int iterations, size_t key_len,
+                               const unsigned char *wrapped, size_t wrapped_len,
+                               OSSL_LIB_CTX *libctx)
+{
+    PBE2PARAM *pbe = PBE2PARAM_new();
+    X509_ALGOR *keyfunc = NULL, *outer = NULL;
+    ASN1_OCTET_STRING *ciphertext = NULL;
+    ASN1_STRING *params = NULL;
+    X509_SIG *sig = NULL;
+    int prf_nid = OBJ_txt2nid(BEE2_OID_HMAC_HBELT);
+
+    if (pbe == NULL || prf_nid == NID_undef)
+        goto end;
+    keyfunc = PKCS5_pbkdf2_set_ex((int)iterations, (unsigned char *)salt,
+                                   (int)salt_len, prf_nid, (int)key_len, libctx);
+    if (keyfunc == NULL)
+        goto end;
+    X509_ALGOR_free(pbe->keyfunc);
+    pbe->keyfunc = keyfunc;
+    keyfunc = NULL;
+    if (!set_alg(pbe->encryption, kwp_oid(key_len), V_ASN1_UNDEF, NULL))
+        goto end;
+    params = ASN1_item_pack(pbe, ASN1_ITEM_rptr(PBE2PARAM), NULL);
+    sig = X509_SIG_new();
+    if (params == NULL || sig == NULL)
+        goto end;
+    X509_SIG_getm(sig, &outer, &ciphertext);
+    if (!set_alg(outer, BEE2_OID_PBES2, V_ASN1_SEQUENCE, params))
+        goto end;
+    params = NULL;
+    if (!ASN1_OCTET_STRING_set(ciphertext, wrapped, (int)wrapped_len))
+        goto end;
+
+    X509_ALGOR_free(keyfunc);
+    PBE2PARAM_free(pbe);
+    return sig;
+end:
+    ASN1_STRING_free(params);
+    X509_ALGOR_free(keyfunc);
+    PBE2PARAM_free(pbe);
+    X509_SIG_free(sig);
+    return NULL;
 }
 
 unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
@@ -1338,9 +1314,12 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
                                       size_t key_len, unsigned int iterations,
                                       size_t salt_len, OSSL_LIB_CTX *libctx, size_t *out_len)
 {
-    unsigned char derived[32] = {0};
+    const unsigned char *p = der;
+    PKCS8_PRIV_KEY_INFO *p8 = NULL;
+    X509_SIG *sig = NULL;
     unsigned char *salt = NULL, *wrapped = NULL, *result = NULL;
-    X509_SIG *info = NULL;
+    unsigned char key[32] = {0};
+    size_t wrapped_len = 0;
     int n;
 
     if (out_len == NULL)
@@ -1351,80 +1330,97 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
         iterations < BEE2_STB_PBKDF2_MIN_ITER || iterations > INT_MAX ||
         salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX)
         return NULL;
-
+    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
+    if (p8 == NULL || p != der + der_len)
+        goto end;
     salt = OPENSSL_malloc(salt_len);
     wrapped = OPENSSL_malloc(der_len + 16);
-    if (salt == NULL || wrapped == NULL || RAND_priv_bytes_ex(libctx, salt, salt_len, 0) != 1 ||
-        beltPBKDF2(derived, password, password_len, iterations, salt, salt_len) != ERR_OK ||
-        beltKWPWrap(wrapped, der, der_len, NULL, derived, key_len) != ERR_OK)
+    if (salt == NULL || wrapped == NULL ||
+        RAND_bytes_ex(libctx, salt, salt_len, 0) <= 0 ||
+        !stb_pbkdf2_derive(libctx, password, password_len, salt, salt_len,
+                           iterations, key, key_len) ||
+        !stb_kwp_crypt(libctx, 1, key, key_len, der, der_len,
+                       wrapped, &wrapped_len))
         goto end;
-
-    info = build_encrypted_info(salt, salt_len, iterations, key_len, &wrapped, der_len + 16);
-    if (info == NULL)
+    sig = stb_pbes2_pack(salt, salt_len, iterations, key_len,
+                         wrapped, wrapped_len, libctx);
+    if (sig == NULL)
         goto end;
-    n = i2d_X509_SIG(info, &result);
+    n = i2d_X509_SIG(sig, &result);
     if (n <= 0) {
         OPENSSL_free(result);
         result = NULL;
     } else {
         *out_len = (size_t)n;
     }
-
 end:
-    OPENSSL_cleanse(derived, sizeof(derived));
-    OPENSSL_clear_free(salt, salt_len);
+    OPENSSL_cleanse(key, sizeof(key));
     OPENSSL_clear_free(wrapped, der_len + 16);
-    X509_SIG_free(info);
+    OPENSSL_clear_free(salt, salt_len);
+    PKCS8_PRIV_KEY_INFO_free(p8);
+    X509_SIG_free(sig);
     return result;
 }
 
 static size_t asn_length(const ASN1_STRING *value)
 {
-    int len = bign_asn1_string_length(value);
-    return len < 0 ? SIZE_MAX : (size_t)len;
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    return ASN1_STRING_get_length(value);
+#else
+    int n = ASN1_STRING_length(value);
+    return n >= 0 ? (size_t)n : SIZE_MAX;
+#endif
 }
 
 
-int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
+/* PBES2 itself is an OpenSSL ASN.1 structure.  Parse it in one place
+ * instead of repeating its envelope checks in each STB policy helper. */
+static PBE2PARAM *unpack_pbes2(const X509_SIG *encrypted)
 {
-    const X509_ALGOR *alg = NULL;
+    const X509_ALGOR *algorithm = NULL;
     const ASN1_OCTET_STRING *ciphertext = NULL;
-    const ASN1_OBJECT *obj = NULL;
+    const ASN1_OBJECT *oid = NULL;
     const void *value = NULL;
-    PBE2PARAM *pbe = NULL;
-    int type, recognised = 0;
-    size_t key_len;
+    int type;
 
     if (encrypted == NULL)
-        return 0;
-    X509_SIG_get0(encrypted, &alg, &ciphertext);
-    /* X509_SIG has mandatory algorithm and ciphertext fields. */
-    X509_ALGOR_get0(&obj, &type, &value, alg);
-    if (!oid_equals(obj, BEE2_OID_PBES2) ||
+        return NULL;
+    X509_SIG_get0(encrypted, &algorithm, &ciphertext);
+    X509_ALGOR_get0(&oid, &type, &value, algorithm);
+    if (!oid_equals(oid, BEE2_OID_PBES2) ||
         type != V_ASN1_SEQUENCE || value == NULL)
+        return NULL;
+    return ASN1_item_unpack((const ASN1_STRING *)value,
+                            ASN1_ITEM_rptr(PBE2PARAM));
+}
+
+int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
+{
+    const ASN1_OBJECT *oid = NULL;
+    const void *value = NULL;
+    PBE2PARAM *pbe;
+    size_t key_len;
+    int type, recognised = 0;
+
+    pbe = unpack_pbes2(encrypted);
+    if (pbe == NULL)
         return 0;
-    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
-    if (pbe != NULL) {
-        X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
-        for (key_len = 16; key_len <= 32; key_len += 8) {
-            if (oid_equals(obj, kwp_oid(key_len))) {
-                recognised = 1;
-                break;
-            }
+    X509_ALGOR_get0(&oid, &type, &value, pbe->encryption);
+    for (key_len = 16; key_len <= 32; key_len += 8) {
+        if (oid_equals(oid, kwp_oid(key_len))) {
+            recognised = 1;
+            break;
         }
     }
     PBE2PARAM_free(pbe);
     return recognised;
 }
 
-
-/* Only bounded PBKDF2 is attempted by the BIGN legacy PBES2 fallback.
+/* Only bounded PBKDF2 is attempted by the standard PBES2 fallback.
  * Other KDFs are left to OpenSSL's normal decoder chain. */
-int bee2_stb_pbes2_legacy_pbkdf2_allowed(const X509_SIG *encrypted,
+int bee2_pkcs8_standard_pbkdf2_allowed(const X509_SIG *encrypted,
                                           unsigned int max_iterations)
 {
-    const X509_ALGOR *alg = NULL;
-    const ASN1_OCTET_STRING *ciphertext = NULL;
     const ASN1_OBJECT *oid = NULL;
     const void *value = NULL;
     PBE2PARAM *pbe = NULL;
@@ -1432,26 +1428,21 @@ int bee2_stb_pbes2_legacy_pbkdf2_allowed(const X509_SIG *encrypted,
     long iterations;
     int type, allowed = 0;
 
-    if (!encrypted || max_iterations == 0)
+    if (max_iterations == 0)
         return 0;
-    X509_SIG_get0(encrypted, &alg, &ciphertext);
-    X509_ALGOR_get0(&oid, &type, &value, alg);
-    if (!oid_equals(oid, BEE2_OID_PBES2) ||
-        type != V_ASN1_SEQUENCE || !value)
+    pbe = unpack_pbes2(encrypted);
+    if (pbe == NULL)
         return 0;
-    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
-    if (!pbe)
-        goto end;
     X509_ALGOR_get0(&oid, &type, &value, pbe->keyfunc);
     if (!oid_equals(oid, BEE2_OID_PBKDF2) ||
-        type != V_ASN1_SEQUENCE || !value)
+        type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
-    kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
-    if (!kdf)
+    kdf = ASN1_item_unpack((const ASN1_STRING *)value,
+                           ASN1_ITEM_rptr(PBKDF2PARAM));
+    if (kdf == NULL)
         goto end;
     iterations = ASN1_INTEGER_get(kdf->iter);
     allowed = iterations > 0 && (unsigned long)iterations <= max_iterations;
-
 end:
     PBKDF2PARAM_free(kdf);
     PBE2PARAM_free(pbe);
@@ -1461,33 +1452,29 @@ end:
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
                                             const unsigned char *password,
                                             size_t password_len,
-                                            unsigned int max_iterations, int *recognised)
+                                            unsigned int max_iterations,
+                                            OSSL_LIB_CTX *libctx, int *recognised)
 {
-    const X509_ALGOR *alg = NULL;
+    const X509_ALGOR *algorithm = NULL;
     const ASN1_OCTET_STRING *ciphertext = NULL;
     const ASN1_OBJECT *obj = NULL;
     const void *value = NULL;
     PBE2PARAM *pbe = NULL;
     PBKDF2PARAM *kdf = NULL;
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
-    unsigned char derived[32] = {0};
-    unsigned char *plain = NULL;
-    const unsigned char *salt, *wrapped, *p;
-    size_t salt_len, wrapped_len, plain_len, key_len = 0, k;
+    unsigned char key[32] = {0}, *plaintext = NULL;
+    const unsigned char *pos = NULL;
+    size_t salt_len = 0, wrapped_len = 0, plaintext_len = 0, key_len = 0, k;
     long iter;
-    int type = V_ASN1_UNDEF;
+    int type;
 
     if (recognised == NULL)
         return NULL;
     *recognised = 0;
     if (encrypted == NULL || password == NULL || password_len > INT_MAX)
         return NULL;
-    X509_SIG_get0(encrypted, &alg, &ciphertext);
-    X509_ALGOR_get0(&obj, &type, &value, alg);
-    if (!oid_equals(obj, BEE2_OID_PBES2) || type != V_ASN1_SEQUENCE || value == NULL)
-        return NULL;
-    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
-    /* PBE2PARAM decoding enforces both mandatory AlgorithmIdentifiers. */
+    X509_SIG_get0(encrypted, &algorithm, &ciphertext);
+    pbe = unpack_pbes2(encrypted);
     if (pbe == NULL)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
@@ -1498,23 +1485,22 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
             break;
         }
     }
-    if (!*recognised)
-        goto end;
-    if (type != V_ASN1_UNDEF && type != V_ASN1_NULL)
+    if (!*recognised || (type != V_ASN1_UNDEF && type != V_ASN1_NULL))
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->keyfunc);
-    if (!oid_equals(obj, BEE2_OID_PBKDF2) || type != V_ASN1_SEQUENCE || value == NULL)
+    if (!oid_equals(obj, BEE2_OID_PBKDF2) ||
+        type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
     kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
-    /* salt and iter are mandatory ASN.1 fields; the STB PRF is not. */
     if (kdf == NULL || kdf->prf == NULL ||
-        kdf->salt->type != V_ASN1_OCTET_STRING)
+        kdf->salt == NULL || kdf->salt->type != V_ASN1_OCTET_STRING)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, kdf->prf);
     if (!oid_equals(obj, BEE2_OID_HMAC_HBELT) ||
         (type != V_ASN1_UNDEF && type != V_ASN1_NULL))
         goto end;
-    if (kdf->keylength != NULL && ASN1_INTEGER_get(kdf->keylength) != (long)key_len)
+    if (kdf->keylength != NULL &&
+        ASN1_INTEGER_get(kdf->keylength) != (long)key_len)
         goto end;
     iter = ASN1_INTEGER_get(kdf->iter);
     salt_len = asn_length(kdf->salt->value.octet_string);
@@ -1524,29 +1510,24 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
         salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX ||
         wrapped_len < 32 || wrapped_len > INT_MAX)
         goto end;
-    salt = ASN1_STRING_get0_data(kdf->salt->value.octet_string);
-    wrapped = ASN1_STRING_get0_data(ciphertext);
-    if (salt == NULL || wrapped == NULL)
+    plaintext = OPENSSL_malloc(wrapped_len);
+    if (plaintext == NULL ||
+        !stb_pbkdf2_derive(libctx, password, password_len,
+                           ASN1_STRING_get0_data(kdf->salt->value.octet_string),
+                           salt_len, (unsigned int)iter, key, key_len) ||
+        !stb_kwp_crypt(libctx, 0, key, key_len,
+                       ASN1_STRING_get0_data(ciphertext), wrapped_len,
+                       plaintext, &plaintext_len))
         goto end;
-    plain_len = wrapped_len - 16;
-    plain = OPENSSL_malloc(plain_len);
-    if (plain == NULL)
-        goto end;
-    if (beltPBKDF2(derived, password, password_len, (size_t)iter, salt, salt_len) != ERR_OK)
-        goto end;
-    if (beltKWPUnwrap(plain, wrapped, wrapped_len, NULL, derived, key_len) != ERR_OK)
-        goto end;
-    p = plain;
-    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)plain_len);
-    if (p8 != NULL && p != plain + plain_len) {
+    pos = plaintext;
+    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &pos, (long)plaintext_len);
+    if (p8 != NULL && pos != plaintext + plaintext_len) {
         PKCS8_PRIV_KEY_INFO_free(p8);
         p8 = NULL;
     }
-
 end:
-    OPENSSL_cleanse(derived, sizeof(derived));
-    if (plain != NULL)
-        OPENSSL_clear_free(plain, wrapped_len - 16);
+    OPENSSL_cleanse(key, sizeof(key));
+    OPENSSL_clear_free(plaintext, wrapped_len <= INT_MAX ? wrapped_len : 0);
     PBKDF2PARAM_free(kdf);
     PBE2PARAM_free(pbe);
     return p8;
@@ -1568,7 +1549,7 @@ unsigned char *bee2_bign_asn1_encrypt_standard_pkcs8(const unsigned char *der, s
     if (out_len == NULL)
         return NULL;
     *out_len = 0;
-    if (!der || !pass || !cipher || pass_len > INT_MAX ||
+    if (!der || !pass || !cipher || der_len > LONG_MAX || pass_len > INT_MAX ||
         salt_len > INT_MAX || iterations > INT_MAX ||
         !bign_der_sequence_body(der, der_len, &p))
         return NULL;

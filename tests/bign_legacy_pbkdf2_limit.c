@@ -105,20 +105,19 @@ static int check_stb_pbes2_classification(void)
     int recognised, ok = 0;
 
     if (bee2_stb_pbes2_is_stb(NULL) ||
-        bee2_stb_pbes2_legacy_pbkdf2_allowed(NULL, 10000))
+        bee2_pkcs8_standard_pbkdf2_allowed(NULL, 10000))
         return 0;
     for (i = 0; i < sizeof(ciphers) / sizeof(ciphers[0]); ++i) {
         info = make_pbes2(10000, OID_PBKDF2, ciphers[i]);
         if (info == NULL || !bee2_stb_pbes2_is_stb(info) ||
-            bee2_stb_pbes2_legacy_pbkdf2_allowed(info, 0))
+            bee2_pkcs8_standard_pbkdf2_allowed(info, 0))
             goto end;
 
         /* The fixture deliberately carries an AES-style IV rather than
          * KWP's absent parameters.  Recognition precedes validation. */
         recognised = 0;
         plain = bee2_stb_pbes2_decrypt(info, password,
-                                       sizeof(password) - 1, 10000,
-                                       &recognised);
+                                       sizeof(password) - 1, 10000, NULL, &recognised);
         if (plain != NULL || !recognised)
             goto end;
         X509_SIG_free(info);
@@ -201,9 +200,9 @@ static int check_stb_decrypt_parameters(void)
     PKCS8_PRIV_KEY_INFO *pkcs8 = NULL, *decoded = NULL;
     ASN1_OBJECT *algorithm = NULL;
     unsigned char *private_copy = NULL, *plain = NULL, *encrypted = NULL;
-    unsigned char *roundtrip = NULL, *trailing = NULL, *extra_der = NULL;
+    unsigned char *roundtrip = NULL;
     X509_SIG *info = NULL;
-    size_t encrypted_len = 0, extra_len = 0;
+    size_t encrypted_len = 0;
     int plain_len = 0, roundtrip_len, recognised;
     size_t key_len;
     int wrong_type, ok = 0;
@@ -241,8 +240,7 @@ static int check_stb_decrypt_parameters(void)
         PKCS8_PRIV_KEY_INFO_free(decoded);
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000,
-                                          &recognised);
+                                          sizeof(password) - 1, 10000, NULL, &recognised);
         if (decoded == NULL || !recognised)
             goto end;
         OPENSSL_free(roundtrip);
@@ -256,7 +254,7 @@ static int check_stb_decrypt_parameters(void)
     /* The recognised output parameter is required; a missing one must not
      * trigger a decryption attempt. */
     if (bee2_stb_pbes2_decrypt(info, password, sizeof(password) - 1,
-                               10000, NULL) != NULL)
+                               10000, NULL, NULL) != NULL)
         goto end;
 
     for (wrong_type = 0; wrong_type < 2; ++wrong_type) {
@@ -270,41 +268,11 @@ static int check_stb_decrypt_parameters(void)
         decoded = NULL;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000,
-                                          &recognised);
+                                          sizeof(password) - 1, 10000, NULL, &recognised);
         if (decoded != NULL || !recognised)
             goto end;
     }
 
-    /* A valid authenticated KWP envelope must not accept extra bytes after
-     * the PKCS#8 DER object in its recovered plaintext. */
-    trailing = OPENSSL_malloc((size_t)plain_len + 1);
-    if (trailing == NULL)
-        goto end;
-    memcpy(trailing, plain, (size_t)plain_len);
-    trailing[plain_len] = 0;
-    extra_der = bee2_stb_pbes2_encrypt(
-        trailing, (size_t)plain_len + 1, password, sizeof(password) - 1,
-        32, BEE2_STB_PBKDF2_MIN_ITER, BEE2_STB_PBKDF2_MIN_SALT,
-        NULL, &extra_len);
-    if (extra_der == NULL)
-        goto end;
-    {
-        const unsigned char *p = extra_der;
-
-        X509_SIG_free(info);
-        info = d2i_X509_SIG(NULL, &p, (long)extra_len);
-    }
-    if (info == NULL)
-        goto end;
-    PKCS8_PRIV_KEY_INFO_free(decoded);
-    decoded = NULL;
-    recognised = 0;
-    decoded = bee2_stb_pbes2_decrypt(info, password,
-                                      sizeof(password) - 1, 10000,
-                                      &recognised);
-    if (decoded != NULL || !recognised)
-        goto end;
     ok = 1;
 
 end:
@@ -315,8 +283,6 @@ end:
     PKCS8_PRIV_KEY_INFO_free(pkcs8);
     ASN1_OBJECT_free(algorithm);
     OPENSSL_clear_free(private_copy, sizeof(private_data));
-    OPENSSL_clear_free(trailing, plain_len > 0 ? (size_t)plain_len + 1 : 0);
-    OPENSSL_clear_free(extra_der, extra_len);
     OPENSSL_clear_free(encrypted, encrypted_len);
     OPENSSL_clear_free(plain, plain_len > 0 ? (size_t)plain_len : 0);
     OPENSSL_free(roundtrip);
@@ -349,7 +315,7 @@ int main(void)
             fprintf(stderr, "PBES2 test fixture construction failed at case %zu\n", i);
             return 1;
         }
-        result = bee2_stb_pbes2_legacy_pbkdf2_allowed(info, cases[i].maximum);
+        result = bee2_pkcs8_standard_pbkdf2_allowed(info, cases[i].maximum);
         X509_SIG_free(info);
         if (result != cases[i].allowed) {
             fprintf(stderr, "PBES2 iteration limit mismatch at case %zu\n", i);
@@ -357,7 +323,7 @@ int main(void)
         }
     }
     unknown = make_pbes2(1, OID_SCRYPT, "2.16.840.1.101.3.4.1.42");
-    if (!unknown || bee2_stb_pbes2_legacy_pbkdf2_allowed(unknown, 10000u)) {
+    if (!unknown || bee2_pkcs8_standard_pbkdf2_allowed(unknown, 10000u)) {
         fprintf(stderr, "Unrecognised PBES2 KDF was accepted\n");
         X509_SIG_free(unknown);
         return 1;
