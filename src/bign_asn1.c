@@ -1139,6 +1139,17 @@ static const char *kwp_oid(size_t key_len)
     }
 }
 
+/* Match an AlgorithmIdentifier to the only supported BELT-KWP sizes. */
+static size_t kwp_key_len_from_oid(const ASN1_OBJECT *oid)
+{
+    size_t key_len;
+
+    for (key_len = 16; key_len <= 32; key_len += 8)
+        if (oid_equals(oid, kwp_oid(key_len)))
+            return key_len;
+    return 0;
+}
+
 /* Transfers value to alg only on success. */
 static int set_alg(X509_ALGOR *alg, const char *oid, int type, void *value)
 {
@@ -1270,8 +1281,6 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
                                       size_t key_len, unsigned int iterations,
                                       size_t salt_len, OSSL_LIB_CTX *libctx, size_t *out_len)
 {
-    const unsigned char *p = der;
-    PKCS8_PRIV_KEY_INFO *p8 = NULL;
     X509_SIG *sig = NULL;
     unsigned char *salt = NULL, *wrapped = NULL, *result = NULL;
     unsigned char key[32] = {0};
@@ -1286,9 +1295,6 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
         iterations < BEE2_STB_PBKDF2_MIN_ITER || iterations > INT_MAX ||
         salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX)
         return NULL;
-    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
-    if (p8 == NULL || p != der + der_len)
-        goto end;
     salt = OPENSSL_malloc(salt_len);
     wrapped = OPENSSL_malloc(der_len + 16);
     if (salt == NULL || wrapped == NULL ||
@@ -1313,7 +1319,6 @@ end:
     OPENSSL_cleanse(key, sizeof(key));
     OPENSSL_clear_free(wrapped, der_len + 16);
     OPENSSL_clear_free(salt, salt_len);
-    PKCS8_PRIV_KEY_INFO_free(p8);
     X509_SIG_free(sig);
     return result;
 }
@@ -1353,27 +1358,17 @@ static PBE2PARAM *unpack_pbes2(const X509_SIG *encrypted)
 int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
 {
     const ASN1_OBJECT *oid = NULL;
-    const void *value = NULL;
-    PBE2PARAM *pbe;
-    size_t key_len;
-    int type, recognised = 0;
+    PBE2PARAM *pbe = unpack_pbes2(encrypted);
+    int recognised;
 
-    pbe = unpack_pbes2(encrypted);
     if (pbe == NULL)
         return 0;
-    X509_ALGOR_get0(&oid, &type, &value, pbe->encryption);
-    for (key_len = 16; key_len <= 32; key_len += 8) {
-        if (oid_equals(oid, kwp_oid(key_len))) {
-            recognised = 1;
-            break;
-        }
-    }
+    X509_ALGOR_get0(&oid, NULL, NULL, pbe->encryption);
+    recognised = kwp_key_len_from_oid(oid) != 0;
     PBE2PARAM_free(pbe);
     return recognised;
 }
 
-/* Only bounded PBKDF2 is attempted by the standard PBES2 fallback.
- * Other KDFs are left to OpenSSL's normal decoder chain. */
 int bee2_pkcs8_standard_pbkdf2_allowed(const X509_SIG *encrypted,
                                           unsigned int max_iterations)
 {
@@ -1420,7 +1415,7 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
     unsigned char key[32] = {0}, *plaintext = NULL;
     const unsigned char *pos = NULL;
-    size_t salt_len = 0, wrapped_len = 0, plaintext_len = 0, key_len = 0, k;
+    size_t salt_len = 0, wrapped_len = 0, plaintext_len = 0, key_len = 0;
     long iter;
     int type;
 
@@ -1434,13 +1429,8 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     if (pbe == NULL)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
-    for (k = 16; k <= 32; k += 8) {
-        if (oid_equals(obj, kwp_oid(k))) {
-            *recognised = 1;
-            key_len = k;
-            break;
-        }
-    }
+    key_len = kwp_key_len_from_oid(obj);
+    *recognised = key_len != 0;
     if (!*recognised || (type != V_ASN1_UNDEF && type != V_ASN1_NULL))
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->keyfunc);
