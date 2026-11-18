@@ -207,7 +207,11 @@ static const bee2_bign_variant_t *variant_from_domain_params(
     length = (size_t)n;
     p = data;
     ecp = d2i_BIGN_ECPARAMS(NULL, &p, n);
-    if (ecp == NULL || p != data + n || ecp->curve == NULL)
+    /* Validate the OID with OpenSSL before using Bee2's fixed-OID DER
+     * decoder. Malformed OIDs must not reach its string comparator. */
+    if (ecp == NULL || p != data + n || ecp->fieldID == NULL ||
+        !oid_equals(ecp->fieldID->fieldType, BEE2_OID_BIGN_PRIMEFIELD) ||
+        ecp->curve == NULL)
         goto end;
     if (ecp->cofactor != NULL && ASN1_INTEGER_get(ecp->cofactor) != 1)
         goto end;
