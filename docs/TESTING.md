@@ -18,7 +18,9 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The tests use public OpenSSL APIs. The native `bee2_stb_kat` executable
+Most tests use public OpenSSL APIs; selected tests use valid native Bee2 or
+provider dispatch callbacks where that is the documented API under test.
+The native `bee2_stb_kat` executable
 checks published STB answers for BELT, BASH, HMAC-HBELT, key wrapping,
 PBKDF and BIGN transport. The test suite also exercises provider exports,
 cipher round trips and negative authentication checks,
@@ -115,3 +117,123 @@ KATs check the standard's 256-bit ciphertext examples.
 
 The provider uses Bee2 `beltKeyExpand2()` with `u32To()` to expand
 keys; tests verify its output against the normative STB values.
+
+## EVP-to-provider validation boundary
+
+Provider callbacks are called by libcrypto with a context returned by the
+corresponding `newctx` callback. The cipher and MAC operations use the
+documented output-length pointer. The provider therefore does not need to
+recheck these context and output-length pointers on every operation. Context
+allocation failures are still handled when creating contexts; a null
+`freectx` argument remains safe.
+
+This does **not** make `OSSL_PARAM` values trusted. An application may supply
+parameters of the wrong type or with unsupported values, and OpenSSL passes
+provider-specific parameters to their implementation. Keep the `OSSL_PARAM`
+conversion and validation, fixed STB key/IV/tag requirements, actual
+`outsize` bounds, missing-key/state checks, and rejection of invalid operation
+sequences. `set_ctx_params(NULL)` must remain a successful no-op where the
+provider API specifies it. A KDF must itself reject unsupported output sizes.
+
+OpenSSL 3.5+ `EVP_CipherInit_SKEY()` verifies that SKEY management and the
+cipher belong to the same provider before calling its init callback. Bee2
+Provider currently does not implement SKEY management. A generic SKEY imported
+from the default provider therefore cannot exercise Bee2 cipher initialization
+and is not a valid regression test for its fixed key/IV lengths. These
+algorithm-specific length checks are retained in cipher initialization.
+
+Tests should preferentially exercise malformed inputs through public EVP,
+encoder/decoder, and STORE interfaces. Direct provider dispatch is useful for
+valid operation equivalence and for explicit provider contracts, but not to
+simulate invalid libcrypto-owned contexts just to count coverage branches.
+Algorithm correctness and memory-safety tests take precedence over any
+line or branch coverage percentage.
+
+References: OpenSSL 3.0 `provider-cipher(7)`, `provider-kdf(7)`,
+`provider-mac(7)`, and `EVP_MAC(3)`.
+
+## Instrumented coverage and regression tests
+
+Use `-DBEE2_PROVIDER_BUILD_TESTS=ON -DBEE2_PROVIDER_ENABLE_COVERAGE=ON`
+with GCC, then run the complete CTest suite. GitHub Actions publishes gcovr
+HTML, XML and JSON reports for production `src/` code, including ASN.1 sources
+compiled directly into unit tests. The Bee2 dependency and test harnesses do
+not contribute to the reported percentages.
+
+The coverage job publishes **unfiltered** gcovr line and branch statistics as diagnostic
+evidence, but enforces no raw coverage percentages, including function coverage:
+those
+denominators contain legitimate low-memory, I/O failure and entropy-failure
+handling that cannot be reproduced predictably in the normal integration
+test environment. A remaining unexecuted function can likewise be a
+purely environmental error-handling helper. All functions, source lines and
+branches remain visible in detailed HTML, XML, summary JSON and per-line JSON
+artifacts. Error-handling code remains compiled and included in the
+report, without exclusions, synthetic fault injection or test-only hooks.
+Functional correctness is enforced by STB known-answer tests, Bee2 and
+bee2evp interoperability, EVP behavior/negative scenarios and ASan/UBSan.
+A low raw percentage is a review prompt, not a reason to fabricate failures.
+Atomic GCC counters remain necessary because concurrent tests otherwise
+produce corrupted gcov branch counters.
+
+The native contract suite exercises one-shot and streaming EVP operations,
+copying cipher, MAC and BIGN contexts, BIGN signing and key agreement,
+`EVP_KDF_CTX_reset`, and BIGN generic aliases, template-based generation,
+key comparison and decoder object exports. The BIGN DER tests check PKCS#8
+and SPKI with named and explicit curves, including malformed points,
+scalars and framing. On Linux, normal DER/PEM and PKCS#8 tests verify successful ownership
+transfer and malformed-input rejection; OpenSSL allocator failure handling
+remains defensive production code and is not an integration coverage gate.
+
+Published ECB/CBC ciphertext-stealing vectors A.9-2, A.10-2, A.11-2 and
+A.12-2 (36/47 bytes) accompany the full-block KATs. These cases supply the
+entire final partial block in one EVP Update, matching the API contract.
+
+## Legacy bee2evp interoperability
+
+The CI interoperability job builds pinned OpenSSL 1.1.1 with bee2evp alongside
+OpenSSL 3.x with the provider. The engine matrix compares fixed, boundary and
+pseudorandom input cases for supported BELT modes, digests and MACs. The
+extended matrix compares 128/192/256-bit BELT-DWP, BELT-CHE and BELT-KWP,
+plus BASH-PRG-AE2561, using zero, patterned and deterministic pseudorandom
+data, cross-decryption, AAD and tampered authentication tags. BELT-KWP uses the
+legacy engine's zero-header profile.
+
+The old engine cannot decrypt its own zero-plaintext BASH-PRG-AE2561 result
+(tag-only payload). This does not limit Bee2 or the provider: zero-length BASH
+cases remain tested directly with Bee2, and only the failing legacy case is
+excluded from that matrix.
+
+BIGN interoperability checks cross-load private PKCS#8 keys, verify signatures
+in both directions, and verify CSRs and self-signed X.509 certificates using
+both implementations, including explicit curve parameters.
+
+The ASN.1 tests include exhaustive one-byte and single-bit mutation of valid
+BIGN PKCS#8/SPKI encodings and every shorter length. If a modified encoding
+still describes a valid key, the decoder's key invariants must hold; truncated
+and trailing DER must be rejected. Sanitizers exercise ordinary provider execution, including failed decoding
+of malformed named and explicit parameter encodings. They do not claim
+exhaustive out-of-memory path verification.
+
+## Test review: what is retained and what is not
+
+Retain normative STB KATs and key-expansion examples, independent Bee2
+comparisons, bidirectional bee2evp interoperability, all three BIGN key
+sizes, actual key import/encode/decode and signing, authentication failure,
+state machine transitions, atomically rejected caller-supplied parameters,
+short buffers, empty inputs, streaming/in-place operations, concurrency and
+provider library-context isolation.
+
+Do not add a test just to force a branch that cannot arise during real
+OpenSSL/provider use. The retired tests injected linker-level allocation,
+randomness and ASN.1 object failures or fabricated impossible Bee2 backend
+state sizes. Their associated allocation, cleanup and ABI-safety checks in
+production are **retained**. The redundant DER-header rejection harness was
+also retired; strict DER framing and malformed key decoding are already
+exercised by the existing BIGN DER and ASN.1 test suites.
+
+Uncovered input-dependent branches are not exempt from review just because
+they are errors: invalid tags, truncated data, unsupported parameter types,
+wrong key lengths and authentication failures must still be tested with
+real EVP or decoder calls. Only environmental failures are outside normal
+coverage-gate requirements.

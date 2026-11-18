@@ -32,8 +32,10 @@ of the underlying algorithms.
 - Interoperability with a pinned `bee2evp` engine is exercised in an
   independent GitHub Actions job. Its supported cipher, MAC and digest
   algorithms are checked with fixed boundary sizes and deterministic
-  pseudorandom buffers, including cross-decryption. Existing BIGN
-  certificate interoperability checks are included in that job.
+  pseudorandom buffers, including cross-decryption. Extended BIGN
+  certificate interoperability checks verify certificate signatures under both
+  implementations. A separate AEAD/KWP matrix covers the legacy wire format
+  for BELT-DWP, BELT-CHE, BELT-KWP and BASH-PRG-AE2561.
   The engine is a separate implementation interface over Bee2; it is
   not an independent cryptographic implementation.
 - The main build matrix does not cover Windows or macOS.
@@ -53,7 +55,7 @@ bee2evp share cryptographic implementation code.
 
 | Operation | STB known-answer evidence | Additional validation |
 | --- | --- | --- |
-| BELT ECB/CBC/CFB/CTR | 256-bit keys, STB 34.101.31 Appendix A; 128/192-bit key-expansion equivalence to the A.27 expanded key | Round-trips for all key lengths; bee2evp fixed/boundary/random inputs |
+| BELT ECB/CBC/CFB/CTR | 256-bit keys, STB 34.101.31 Appendix A, including ECB/CBC ciphertext stealing (A.9-2/A.10-2/A.11-2/A.12-2); 128/192-bit key-expansion equivalence to the A.27 expanded key | Round-trips for all key lengths; bee2evp fixed/boundary/random inputs |
 | BELT BDE/SDE | 256-bit keys, A.24 encryption and A.25 decryption | Round-trips for 128/192/256; no bee2evp counterpart |
 | BELT DWP/CHE | 256-bit keys, A.19-1/2 (ciphertext and authentication tag) | Round-trips and tag-rejection for all key lengths |
 | BELT KWP | 256-bit keys, A.21 encryption and A.22 decryption | Round-trips and tamper tests for all key lengths |

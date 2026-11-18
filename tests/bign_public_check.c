@@ -81,8 +81,10 @@ static int test_generated_key(const char *alg, const char *curve_name,
         OSSL_PARAM params[] = {
             OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
                                               (char *)groups[i], 0),
-            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
-                                               pub, pub_len),
+            OSSL_PARAM_construct_octet_string(
+                i == 2 ? OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY :
+                         OSSL_PKEY_PARAM_PUB_KEY,
+                pub, pub_len),
             /* A public-only import must not retain this private component. */
             OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
                                                priv, priv_len),
@@ -101,11 +103,39 @@ static int test_generated_key(const char *alg, const char *curve_name,
             CRYPTO_memcmp(recovered, pub, pub_len) != 0)
             goto end;
 
+        if (EVP_PKEY_eq(key, imported) != 1)
+            goto end;
         checkctx = EVP_PKEY_CTX_new_from_pkey(NULL, imported, "provider=bee2");
         if (checkctx == NULL || EVP_PKEY_public_check(checkctx) != 1)
             goto end;
         EVP_PKEY_CTX_free(checkctx);
         checkctx = NULL;
+    }
+    {
+        EVP_PKEY_CTX *generic_ctx = EVP_PKEY_CTX_new_from_name(
+            NULL, "bign", "provider=bee2");
+        EVP_PKEY *generic_key = NULL;
+        OSSL_PARAM params[] = {
+            OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
+                                              (char *)curve_name, 0),
+            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                               pub, pub_len),
+            OSSL_PARAM_END
+        };
+        int generic_ok = generic_ctx != NULL &&
+                         EVP_PKEY_fromdata_init(generic_ctx) == 1 &&
+                         EVP_PKEY_fromdata(generic_ctx, &generic_key,
+                                           EVP_PKEY_PUBLIC_KEY, params) == 1 &&
+                         EVP_PKEY_get_octet_string_param(generic_key,
+                                           OSSL_PKEY_PARAM_PUB_KEY,
+                                           recovered, sizeof(recovered),
+                                           &recovered_len) == 1 &&
+                         recovered_len == pub_len &&
+                         CRYPTO_memcmp(recovered, pub, pub_len) == 0;
+        EVP_PKEY_free(generic_key);
+        EVP_PKEY_CTX_free(generic_ctx);
+        if (!generic_ok)
+            goto end;
     }
     ok = 1;
 

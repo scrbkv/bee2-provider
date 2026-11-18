@@ -8,7 +8,7 @@ int bee2_secret_replace(unsigned char **destination,
                         size_t source_length) {
     unsigned char *replacement = NULL;
 
-    if (destination == NULL || destination_length == NULL || (source == NULL && source_length != 0))
+    if (source == NULL && source_length != 0)
         return 0;
 
     if (source_length != 0) {
@@ -23,10 +23,3 @@ int bee2_secret_replace(unsigned char **destination,
     return 1;
 }
 
-int bee2_constant_time_equal(const void *left, const void *right, size_t length) {
-    if (length == 0)
-        return 1;
-    if (left == NULL || right == NULL)
-        return 0;
-    return CRYPTO_memcmp(left, right, length) == 0;
-}

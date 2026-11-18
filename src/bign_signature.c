@@ -3,8 +3,10 @@
 #include "bign_common.h"
 #include "bign_asn1.h"
 
-#include <limits.h>
 #include <openssl/core_names.h>
+#include <bee2/crypto/bign128.h>
+#include <bee2/crypto/bign192.h>
+#include <bee2/crypto/bign256.h>
 
 #ifndef OSSL_SIGNATURE_PARAM_DETERMINISTIC
 #define OSSL_SIGNATURE_PARAM_DETERMINISTIC "deterministic"
@@ -58,8 +60,6 @@ static const OSSL_PARAM bee2_bign_sig_settable_ctx_params[] = {
 
 static int bign_str_copy(char *dst, size_t dst_size, const char *src) {
     size_t n;
-    if (!dst || dst_size == 0u)
-        return 0;
     if (!src) {
         dst[0] = '\0';
         return 1;
@@ -71,99 +71,108 @@ static int bign_str_copy(char *dst, size_t dst_size, const char *src) {
     return 1;
 }
 
-static const char *bign_sig_mdname_to_oid(const char *mdname) {
-    if (!mdname)
+typedef struct {
+    const char *name;
+    const char *signature_oid;
+    const char *hash_oid;
+} bign_sig_md_oid_t;
+
+static const bign_sig_md_oid_t bign_sig_md_oids[] = {
+    {"belt-hash", BEE2_OID_BIGN_WITH_HBELT, BEE2_OID_BELT_HASH},
+    {"bash256", BEE2_OID_BIGN_WITH_BASH256, BEE2_OID_BASH256},
+    {"bash384", BEE2_OID_BIGN_WITH_BASH384, BEE2_OID_BASH384},
+    {"bash512", BEE2_OID_BIGN_WITH_BASH512, BEE2_OID_BASH512}
+};
+
+static const bign_sig_md_oid_t *bign_sig_find_md(const char *name)
+{
+    size_t i;
+
+    if (name == NULL)
         return NULL;
-    if (OPENSSL_strcasecmp(mdname, "belt-hash") == 0)
-        return BEE2_OID_BIGN_WITH_HBELT;
-    if (OPENSSL_strcasecmp(mdname, "bash256") == 0)
-        return BEE2_OID_BIGN_WITH_BASH256;
-    if (OPENSSL_strcasecmp(mdname, "bash384") == 0)
-        return BEE2_OID_BIGN_WITH_BASH384;
-    if (OPENSSL_strcasecmp(mdname, "bash512") == 0)
-        return BEE2_OID_BIGN_WITH_BASH512;
+    for (i = 0; i < sizeof(bign_sig_md_oids) / sizeof(bign_sig_md_oids[0]); ++i)
+        if (OPENSSL_strcasecmp(name, bign_sig_md_oids[i].name) == 0)
+            return &bign_sig_md_oids[i];
     return NULL;
 }
 
-static const char *bign_sig_mdname_to_hash_oid(const char *mdname) {
-    if (!mdname)
-        return NULL;
-    if (OPENSSL_strcasecmp(mdname, "belt-hash") == 0)
-        return BEE2_OID_BELT_HASH;
-    if (OPENSSL_strcasecmp(mdname, "bash256") == 0)
-        return BEE2_OID_BASH256;
-    if (OPENSSL_strcasecmp(mdname, "bash384") == 0)
-        return BEE2_OID_BASH384;
-    if (OPENSSL_strcasecmp(mdname, "bash512") == 0)
-        return BEE2_OID_BASH512;
-    return NULL;
+static const char *bign_sig_mdname_to_oid(const char *name)
+{
+    const bign_sig_md_oid_t *info = bign_sig_find_md(name);
+    return info ? info->signature_oid : NULL;
+}
+
+static const char *bign_sig_mdname_to_hash_oid(const char *name)
+{
+    const bign_sig_md_oid_t *info = bign_sig_find_md(name);
+    return info ? info->hash_oid : NULL;
 }
 
 /* Bee2 signs the DER OID of the hash function, not of the signature scheme. */
 static const char *bign_sig_hash_oid(const bee2_bign_sig_ctx_t *ctx) {
-    if (!ctx)
-        return NULL;
-    if (ctx->hspec)
-        return ctx->md && ctx->hash_oid[0] != '\0' ? ctx->hash_oid : NULL;
-    if (ctx->hash_oid[0] != '\0')
-        return ctx->hash_oid;
+    const char *name;
+
+    /* bign_sig_set_md() resolves the hash OID together with the digest. */
     if (ctx->md)
-        return bign_sig_mdname_to_hash_oid(EVP_MD_get0_name(ctx->md));
-    if (ctx->mdname[0] != '\0')
-        return bign_sig_mdname_to_hash_oid(ctx->mdname);
-    if (ctx->fixed_digest)
-        return bign_sig_mdname_to_hash_oid(ctx->fixed_digest);
-    return ctx->variant ? bign_sig_mdname_to_hash_oid(ctx->variant->default_digest) : NULL;
+        return ctx->hash_oid[0] != '\0' ? ctx->hash_oid : NULL;
+    if (ctx->hspec)
+        return NULL;
+    name = ctx->fixed_digest ? ctx->fixed_digest :
+           (ctx->variant ? ctx->variant->default_digest : NULL);
+    return bign_sig_mdname_to_hash_oid(name);
+}
+
+/* The public fixed-curve APIs cache their curve and precomputation.
+ * Their signature functions hardcode the hash OID; use the generic API
+ * whenever that OID does not match the selected digest. */
+static int bign_sig_fixed_curve(const bee2_bign_sig_ctx_t *ctx,
+                                const char *hash_oid) {
+    if (ctx->variant == bee2_bign_variant_256() &&
+        strcmp(hash_oid, BEE2_OID_BELT_HASH) == 0)
+        return 1;
+    if (ctx->variant == bee2_bign_variant_384() &&
+        strcmp(hash_oid, BEE2_OID_BASH384) == 0)
+        return 2;
+    if (ctx->variant == bee2_bign_variant_512() &&
+        strcmp(hash_oid, BEE2_OID_BASH512) == 0)
+        return 3;
+    return 0;
 }
 
 static const char *bign_sig_md_to_oid(const bee2_bign_sig_ctx_t *ctx) {
-    if (!ctx)
-        return NULL;
     if (ctx->hspec)
         return BEE2_OID_BIGN_WITH_HSPEC;
     if (ctx->md) {
-        if (EVP_MD_is_a(ctx->md, "belt-hash"))
-            return BEE2_OID_BIGN_WITH_HBELT;
-        if (EVP_MD_is_a(ctx->md, "bash256"))
-            return BEE2_OID_BIGN_WITH_BASH256;
-        if (EVP_MD_is_a(ctx->md, "bash384"))
-            return BEE2_OID_BIGN_WITH_BASH384;
-        if (EVP_MD_is_a(ctx->md, "bash512"))
-            return BEE2_OID_BIGN_WITH_BASH512;
+        size_t i;
+
+        for (i = 0; i < sizeof(bign_sig_md_oids) / sizeof(bign_sig_md_oids[0]); ++i)
+            if (EVP_MD_is_a(ctx->md, bign_sig_md_oids[i].name))
+                return bign_sig_md_oids[i].signature_oid;
         /* An identified, externally selected digest is bign-with-hspec. */
         return ctx->hash_oid[0] != '\0' ? BEE2_OID_BIGN_WITH_HSPEC : NULL;
     }
-    if (ctx->mdname[0] != '\0')
-        return bign_sig_mdname_to_oid(ctx->mdname);
-    if (ctx->fixed_digest)
-        return bign_sig_mdname_to_oid(ctx->fixed_digest);
-    if (ctx->variant && ctx->variant->default_digest)
-        return bign_sig_mdname_to_oid(ctx->variant->default_digest);
-    return NULL;
+    return bign_sig_mdname_to_oid(ctx->fixed_digest ? ctx->fixed_digest :
+           (ctx->variant ? ctx->variant->default_digest : NULL));
 }
 
 static int bign_sig_update_algid(bee2_bign_sig_ctx_t *ctx) {
-    const char *oid;
+    const char *oid, *hash_oid;
 
-    if (!ctx)
-        return 0;
     ctx->aid_len = 0;
-    if (ctx->hspec && (ctx->md == NULL || ctx->hash_oid[0] == '\0'))
-        return 0;
     oid = bign_sig_md_to_oid(ctx);
     if (!oid)
         return 0;
-    return bee2_bign_asn1_build_algid(oid,
-                                strcmp(oid, BEE2_OID_BIGN_WITH_HSPEC) == 0
-                                    ? bign_sig_hash_oid(ctx) : NULL,
-                                ctx->aid_buf, sizeof(ctx->aid_buf), &ctx->aid_len);
+    hash_oid = strcmp(oid, BEE2_OID_BIGN_WITH_HSPEC) == 0
+                   ? bign_sig_hash_oid(ctx) : NULL;
+    if (ctx->hspec && hash_oid == NULL)
+        return 0;
+    return bee2_bign_asn1_build_algid(oid, hash_oid,
+                                      ctx->aid_buf, sizeof(ctx->aid_buf), &ctx->aid_len);
 }
 
 static void bign_sig_reset_md(bee2_bign_sig_ctx_t *ctx, int keep_algorithm) {
-    if (ctx->mdctx) {
-        EVP_MD_CTX_free(ctx->mdctx);
-        ctx->mdctx = NULL;
-    }
+    EVP_MD_CTX_free(ctx->mdctx);
+    ctx->mdctx = NULL;
     if (!keep_algorithm) {
         EVP_MD_free(ctx->md);
         ctx->md = NULL;
@@ -179,8 +188,6 @@ static int bign_sig_set_md(bee2_bign_sig_ctx_t *ctx, const char *mdname, const c
     bee2_bign_sig_ctx_t candidate;
     const char *properties;
 
-    if (ctx == NULL)
-        return 0;
     if (mdname == NULL || mdname[0] == '\0') {
         if (ctx->fixed_digest)
             return 0;
@@ -235,7 +242,7 @@ static int bign_sig_assign_key(bee2_bign_sig_ctx_t *ctx, void *vkey, int for_sig
     bee2_bign_key_t *key = vkey;
     const bee2_bign_variant_t *variant;
 
-    if (!ctx || !key)
+    if (!key)
         return 0;
     variant = ctx->variant ? ctx->variant : key->variant;
     if (!variant || key->variant != variant)
@@ -261,7 +268,7 @@ static int bign_sig_hash_oneshot(const EVP_MD *md,
                                  size_t *outlen) {
     unsigned int mdlen = 0;
 
-    if (!md || !out || !outlen || (inlen != 0 && in == NULL) ||
+    if ((inlen != 0 && in == NULL) ||
         !EVP_Digest(in, inlen, out, &mdlen, md, NULL))
         return 0;
     *outlen = (size_t)mdlen;
@@ -269,61 +276,61 @@ static int bign_sig_hash_oneshot(const EVP_MD *md,
 }
 
 static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
-                              unsigned char *sig,
-                              size_t *siglen,
-                              size_t sigsize,
-                              const unsigned char *hash,
-                              size_t hashlen) {
+                              unsigned char *sig, size_t *siglen, size_t sigsize,
+                              const unsigned char *hash, size_t hashlen) {
     bign_params curve;
     bee2_bign_rng_t rng = {0};
-    size_t priv_len;
     size_t need_sig_len;
     const char *hash_oid;
     unsigned char oid_der[32];
     size_t oid_der_len = sizeof(oid_der);
+    err_t code = ERR_BAD_PARAMS;
     int ok = 0;
 
-    if (!ctx || !ctx->key || !ctx->key->has_priv || !siglen || !hash)
+    if (!ctx->key || !ctx->key->has_priv || !siglen || !hash)
         return 0;
-    if (hashlen > ULONG_MAX)
-        return 0;
-
     need_sig_len = bee2_bign_sig_len(ctx->variant);
     if (!sig) {
         *siglen = need_sig_len;
         return 1;
     }
-    if (sigsize < need_sig_len)
+    if (sigsize < need_sig_len || hashlen != bee2_bign_priv_len(ctx->variant))
         return 0;
 
+    hash_oid = bign_sig_hash_oid(ctx);
+    if (!hash_oid)
+        return 0;
     rng.libctx = ctx->libctx;
     OPENSSL_cleanse(&curve, sizeof(curve));
-    priv_len = bee2_bign_priv_len(ctx->variant);
-
-    if (hashlen != priv_len)
-        goto cleanup;
-    hash_oid = bign_sig_hash_oid(ctx);
-    if (!hash_oid || bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK)
-        goto cleanup;
-
-    if (!bee2_bign_curve_init_std(ctx->variant, &curve))
-        goto cleanup;
-    if (ctx->deterministic) {
-        if (bignSign2(sig, &curve, oid_der, oid_der_len, hash, ctx->key->priv, NULL, 0) != ERR_OK)
+    switch (bign_sig_fixed_curve(ctx, hash_oid)) {
+    case 1:
+        code = ctx->deterministic ?
+            bign128Sign2(sig, hash, ctx->key->priv, NULL, 0) :
+            bign128Sign(sig, hash, ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
+    case 2:
+        code = ctx->deterministic ?
+            bign192Sign2(sig, hash, ctx->key->priv, NULL, 0) :
+            bign192Sign(sig, hash, ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
+    case 3:
+        code = ctx->deterministic ?
+            bign256Sign2(sig, hash, ctx->key->priv, NULL, 0) :
+            bign256Sign(sig, hash, ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
+    default:
+        if (bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK ||
+            !bee2_bign_curve_init_std(ctx->variant, &curve))
             goto cleanup;
-    } else {
-        if (bignSign(sig,
-                     &curve,
-                     oid_der,
-                     oid_der_len,
-                     hash,
-                     ctx->key->priv,
-                     (gen_i)bee2_bign_openssl_rng,
-                     &rng) != ERR_OK ||
-            rng.failed)
-            goto cleanup;
+        code = ctx->deterministic ?
+            bignSign2(sig, &curve, oid_der, oid_der_len, hash,
+                      ctx->key->priv, NULL, 0) :
+            bignSign(sig, &curve, oid_der, oid_der_len, hash,
+                     ctx->key->priv, bee2_bign_openssl_rng, &rng);
+        break;
     }
-
+    if (code != ERR_OK || rng.failed)
+        goto cleanup;
     *siglen = need_sig_len;
     ok = 1;
 
@@ -333,40 +340,48 @@ cleanup:
 }
 
 static int bign_sig_verify_hash(const bee2_bign_sig_ctx_t *ctx,
-                                const unsigned char *sig,
-                                size_t siglen,
-                                const unsigned char *hash,
-                                size_t hashlen) {
+                                const unsigned char *sig, size_t siglen,
+                                const unsigned char *hash, size_t hashlen) {
     bign_params curve;
     const char *hash_oid;
     unsigned char oid_der[32];
     size_t oid_der_len = sizeof(oid_der);
-    int ok = 0;
+    err_t code = ERR_BAD_PARAMS;
 
-    if (!ctx || !ctx->key || !ctx->key->has_pub || !sig || !hash)
+    if (!ctx->key || !ctx->key->has_pub || !sig || !hash)
         return 0;
-    if (siglen != bee2_bign_sig_len(ctx->variant))
-        return 0;
-    if (hashlen > ULONG_MAX)
-        return 0;
-    if (hashlen != bee2_bign_priv_len(ctx->variant))
+    if (siglen != bee2_bign_sig_len(ctx->variant) ||
+        hashlen != bee2_bign_priv_len(ctx->variant))
         return 0;
     hash_oid = bign_sig_hash_oid(ctx);
-    if (!hash_oid || bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK)
+    if (!hash_oid)
         return 0;
 
     OPENSSL_cleanse(&curve, sizeof(curve));
-    if (!bee2_bign_curve_init_std(ctx->variant, &curve))
-        goto cleanup;
-    ok = (bignVerify(&curve, oid_der, oid_der_len, hash, sig, ctx->key->pub) == ERR_OK);
-
-cleanup:
+    switch (bign_sig_fixed_curve(ctx, hash_oid)) {
+    case 1:
+        code = bign128Verify(hash, sig, ctx->key->pub);
+        break;
+    case 2:
+        code = bign192Verify(hash, sig, ctx->key->pub);
+        break;
+    case 3:
+        code = bign256Verify(hash, sig, ctx->key->pub);
+        break;
+    default:
+        if (bignOidToDER(oid_der, &oid_der_len, hash_oid) != ERR_OK ||
+            !bee2_bign_curve_init_std(ctx->variant, &curve))
+            break;
+        code = bignVerify(&curve, oid_der, oid_der_len, hash,
+                          sig, ctx->key->pub);
+        break;
+    }
     bee2_bign_cleanse(&curve, sizeof(curve));
-    return ok;
+    return code == ERR_OK;
 }
 
 static int bign_sig_reset_mdctx(bee2_bign_sig_ctx_t *ctx) {
-    if (!ctx || !ctx->md)
+    if (!ctx->md)
         return 0;
     if (!ctx->mdctx) {
         ctx->mdctx = EVP_MD_CTX_new();
@@ -434,48 +449,24 @@ static void bign_sig_freectx(void *vctx) {
     OPENSSL_clear_free(ctx, sizeof(*ctx));
 }
 
-/* Init copies configuration without duplicating the unfinished digest. */
-static void *bign_sig_copyctx(void *vctx, int copy_digest_state) {
-    bee2_bign_sig_ctx_t *src = vctx;
-    bee2_bign_sig_ctx_t *dst;
+/* Duplication is needed only when OpenSSL explicitly copies an EVP context.
+ * The hash state belongs to EVP, while a BIGN sign itself is a single Bee2 call. */
+static void *bign_sig_dupctx(void *vctx) {
+    const bee2_bign_sig_ctx_t *src = vctx;
+    bee2_bign_sig_ctx_t *dst = OPENSSL_memdup(src, sizeof(*src));
 
-    if (!src)
-        return NULL;
-    dst = OPENSSL_zalloc(sizeof(*dst));
     if (!dst)
         return NULL;
-
-    dst->libctx = src->libctx;
-    dst->variant = src->variant;
-    dst->fixed_digest = src->fixed_digest;
-    dst->key = src->key;
-    dst->mode = src->mode;
-    dst->deterministic = src->deterministic;
-    dst->hspec = src->hspec;
-    memcpy(dst->hash_oid, src->hash_oid, sizeof(dst->hash_oid));
-    dst->md_started = copy_digest_state ? src->md_started : 0;
-    memcpy(dst->propq, src->propq, sizeof(dst->propq));
-    if (!bign_str_copy(dst->mdname, sizeof(dst->mdname), src->mdname))
-        goto err;
-    if (!bign_str_copy(dst->mdprops, sizeof(dst->mdprops), src->mdprops))
-        goto err;
-    dst->aid_len = src->aid_len;
-    if (dst->aid_len > sizeof(dst->aid_buf))
-        goto err;
-    if (dst->aid_len > 0)
-        memcpy(dst->aid_buf, src->aid_buf, dst->aid_len);
-
+    dst->md = NULL;
+    dst->mdctx = NULL;
     if (src->md) {
         if (!EVP_MD_up_ref(src->md))
             goto err;
         dst->md = src->md;
     }
-
-    if (copy_digest_state && src->mdctx) {
+    if (src->mdctx) {
         dst->mdctx = EVP_MD_CTX_new();
-        if (!dst->mdctx)
-            goto err;
-        if (!EVP_MD_CTX_copy_ex(dst->mdctx, src->mdctx))
+        if (!dst->mdctx || !EVP_MD_CTX_copy_ex(dst->mdctx, src->mdctx))
             goto err;
     }
     return dst;
@@ -485,47 +476,43 @@ err:
     return NULL;
 }
 
-static void *bign_sig_dupctx(void *vctx) {
-    return bign_sig_copyctx(vctx, 1);
-}
-
+/* Init is transactional, but does not allocate an extra signature context.
+ * Stream hashing is initialized lazily at its first nonempty Update. */
 static int bign_sig_begin(bee2_bign_sig_ctx_t *ctx, const char *mdname,
                           void *vkey, const OSSL_PARAM params[],
                           int for_sign, int digest_operation) {
-    bee2_bign_sig_ctx_t *next;
+    bee2_bign_sig_ctx_t next = *ctx;
 
-    if (!ctx)
-        return 0;
-    next = bign_sig_copyctx(ctx, 0);
-    if (next == NULL)
+    next.md = NULL;
+    next.mdctx = NULL;
+    if (ctx->md) {
+        if (!EVP_MD_up_ref(ctx->md))
+            goto err;
+        next.md = ctx->md;
+    }
+    if (!bign_sig_assign_key(&next, vkey, for_sign) ||
+        (params != NULL && !bign_sig_set_ctx_params(&next, params)))
         goto err;
-    if (!bign_sig_assign_key(next, vkey, for_sign) ||
-        (params != NULL && !bign_sig_set_ctx_params(next, params)))
-        goto err_next;
     if (digest_operation) {
         if (mdname && mdname[0] != '\0') {
-            if (!bign_sig_set_md(next, mdname, next->mdprops))
-                goto err_next;
-        } else if (!next->md) {
+            if (!bign_sig_set_md(&next, mdname, next.mdprops))
+                goto err;
+        } else if (!next.md) {
             const char *digest;
 
-            if (next->hspec)
-                goto err_next;
-            digest = next->fixed_digest ? next->fixed_digest : next->variant->default_digest;
-            if (!bign_sig_set_md(next, digest, NULL))
-                goto err_next;
+            if (next.hspec)
+                goto err;
+            digest = next.fixed_digest ? next.fixed_digest : next.variant->default_digest;
+            if (!bign_sig_set_md(&next, digest, NULL))
+                goto err;
         }
-        if (!bign_sig_reset_mdctx(next))
-            goto err_next;
     }
     bign_sig_reset_md(ctx, 0);
-    *ctx = *next;
-    OPENSSL_clear_free(next, sizeof(*next));
+    *ctx = next;
     return 1;
 
-err_next:
-    bign_sig_freectx(next);
 err:
+    bign_sig_reset_md(&next, 0);
     ctx->mode = BEE2_BIGN_SIG_IDLE;
     return 0;
 }
@@ -546,7 +533,7 @@ static int bign_sig_sign(void *vctx,
                          size_t tbslen) {
     bee2_bign_sig_ctx_t *ctx = vctx;
 
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN)
+    if (ctx->mode != BEE2_BIGN_SIG_SIGN)
         return 0;
     return bign_sig_sign_hash(ctx, sig, siglen, sigsize, tbs, tbslen);
 }
@@ -555,7 +542,7 @@ static int bign_sig_verify(
     void *vctx, const unsigned char *sig, size_t siglen, const unsigned char *tbs, size_t tbslen) {
     bee2_bign_sig_ctx_t *ctx = vctx;
 
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY)
+    if (ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
     return bign_sig_verify_hash(ctx, sig, siglen, tbs, tbslen);
 }
@@ -574,10 +561,12 @@ static int bign_sig_digest_update(void *vctx, const unsigned char *data,
                                   size_t datalen, bee2_bign_sig_mode_t mode) {
     bee2_bign_sig_ctx_t *ctx = vctx;
 
-    if (!ctx || ctx->mode != mode || !ctx->mdctx)
+    if (ctx->mode != mode)
         return 0;
     if (datalen == 0)
         return 1;
+    if (!ctx->mdctx && !bign_sig_reset_mdctx(ctx))
+        return 0;
     if (!EVP_DigestUpdate(ctx->mdctx, data, datalen))
         return 0;
     ctx->md_started = 1;
@@ -612,13 +601,14 @@ bign_sig_digest_sign_final(void *vctx, unsigned char *sig, size_t *siglen, size_
     unsigned int md_len = 0;
     int ok;
 
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN || !ctx->mdctx || !siglen)
+    if (ctx->mode != BEE2_BIGN_SIG_SIGN || !siglen)
         return 0;
     if (!sig) {
         *siglen = bee2_bign_sig_len(ctx->variant);
         return 1;
     }
-    ok = bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len);
+    ok = ctx->mdctx ? bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len) :
+                      EVP_Digest("", 0, md_buf, &md_len, ctx->md, NULL);
     if (ok)
         ok = bign_sig_sign_hash(ctx, sig, siglen, sigsize, md_buf, (size_t)md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));
@@ -631,9 +621,10 @@ static int bign_sig_digest_verify_final(void *vctx, const unsigned char *sig, si
     unsigned int md_len = 0;
     int ok;
 
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY || !ctx->mdctx)
+    if (ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
-    ok = bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len);
+    ok = ctx->mdctx ? bign_sig_digest_final_hash(ctx->mdctx, md_buf, &md_len) :
+                      EVP_Digest("", 0, md_buf, &md_len, ctx->md, NULL);
     if (ok)
         ok = bign_sig_verify_hash(ctx, sig, siglen, md_buf, (size_t)md_len);
     bee2_bign_cleanse(md_buf, sizeof(md_buf));
@@ -663,7 +654,7 @@ static int bign_sig_digest_sign(void *vctx,
     size_t md_len = 0;
     int ok;
 
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_SIGN)
+    if (ctx->mode != BEE2_BIGN_SIG_SIGN)
         return 0;
     if (!bign_sig_digest_oneshot_hash(ctx, tbs, tbslen, md_buf, &md_len))
         return 0;
@@ -679,7 +670,7 @@ static int bign_sig_digest_verify(
     size_t md_len = 0;
     int ok;
 
-    if (!ctx || ctx->mode != BEE2_BIGN_SIG_VERIFY)
+    if (ctx->mode != BEE2_BIGN_SIG_VERIFY)
         return 0;
     if (!bign_sig_digest_oneshot_hash(ctx, tbs, tbslen, md_buf, &md_len))
         return 0;
@@ -698,8 +689,6 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     unsigned int new_deterministic;
     int ok = 1;
 
-    if (!ctx)
-        return 0;
     if (!params)
         return 1;
     new_deterministic = ctx->deterministic;
@@ -774,10 +763,8 @@ static const OSSL_PARAM *bign_sig_settable_ctx_params(void *vctx, void *provctx)
 static int bign_sig_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     bee2_bign_sig_ctx_t *ctx = vctx;
     OSSL_PARAM *p;
-    int md_size;
 
-    if (!ctx)
-        return 0;
+
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID);
     if (p) {
@@ -796,10 +783,10 @@ static int bign_sig_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_DIGEST_SIZE);
     if (p && (ctx->md || ctx->fixed_digest)) {
-        md_size = ctx->md ? EVP_MD_get_size(ctx->md) : (int)bee2_bign_priv_len(ctx->variant);
-        if (md_size <= 0)
-            return 0;
-        if (!OSSL_PARAM_set_size_t(p, (size_t)md_size))
+        size_t md_size = ctx->md ? (size_t)EVP_MD_get_size(ctx->md) :
+                                       bee2_bign_priv_len(ctx->variant);
+
+        if (!OSSL_PARAM_set_size_t(p, md_size))
             return 0;
     }
 

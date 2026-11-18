@@ -28,12 +28,25 @@ static int roundtrip(EVP_PKEY_CTX *encrypt, EVP_PKEY_CTX *decrypt,
     unsigned char ciphertext[512], recovered[512];
     size_t ciphertext_len = 0;
     size_t recovered_len = sizeof(recovered);
+    size_t needed = 0;
     int ok = 0;
 
-    if (EVP_PKEY_encrypt(encrypt, NULL, &ciphertext_len, plaintext, length) <= 0 ||
+    /* libcrypto passes a null outlen to provider callbacks for size queries. */
+    if (EVP_PKEY_encrypt(encrypt, NULL, NULL, plaintext, length) > 0 ||
+        EVP_PKEY_encrypt(encrypt, NULL, &ciphertext_len, plaintext, length) <= 0 ||
         ciphertext_len > sizeof(ciphertext) ||
-        EVP_PKEY_encrypt(encrypt, ciphertext, &ciphertext_len, plaintext, length) <= 0 ||
-        EVP_PKEY_decrypt(decrypt, recovered, &recovered_len,
+        EVP_PKEY_encrypt(encrypt, ciphertext, &ciphertext_len, plaintext, length) <= 0)
+        goto end;
+    if (EVP_PKEY_decrypt(decrypt, NULL, NULL, ciphertext, ciphertext_len) > 0 ||
+        EVP_PKEY_decrypt(decrypt, NULL, &needed, ciphertext, ciphertext_len) <= 0 ||
+        needed != length)
+        goto end;
+    recovered_len = length - 1;
+    if (EVP_PKEY_decrypt(decrypt, recovered, &recovered_len,
+                         ciphertext, ciphertext_len) > 0)
+        goto end;
+    recovered_len = sizeof(recovered);
+    if (EVP_PKEY_decrypt(decrypt, recovered, &recovered_len,
                          ciphertext, ciphertext_len) <= 0 ||
         recovered_len != length ||
         CRYPTO_memcmp(recovered, plaintext, length) != 0)
@@ -89,6 +102,7 @@ static int check_header(EVP_PKEY *key)
     };
     static const unsigned char plaintext[] = "BIGN key transport header";
     EVP_PKEY_CTX *encrypt = NULL, *wrong_decrypt = NULL, *decrypt = NULL;
+    EVP_PKEY_CTX *copy = NULL;
     unsigned char ciphertext[512], recovered[sizeof(plaintext)];
     unsigned char returned_header[16];
     size_t ciphertext_len = 0, recovered_len;
@@ -104,6 +118,16 @@ static int check_header(EVP_PKEY *key)
         !set_header(encrypt, header_a, sizeof(header_a)) ||
         !set_header(wrong_decrypt, header_b, sizeof(header_b)) ||
         !set_header(decrypt, header_a, sizeof(header_a)) ||
+        !get_header(encrypt, returned_header) ||
+        CRYPTO_memcmp(returned_header, header_a, sizeof(header_a)) != 0)
+        goto end;
+
+    /* Duplicating an initialized context must retain its header, but the
+     * copy and original must be independently mutable. */
+    copy = EVP_PKEY_CTX_dup(encrypt);
+    if (copy == NULL || !get_header(copy, returned_header) ||
+        CRYPTO_memcmp(returned_header, header_a, sizeof(header_a)) != 0 ||
+        !set_header(copy, header_b, sizeof(header_b)) ||
         !get_header(encrypt, returned_header) ||
         CRYPTO_memcmp(returned_header, header_a, sizeof(header_a)) != 0)
         goto end;
@@ -138,6 +162,7 @@ static int check_header(EVP_PKEY *key)
 end:
     if (!ok)
         fprintf(stderr, "BIGN key transport header test failed\n");
+    EVP_PKEY_CTX_free(copy);
     EVP_PKEY_CTX_free(encrypt);
     EVP_PKEY_CTX_free(wrong_decrypt);
     EVP_PKEY_CTX_free(decrypt);

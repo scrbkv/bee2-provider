@@ -20,15 +20,10 @@ static void *bign_keytransport_newctx(void *provctx) {
 }
 
 static void bign_keytransport_freectx(void *vctx) {
-    bee2_bign_keytransport_ctx_t *ctx = vctx;
-    if (!ctx)
-        return;
-    OPENSSL_clear_free(ctx, sizeof(*ctx));
+    OPENSSL_clear_free(vctx, sizeof(bee2_bign_keytransport_ctx_t));
 }
 
 static void *bign_keytransport_dupctx(void *vctx) {
-    if (!vctx)
-        return NULL;
     bee2_bign_keytransport_ctx_t *copy = OPENSSL_malloc(sizeof(*copy));
     if (copy)
         memcpy(copy, vctx, sizeof(*copy));
@@ -61,8 +56,6 @@ static int bign_keytransport_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     OSSL_PARAM *param;
 
-    if (ctx == NULL)
-        return 0;
     param = OSSL_PARAM_locate(params, BEE2_BIGN_KEYTRANSPORT_PARAM_HEADER);
     if (param != NULL &&
         !OSSL_PARAM_set_octet_string(param, ctx->header, sizeof(ctx->header)))
@@ -76,8 +69,6 @@ static int bign_keytransport_set_ctx_params(void *vctx, const OSSL_PARAM params[
     const void *header;
     size_t header_len;
 
-    if (ctx == NULL)
-        return 0;
     if (params == NULL)
         return 1;
 
@@ -92,34 +83,28 @@ static int bign_keytransport_set_ctx_params(void *vctx, const OSSL_PARAM params[
     return 1;
 }
 
-static int bign_keytransport_encrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
+static int bign_keytransport_init(void *vctx, void *vkey,
+                                  const OSSL_PARAM params[], int encrypt) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
-    if (!ctx)
-        return 0;
+
     ctx->key = NULL;
     ctx->encrypt = 0;
-    if (!key || !key->variant || !key->has_pub ||
+    if (!key || !key->variant ||
+        (encrypt ? !key->has_pub : !key->has_priv) ||
         !bign_keytransport_set_ctx_params(ctx, params))
         return 0;
     ctx->key = key;
-    ctx->encrypt = 1;
+    ctx->encrypt = encrypt;
     return 1;
 }
 
+static int bign_keytransport_encrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
+    return bign_keytransport_init(vctx, vkey, params, 1);
+}
+
 static int bign_keytransport_decrypt_init(void *vctx, void *vkey, const OSSL_PARAM params[]) {
-    bee2_bign_keytransport_ctx_t *ctx = vctx;
-    bee2_bign_key_t *key = vkey;
-    if (!ctx)
-        return 0;
-    ctx->key = NULL;
-    ctx->encrypt = 0;
-    if (!key || !key->variant || !key->has_priv ||
-        !bign_keytransport_set_ctx_params(ctx, params))
-        return 0;
-    ctx->key = key;
-    ctx->encrypt = 0;
-    return 1;
+    return bign_keytransport_init(vctx, vkey, params, 0);
 }
 
 static int bign_keytransport_encrypt(void *vctx,
@@ -129,11 +114,10 @@ static int bign_keytransport_encrypt(void *vctx,
                                      const unsigned char *in,
                                      size_t inlen) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
-    bign_params curve;
     bee2_bign_rng_t rng = {0};
     size_t need;
     int ok = 0;
-    if (!ctx || !ctx->encrypt || !ctx->key || !outlen || !in || inlen < 16)
+    if (!ctx->encrypt || !ctx->key || !outlen || !in || inlen < 16)
         return 0;
     need = bee2_bign_priv_len(ctx->key->variant) + 16u;
     if (inlen > SIZE_MAX - need)
@@ -146,12 +130,8 @@ static int bign_keytransport_encrypt(void *vctx,
     if (outsize < need)
         return 0;
     rng.libctx = ctx->libctx;
-    if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
-        goto cleanup;
-    if (bignKeyWrap(out, &curve, in, inlen, ctx->header, ctx->key->pub,
-                    bee2_bign_openssl_rng, &rng) !=
-            ERR_OK ||
-        rng.failed)
+    if (!bee2_bign_key_wrap(ctx->key->variant, out, in, inlen,
+                            ctx->header, ctx->key->pub, &rng) || rng.failed)
         goto cleanup;
     *outlen = need;
     ok = 1;
@@ -159,7 +139,6 @@ static int bign_keytransport_encrypt(void *vctx,
 cleanup:
     if (!ok)
         bee2_bign_cleanse(out, need);
-    bee2_bign_cleanse(&curve, sizeof(curve));
     return ok;
 }
 
@@ -170,11 +149,10 @@ static int bign_keytransport_decrypt(void *vctx,
                                      const unsigned char *in,
                                      size_t inlen) {
     bee2_bign_keytransport_ctx_t *ctx = vctx;
-    bign_params curve;
     size_t overhead;
     size_t need;
     int ok = 0;
-    if (!ctx || ctx->encrypt || !ctx->key || !outlen || !in)
+    if (ctx->encrypt || !ctx->key || !outlen || !in)
         return 0;
     overhead = bee2_bign_priv_len(ctx->key->variant) + 16u;
     if (inlen < overhead + 16u)
@@ -186,9 +164,8 @@ static int bign_keytransport_decrypt(void *vctx,
     }
     if (outsize < need)
         return 0;
-    if (!bee2_bign_curve_init_std(ctx->key->variant, &curve))
-        goto cleanup;
-    if (bignKeyUnwrap(out, &curve, in, inlen, ctx->header, ctx->key->priv) != ERR_OK)
+    if (!bee2_bign_key_unwrap(ctx->key->variant, out, in, inlen,
+                              ctx->header, ctx->key->priv))
         goto cleanup;
     *outlen = need;
     ok = 1;
@@ -196,7 +173,6 @@ static int bign_keytransport_decrypt(void *vctx,
 cleanup:
     if (!ok)
         bee2_bign_cleanse(out, need);
-    bee2_bign_cleanse(&curve, sizeof(curve));
     return ok;
 }
 

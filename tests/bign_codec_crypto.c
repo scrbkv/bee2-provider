@@ -8,6 +8,9 @@
 #include <openssl/encoder.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/kdf.h>
+#include <openssl/core_names.h>
+#include <stdint.h>
 #include <openssl/provider.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
@@ -282,6 +285,306 @@ cleanup:
     return ok;
 }
 
+
+/* Exercise structurally valid PBES2 mutations through the public decoder.
+ * keyLength is optional; KWP parameters may be absent or ASN.1 NULL. */
+static int set_test_alg(X509_ALGOR *algorithm, const char *oid, int type, void *value)
+{
+    ASN1_OBJECT *object = OBJ_txt2obj(oid, 1);
+
+    if (object == NULL)
+        return 0;
+    if (!X509_ALGOR_set0(algorithm, object, type, value)) {
+        ASN1_OBJECT_free(object);
+        return 0;
+    }
+    return 1;
+}
+
+static int check_pbes2_variants(const BUF_MEM *data, EVP_PKEY *key)
+{
+    enum { BAD_ITER, BAD_SALT, BAD_KEYLEN, BAD_PRF, BAD_KDF, NO_PRF,
+           NO_KEYLEN, NULL_KWP, BAD_KWP, COUNT };
+    static const char *const cases[] = {
+        "iterations", "salt", "keyLength", "PRF", "KDF", "missing PRF",
+        "missing keyLength", "NULL KWP parameters", "bad KWP parameters"
+    };
+    int variation;
+
+    if (data->length > LONG_MAX)
+        return 0;
+    for (variation = 0; variation < COUNT; ++variation) {
+        const unsigned char *p = (const unsigned char *)data->data;
+        const ASN1_OBJECT *oid = NULL;
+        const void *value = NULL;
+        X509_SIG *encrypted = NULL;
+        X509_ALGOR *outer = NULL;
+        ASN1_OCTET_STRING *ciphertext = NULL;
+        PBE2PARAM *pbes2 = NULL;
+        PBKDF2PARAM *pbkdf2 = NULL;
+        ASN1_STRING *kdf_der = NULL, *pbe_der = NULL;
+        EVP_PKEY *decoded = NULL;
+        BUF_MEM candidate = {0};
+        unsigned char *der = NULL;
+        char cipher_oid[96];
+        int type = 0, der_len = 0, ok = 0;
+        int expected = variation == NO_KEYLEN || variation == NULL_KWP;
+
+        encrypted = d2i_X509_SIG(NULL, &p, (long)data->length);
+        if (encrypted == NULL || p != (const unsigned char *)data->data + data->length)
+            goto next;
+        X509_SIG_getm(encrypted, &outer, &ciphertext);
+        X509_ALGOR_get0(&oid, &type, &value, outer);
+        if (type != V_ASN1_SEQUENCE || value == NULL)
+            goto next;
+        pbes2 = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
+        if (pbes2 == NULL)
+            goto next;
+        X509_ALGOR_get0(&oid, &type, &value, pbes2->encryption);
+        if (OBJ_obj2txt(cipher_oid, sizeof(cipher_oid), oid, 1) <= 0)
+            goto next;
+        X509_ALGOR_get0(&oid, &type, &value, pbes2->keyfunc);
+        if (type != V_ASN1_SEQUENCE || value == NULL)
+            goto next;
+        pbkdf2 = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
+        if (pbkdf2 == NULL)
+            goto next;
+        switch (variation) {
+        case BAD_ITER:
+            if (!ASN1_INTEGER_set(pbkdf2->iter, 1))
+                goto next;
+            break;
+        case BAD_SALT:
+            if (!ASN1_OCTET_STRING_set(pbkdf2->salt->value.octet_string,
+                                       (const unsigned char *)"bad", 3))
+                goto next;
+            break;
+        case BAD_KEYLEN:
+            if (pbkdf2->keylength == NULL ||
+                !ASN1_INTEGER_set(pbkdf2->keylength, 15))
+                goto next;
+            break;
+        case BAD_PRF:
+            if (!set_test_alg(pbkdf2->prf, "1.2.840.113549.2.9", V_ASN1_NULL, NULL))
+                goto next;
+            break;
+        case NO_PRF:
+            X509_ALGOR_free(pbkdf2->prf);
+            pbkdf2->prf = NULL;
+            break;
+        case NO_KEYLEN:
+            ASN1_INTEGER_free(pbkdf2->keylength);
+            pbkdf2->keylength = NULL;
+            break;
+        case NULL_KWP:
+            if (!set_test_alg(pbes2->encryption, cipher_oid, V_ASN1_NULL, NULL))
+                goto next;
+            break;
+        case BAD_KWP: {
+            ASN1_OCTET_STRING *invalid = ASN1_OCTET_STRING_new();
+
+            if (invalid == NULL)
+                goto next;
+            if (!ASN1_OCTET_STRING_set(invalid, (const unsigned char *)"bad", 3) ||
+                !set_test_alg(pbes2->encryption, cipher_oid,
+                              V_ASN1_OCTET_STRING, invalid)) {
+                ASN1_OCTET_STRING_free(invalid);
+                goto next;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+        kdf_der = ASN1_item_pack(pbkdf2, ASN1_ITEM_rptr(PBKDF2PARAM), NULL);
+        if (kdf_der == NULL ||
+            !set_test_alg(pbes2->keyfunc,
+                          variation == BAD_KDF ? "1.2.840.113549.2.9" :
+                                                 "1.2.840.113549.1.5.12",
+                          V_ASN1_SEQUENCE, kdf_der))
+            goto next;
+        kdf_der = NULL;
+        pbe_der = ASN1_item_pack(pbes2, ASN1_ITEM_rptr(PBE2PARAM), NULL);
+        if (pbe_der == NULL ||
+            !set_test_alg(outer, "1.2.840.113549.1.5.13", V_ASN1_SEQUENCE, pbe_der))
+            goto next;
+        pbe_der = NULL;
+        der_len = i2d_X509_SIG(encrypted, &der);
+        if (der_len <= 0 || der == NULL)
+            goto next;
+        candidate.data = (char *)der;
+        candidate.length = (size_t)der_len;
+        {
+            int accepted = decode_key(&decoded, "DER", &candidate,
+                                      password, sizeof(password) - 1) && decoded != NULL;
+
+            if (accepted != expected || (accepted && !same_private_key(key, decoded)))
+                goto next;
+        }
+        ok = 1;
+next:
+        if (!ok)
+            fprintf(stderr, "BIGN PBES2 mutated DER: %s\n", cases[variation]);
+        EVP_PKEY_free(decoded);
+        OPENSSL_free(der);
+        ASN1_STRING_free(pbe_der);
+        ASN1_STRING_free(kdf_der);
+        PBKDF2PARAM_free(pbkdf2);
+        PBE2PARAM_free(pbes2);
+        X509_SIG_free(encrypted);
+        ERR_clear_error();
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
+
+/* A valid KWP authentication tag must not make trailing plaintext bytes
+ * acceptable after the PKCS#8 DER object. PKCS8_decrypt_ex() alone does
+ * not guarantee that its ASN.1 decoder consumed the entire plaintext. */
+static int check_pbes2_plaintext_trailing_der(const BUF_MEM *encoded, EVP_PKEY *key)
+{
+    const unsigned char *p = (const unsigned char *)encoded->data;
+    const ASN1_OBJECT *oid = NULL;
+    const void *value = NULL;
+    X509_SIG *sig = NULL;
+    PBE2PARAM *pbe = NULL;
+    PBKDF2PARAM *pbkdf2 = NULL;
+    X509_ALGOR *outer = NULL;
+    ASN1_OCTET_STRING *ciphertext = NULL;
+    OSSL_ENCODER_CTX *encoder = NULL;
+    EVP_KDF *kdf = NULL;
+    EVP_KDF_CTX *kdf_ctx = NULL;
+    EVP_CIPHER *cipher = NULL;
+    EVP_CIPHER_CTX *cipher_ctx = NULL;
+    EVP_PKEY *unexpected = NULL;
+    BIO *plain_bio = NULL;
+    BUF_MEM *plain = NULL;
+    unsigned char derived[32] = {0};
+    unsigned char *invalid_plain = NULL, *wrapped = NULL, *mutated = NULL;
+    const unsigned char *salt = NULL;
+    const char *cipher_name;
+    size_t salt_len, key_len;
+    uint64_t iterations;
+    int bits = EVP_PKEY_get_bits(key);
+    int typ, part = 0, last = 0, mutated_len = 0, ok = 0;
+    BUF_MEM candidate = {0};
+
+    key_len = bits == 256 ? 16u : bits == 384 ? 24u : bits == 512 ? 32u : 0;
+    cipher_name = bits == 256 ? "belt-kwp128" :
+                  bits == 384 ? "belt-kwp192" : "belt-kwp256";
+    if (key_len == 0 || encoded->length > LONG_MAX)
+        goto end;
+    sig = d2i_X509_SIG(NULL, &p, (long)encoded->length);
+    if (sig == NULL || p != (const unsigned char *)encoded->data + encoded->length)
+        goto end;
+    X509_SIG_getm(sig, &outer, &ciphertext);
+    if (outer == NULL || ciphertext == NULL)
+        goto end;
+    X509_ALGOR_get0(&oid, &typ, &value, outer);
+    if (OBJ_obj2nid(oid) != NID_pbes2 ||
+        typ != V_ASN1_SEQUENCE || value == NULL)
+        goto end;
+    pbe = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBE2PARAM));
+    if (pbe == NULL)
+        goto end;
+    X509_ALGOR_get0(&oid, &typ, &value, pbe->keyfunc);
+    if (OBJ_obj2nid(oid) != NID_id_pbkdf2 ||
+        typ != V_ASN1_SEQUENCE || value == NULL)
+        goto end;
+    pbkdf2 = ASN1_item_unpack((const ASN1_STRING *)value,
+                              ASN1_ITEM_rptr(PBKDF2PARAM));
+    if (pbkdf2 == NULL || pbkdf2->salt == NULL ||
+        pbkdf2->salt->type != V_ASN1_OCTET_STRING ||
+        pbkdf2->salt->value.octet_string == NULL ||
+        pbkdf2->iter == NULL)
+        goto end;
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    salt_len = ASN1_STRING_get_length(pbkdf2->salt->value.octet_string);
+#else
+    typ = ASN1_STRING_length(pbkdf2->salt->value.octet_string);
+    if (typ <= 0)
+        goto end;
+    salt_len = (size_t)typ;
+#endif
+    if (salt_len == 0 || salt_len > INT_MAX ||
+        ASN1_INTEGER_get(pbkdf2->iter) <= 0)
+        goto end;
+    salt = ASN1_STRING_get0_data(pbkdf2->salt->value.octet_string);
+    iterations = (uint64_t)ASN1_INTEGER_get(pbkdf2->iter);
+
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, "DER", "PrivateKeyInfo", "provider=bee2");
+    plain_bio = BIO_new(BIO_s_mem());
+    if (encoder == NULL || plain_bio == NULL ||
+        OSSL_ENCODER_to_bio(encoder, plain_bio) <= 0 ||
+        BIO_get_mem_ptr(plain_bio, &plain) <= 0 || plain == NULL ||
+        plain->length > INT_MAX - 32)
+        goto end;
+    invalid_plain = OPENSSL_malloc(plain->length + 1);
+    wrapped = OPENSSL_malloc(plain->length + 33);
+    if (invalid_plain == NULL || wrapped == NULL)
+        goto end;
+    memcpy(invalid_plain, plain->data, plain->length);
+    invalid_plain[plain->length] = 0;
+
+    kdf = EVP_KDF_fetch(NULL, "belt-pbkdf", "provider=bee2");
+    kdf_ctx = kdf != NULL ? EVP_KDF_CTX_new(kdf) : NULL;
+    cipher = EVP_CIPHER_fetch(NULL, cipher_name, "provider=bee2");
+    cipher_ctx = cipher != NULL ? EVP_CIPHER_CTX_new() : NULL;
+    if (kdf_ctx == NULL || cipher_ctx == NULL)
+        goto end;
+    {
+        OSSL_PARAM params[] = {
+            OSSL_PARAM_construct_octet_string(
+                OSSL_KDF_PARAM_PASSWORD, (void *)password, sizeof(password) - 1),
+            OSSL_PARAM_construct_octet_string(
+                OSSL_KDF_PARAM_SALT, (void *)salt, salt_len),
+            OSSL_PARAM_construct_uint64(OSSL_KDF_PARAM_ITER, &iterations),
+            OSSL_PARAM_construct_end()
+        };
+
+        if (EVP_KDF_derive(kdf_ctx, derived, sizeof(derived), params) <= 0)
+            goto end;
+    }
+    if (EVP_CipherInit_ex2(cipher_ctx, cipher, derived, NULL, 1, NULL) <= 0 ||
+        EVP_CipherUpdate(cipher_ctx, wrapped, &part,
+                         invalid_plain, (int)(plain->length + 1)) <= 0 ||
+        EVP_CipherFinal_ex(cipher_ctx, wrapped + part, &last) <= 0 ||
+        !ASN1_OCTET_STRING_set(ciphertext, wrapped, part + last))
+        goto end;
+    mutated_len = i2d_X509_SIG(sig, &mutated);
+    if (mutated_len <= 0 || mutated == NULL)
+        goto end;
+    candidate.data = (char *)mutated;
+    candidate.length = (size_t)mutated_len;
+    if (decode_key(&unexpected, "DER", &candidate,
+                   password, sizeof(password) - 1) || unexpected != NULL)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN PBES2 accepted authenticated trailing DER data\n");
+    ERR_clear_error();
+    EVP_PKEY_free(unexpected);
+    OPENSSL_free(mutated);
+    OPENSSL_clear_free(wrapped, plain != NULL ? plain->length + 33 : 0);
+    OPENSSL_clear_free(invalid_plain, plain != NULL ? plain->length + 1 : 0);
+    OPENSSL_cleanse(derived, sizeof(derived));
+    EVP_CIPHER_CTX_free(cipher_ctx);
+    EVP_CIPHER_free(cipher);
+    EVP_KDF_CTX_free(kdf_ctx);
+    EVP_KDF_free(kdf);
+    BIO_free(plain_bio);
+    OSSL_ENCODER_CTX_free(encoder);
+    PBKDF2PARAM_free(pbkdf2);
+    PBE2PARAM_free(pbe);
+    X509_SIG_free(sig);
+    return ok;
+}
+
 static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
 {
     OSSL_ENCODER_CTX *encoder = NULL;
@@ -325,7 +628,9 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
         data == NULL || data->length == 0)
         goto cleanup;
     if ((encrypted && strcmp(format, "DER") == 0 &&
-         !check_pbkdf2_params(data, oid, key_len)) ||
+         (!check_pbkdf2_params(data, oid, key_len) ||
+           !check_pbes2_variants(data, key) ||
+           !check_pbes2_plaintext_trailing_der(data, key))) ||
         !decode_key(&decoded, format, data, password, sizeof(password) - 1) ||
         decoded == NULL || !same_private_key(key, decoded))
         goto cleanup;
@@ -468,6 +773,37 @@ cleanup:
     return ok;
 }
 
+
+/* Failed cipher selection must not poison the encoder.  Writable output must
+ * still succeed; read-only BIO output must fail rather than losing the key. */
+static int check_encoder_failures(EVP_PKEY *key, const char *format)
+{
+    OSSL_ENCODER_CTX *encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, format, "PrivateKeyInfo",
+        "provider=bee2");
+    BIO *writable = BIO_new(BIO_s_mem());
+    BIO *read_only = BIO_new_mem_buf("", 0);
+    int ok = 0;
+
+    if (encoder == NULL || writable == NULL || read_only == NULL ||
+        OSSL_ENCODER_CTX_set_cipher(encoder, "AES-256-GCM", NULL) > 0 ||
+        OSSL_ENCODER_CTX_set_cipher(encoder, "belt-ctr256", NULL) > 0 ||
+        OSSL_ENCODER_CTX_set_cipher(encoder, "no-such-cipher", NULL) > 0 ||
+        OSSL_ENCODER_to_bio(encoder, writable) <= 0 ||
+        OSSL_ENCODER_to_bio(encoder, read_only) > 0)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN %s encoder error handling failed\n", format);
+    ERR_clear_error();
+    BIO_free(read_only);
+    BIO_free(writable);
+    OSSL_ENCODER_CTX_free(encoder);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *const names[] = {"bign-256", "bign-384", "bign-512"};
@@ -490,7 +826,9 @@ int main(int argc, char **argv)
         key = generate_key(names[i]);
         if (!key)
             goto cleanup;
-        if (!check_public_only_decoding(key) ||
+        if ((i == 0 && (!check_encoder_failures(key, "DER") ||
+                        !check_encoder_failures(key, "PEM"))) ||
+            !check_public_only_decoding(key) ||
             !check_key_stream(key, "DER") || !check_key_stream(key, "PEM"))
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {

@@ -132,8 +132,6 @@ BELT_AEAD_NEWCTX(256, dwp, belt_dwp_descriptor)
 
 static void belt_aead_freectx(void *vctx) {
     bee2_belt_aead_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 
@@ -229,8 +227,6 @@ static int belt_aead_update(void *vctx,
                             const unsigned char *in,
                             size_t inl) {
     bee2_belt_aead_ctx_t *c = vctx;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
 
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized ||
@@ -267,8 +263,6 @@ static int belt_aead_final(void *vctx, unsigned char *out, size_t *outl, size_t 
     bee2_belt_aead_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized)
         return 0;
@@ -288,7 +282,7 @@ static int belt_aead_final(void *vctx, unsigned char *out, size_t *outl, size_t 
 
         c->algorithm->get_tag(&c->backend_state, computed);
 
-        valid = bee2_constant_time_equal(computed, c->tag, BELT_AEAD_TAG_SIZE);
+        valid = CRYPTO_memcmp(computed, c->tag, BELT_AEAD_TAG_SIZE) == 0;
         OPENSSL_cleanse(computed, sizeof(computed));
         if (!valid)
             return 0;

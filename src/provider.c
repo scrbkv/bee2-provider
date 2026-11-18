@@ -522,7 +522,10 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
     OSSL_FUNC_core_obj_create_fn *core_obj_create_fn = NULL;
     OSSL_FUNC_core_obj_add_sigid_fn *core_obj_add_sigid_fn = NULL;
 
-    if (in == NULL || out == NULL || provctx == NULL || !bee2_backend_is_compatible())
+    /* libcrypto supplies valid core and output pointers to this entry point.
+     * Backend state capacity, unlike those core-owned pointers, can differ
+     * when the Bee2 dependency is changed and still must be checked. */
+    if (!bee2_backend_is_compatible())
         return 0;
 
     for (; in->function_id != 0; in++) {

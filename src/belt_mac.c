@@ -54,8 +54,6 @@ static void *provider_belt_mac256_newctx(void *p) {
 
 static void provider_belt_mac_freectx(void *vctx) {
     bee2_belt_mac_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 
@@ -84,8 +82,6 @@ static int provider_belt_mac_init(void *vctx,
                                   const OSSL_PARAM params[]) {
     bee2_belt_mac_ctx_t *c = vctx;
 
-    if (c == NULL)
-        return 0;
     c->initialized = 0;
     if (key != NULL) {
         if (keylen != c->fixed_key_len)
@@ -107,7 +103,7 @@ static int provider_belt_mac_init(void *vctx,
 
 static int provider_belt_mac_update(void *vctx, const unsigned char *in, size_t inl) {
     bee2_belt_mac_ctx_t *c = vctx;
-    if (c == NULL || !c->initialized || (inl != 0 && in == NULL))
+    if (!c->initialized || (inl != 0 && in == NULL))
         return 0;
     if (inl == 0)
         return 1;
@@ -117,7 +113,7 @@ static int provider_belt_mac_update(void *vctx, const unsigned char *in, size_t 
 
 static int provider_belt_mac_final(void *vctx, unsigned char *out, size_t *outl, size_t outsize) {
     bee2_belt_mac_ctx_t *c = vctx;
-    if (c == NULL || !c->initialized || outl == NULL)
+    if (!c->initialized)
         return 0;
     if (out == NULL) {
         *outl = BELT_MAC_OUTPUT_SIZE;

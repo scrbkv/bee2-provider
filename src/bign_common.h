@@ -51,6 +51,18 @@ int bee2_bign_derive_pubkey(const bee2_bign_variant_t *variant,
                             unsigned char *pub,
                             const unsigned char *priv);
 
+int bee2_bign_keypair_generate(const bee2_bign_variant_t *variant,
+                               unsigned char *priv, unsigned char *pub,
+                               bee2_bign_rng_t *rng);
+int bee2_bign_key_wrap(const bee2_bign_variant_t *variant, unsigned char *token,
+                       const unsigned char *key, size_t len,
+                       const unsigned char header[16], const unsigned char *pub,
+                       bee2_bign_rng_t *rng);
+int bee2_bign_key_unwrap(const bee2_bign_variant_t *variant, unsigned char *key,
+                         const unsigned char *token, size_t len,
+                         const unsigned char header[16], const unsigned char *priv);
+
+
 bee2_bign_key_t *bee2_bign_key_new(const bee2_bign_variant_t *variant);
 void bee2_bign_key_free(bee2_bign_key_t *key);
 int bee2_bign_key_validate_pair(const bee2_bign_key_t *key);

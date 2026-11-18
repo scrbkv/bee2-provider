@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, test-coverage-and-interop-20261116]
   pull_request:
   workflow_dispatch:
 
@@ -138,8 +138,9 @@ jobs:
 
       - name: Run native C tests with sanitizers
         run: |
+          # Keep native selection automatic as the suite grows.
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
-            -R '^bee2_(cipher_roundtrip|brng_kat|bign_sign_contract|bign_keyexchange_contract|direct_interop|bign_direct_interop|params_atomicity|provider_negative_contract|provider_contexts|evp_streaming_contract|evp_padding_.*|bign_public_check|bign_der_framing|sde_min_sector|bde_mode_metadata|brng_contract|provider_isolation|belt_keyexpand_stb|belt_aead_stb|bign_stb_verify|bash_prgae_stb|bash_prgae_streaming|belt_reinit_padding|bign_transport_contract|digest_oneshot|bign_params_contract|bign_codec_crypto|bign_legacy_pbkdf2_limit|stb_kat|hmac_bash_crypto|bign_bake_crypto|bign_digest_algorithms|bign_hspec_interop|bash_prgae_evp_stb|provider_algorithms)' \
+            -E '^bee2_(bign_options|bign_asn1_negative|bign_codec_roundtrip)$' \
             --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
@@ -217,12 +218,25 @@ jobs:
         run: |
           "$BEE2EVP_OPENSSL_PREFIX/bin/openssl" engine -t -c bee2evp
 
+      - name: Compile legacy EVP cipher interop helper
+        shell: bash
+        run: |
+          tool="$RUNNER_TEMP/bee2evp-cipher-tool"
+          "${CC}" -std=c11 -Wall -Wextra -Werror \
+            -I"$BEE2EVP_OPENSSL_PREFIX/include" \
+            tests/interop_cipher_tool.c \
+            -L"$BEE2EVP_OPENSSL_PREFIX/lib" \
+            -Wl,-rpath,"$BEE2EVP_OPENSSL_PREFIX/lib" \
+            -lcrypto -o "$tool"
+          echo "BEE2EVP_LEGACY_TOOL=$tool" >> "$GITHUB_ENV"
+
       - name: Configure and build interoperability tests
         shell: bash
         run: |
           cmake -S . -B build-interop -DCMAKE_BUILD_TYPE=Release \
             -DBEE2_PROVIDER_BUILD_TESTS=ON \
             -DBEE2_PROVIDER_ENABLE_INTEROP=ON \
+            -DBEE2_INTEROP_LEGACY_TOOL="$BEE2EVP_LEGACY_TOOL" \
             -DBEE2_INTEROP_BEE2EVP_ENGINE=bee2evp \
             -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
             -DOPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include" \
@@ -238,7 +252,7 @@ jobs:
       - name: Run fixed, boundary and random interoperability tests
         run: |
           ctest --test-dir build-interop --output-on-failure --parallel 4 --timeout 240 \
-            -R '^(bee2_bee2evp_interop_|bee2_bee2evp_bign_cert_|bee2_interop_matrix_)' \
+            -R '^(bee2_bee2evp_bign_cert_|bee2_interop_matrix_|bee2_interop_belt_|bee2_interop_bash_)' \
             --output-junit interoperability-tests.xml
 
       - name: Upload interoperability report
@@ -247,4 +261,67 @@ jobs:
         with:
           name: interoperability
           path: build-interop/interoperability-tests.xml
+          if-no-files-found: warn
+
+  coverage:
+    name: Linux / GCC / provider source coverage
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc
+      OPENSSL_TAG: openssl-3.5.9
+      OPENSSL_COMMIT: 45e844fa2a14ec92d146bd8f5778ac130b6625fb
+      OPENSSL_CONF: /dev/null
+    steps:
+      - name: Check out source and Bee2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build pinned OpenSSL
+        shell: bash
+        run: |
+          prefix="${RUNNER_TEMP}/openssl"
+          echo "OPENSSL_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          OPENSSL_PREFIX="$prefix" bash scripts/ci-build-openssl.sh
+
+      - name: Build instrumented provider
+        shell: bash
+        run: |
+          cmake -S . -B build-coverage -DCMAKE_BUILD_TYPE=Debug \
+            -DBEE2_PROVIDER_BUILD_TESTS=ON \
+            -DBEE2_PROVIDER_ENABLE_COVERAGE=ON \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
+            -DOPENSSL_INCLUDE_DIR="$OPENSSL_PREFIX/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OPENSSL_PREFIX/lib/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$OPENSSL_PREFIX/lib/libssl.so" \
+            -DBEE2_OPENSSL_EXECUTABLE="$OPENSSL_PREFIX/bin/openssl"
+          cmake --build build-coverage --parallel 4
+
+      - name: Run all provider tests under coverage
+        run: ctest --test-dir build-coverage --output-on-failure --timeout 180 --output-junit coverage-tests.xml
+
+      - name: Publish unfiltered line, branch and function coverage
+        shell: bash
+        run: |
+          python3 -m pip install --break-system-packages 'gcovr>=8,<9'
+          python3 -m gcovr --root . --filter 'src/' --print-summary \
+            --json-summary build-coverage/coverage-summary.json
+          python3 -m gcovr --root . --filter 'src/' \
+            --json -o build-coverage/coverage.json
+          python3 -m gcovr --root . --filter 'src/' \
+            --html-details build-coverage/coverage.html
+          python3 -m gcovr --root . --filter 'src/' \
+            --xml-pretty -o build-coverage/coverage.xml
+
+      - name: Upload coverage evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: provider-source-coverage
+          path: |
+            build-coverage/coverage*
+            build-coverage/coverage-tests.xml
           if-no-files-found: warn

@@ -18,7 +18,6 @@ target_link_libraries(bee2_stb_kat PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_stb_kat COMMAND bee2_stb_kat $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_stb_kat PROPERTIES LABELS "stb;known_answer;crypto;native")
 
-
 if(BEE2_PROVIDER_ENABLE_INTEROP)
 set(BEE2_INTEROP_PROVIDER_OPENSSL "$ENV{BEE2_INTEROP_PROVIDER_OPENSSL}" CACHE STRING
     "OpenSSL executable used for bee2_provider interop commands")
@@ -59,58 +58,6 @@ if(NOT BEE2_INTEROP_BEE2EVP_OPENSSL_CONF)
         "OPENSSL_CONF used for bee2evp interop commands" FORCE)
 endif()
 
-function(add_bee2_bee2evp_cipher_test test_name provider_name bee2evp_name key_size iv_size data_len)
-    set(spec
-        "cipher|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|${key_size}|${iv_size}|-|-"
-    )
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
-            "${spec}"
-    )
-endfunction()
-
-function(add_bee2_bee2evp_digest_test test_name provider_name bee2evp_name data_len)
-    set(spec
-        "digest|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|0|0|-|-"
-    )
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
-            "${spec}"
-    )
-endfunction()
-
-function(add_bee2_bee2evp_mac_test test_name provider_name bee2evp_name key_size data_len)
-    set(options)
-    set(one_value_args PROVIDER_DIGEST BEE2EVP_DIGEST)
-    cmake_parse_arguments(MAC "${options}" "${one_value_args}" "" ${ARGN})
-
-    set(provider_digest "-")
-    set(bee2evp_digest "-")
-    if(MAC_PROVIDER_DIGEST)
-        set(provider_digest "${MAC_PROVIDER_DIGEST}")
-    endif()
-    if(MAC_BEE2EVP_DIGEST)
-        set(bee2evp_digest "${MAC_BEE2EVP_DIGEST}")
-    endif()
-    set(spec
-        "mac|${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>|${provider_name}|${bee2evp_name}|${data_len}|${key_size}|0|${provider_digest}|${bee2evp_digest}"
-    )
-
-    add_test(
-        NAME ${test_name}
-        COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_interop.py
-            "${spec}"
-    )
-endfunction()
-
 function(add_bee2_bee2evp_bign_cert_test test_name provider_alg bee2evp_alg)
     set(options EXPLICIT_BEE2)
     set(one_value_args DAYS)
@@ -136,45 +83,6 @@ function(add_bee2_bee2evp_bign_cert_test test_name provider_alg bee2evp_alg)
             "${spec}"
     )
 endfunction()
-
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_ecb belt-ecb128 belt-ecb128 16 0 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_ecb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_ecb belt-ecb192 belt-ecb192 24 0 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_ecb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_ecb belt-ecb256 belt-ecb256 32 0 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_ecb APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_ecb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_cbc belt-cbc128 belt-cbc128 16 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_cbc)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_cbc belt-cbc192 belt-cbc192 24 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_cbc)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_cbc belt-cbc256 belt-cbc256 32 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_cbc APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_cbc)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_cfb belt-cfb128 belt-cfb128 16 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_cfb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_cfb belt-cfb192 belt-cfb192 24 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_cfb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_cfb belt-cfb256 belt-cfb256 32 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_cfb APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_cfb)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_128_ctr belt-ctr128 belt-ctr128 16 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_128_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_128_ctr)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_192_ctr belt-ctr192 belt-ctr192 24 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_192_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_192_ctr)
-add_bee2_bee2evp_cipher_test(bee2_bee2evp_interop_cipher_belt_256_ctr belt-ctr256 belt-ctr256 32 16 32)
-set_property(TEST bee2_bee2evp_interop_cipher_belt_256_ctr APPEND PROPERTY LABELS interop bee2evp cipher_belt_256_ctr)
-
-add_bee2_bee2evp_mac_test(bee2_bee2evp_interop_mac_belt_mac256 belt-mac256 belt-mac256 32 257)
-set_property(TEST bee2_bee2evp_interop_mac_belt_mac256 APPEND PROPERTY LABELS interop bee2evp mac_belt_mac256)
-add_bee2_bee2evp_mac_test(bee2_bee2evp_interop_mac_belt_hmac belt-hmac belt-hmac 32 257 PROVIDER_DIGEST belt-hash)
-set_property(TEST bee2_bee2evp_interop_mac_belt_hmac APPEND PROPERTY LABELS interop bee2evp mac_belt_hmac)
-
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_belt_hash belt-hash belt-hash 257)
-set_property(TEST bee2_bee2evp_interop_digest_belt_hash APPEND PROPERTY LABELS interop bee2evp digest_belt_hash)
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_256 bash256 bash256 257)
-set_property(TEST bee2_bee2evp_interop_digest_bash_256 APPEND PROPERTY LABELS interop bee2evp digest_bash_256)
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_384 bash384 bash384 257)
-set_property(TEST bee2_bee2evp_interop_digest_bash_384 APPEND PROPERTY LABELS interop bee2evp digest_bash_384)
-add_bee2_bee2evp_digest_test(bee2_bee2evp_interop_digest_bash_512 bash512 bash512 257)
-set_property(TEST bee2_bee2evp_interop_digest_bash_512 APPEND PROPERTY LABELS interop bee2evp digest_bash_512)
 
 add_bee2_bee2evp_bign_cert_test(bee2_bee2evp_bign_cert_interop_bign_cert_256 bign-256 bign-256 DAYS 30)
 set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_256 APPEND PROPERTY LABELS interop bee2evp bign cert bign_cert_256)
@@ -474,6 +382,32 @@ set_tests_properties(bee2_bign_params_contract PROPERTIES LABELS "regression;big
 # BEE2_PROVIDER_ENABLE_INTEROP is enabled. The matrix checks both encryption
 # directions for boundary values and deterministic pseudorandom inputs.
 if(BEE2_PROVIDER_ENABLE_INTEROP)
+    set(BEE2_INTEROP_LEGACY_TOOL "$ENV{BEE2EVP_LEGACY_TOOL}" CACHE FILEPATH
+        "OpenSSL 1.1.1 helper for legacy engine AEAD and KWP")
+    if(NOT EXISTS "${BEE2_INTEROP_LEGACY_TOOL}")
+        message(FATAL_ERROR "BEE2_INTEROP_LEGACY_TOOL is required when enabling interop")
+    endif()
+    add_executable(bee2_interop_cipher_tool interop_cipher_tool.c)
+    target_link_libraries(bee2_interop_cipher_tool PRIVATE OpenSSL::Crypto)
+    # Each algorithm is an independent CTest. One long matrix used to
+    # approach the per-test timeout even though individual cases passed.
+    foreach(alg IN ITEMS
+            belt-dwp128 belt-dwp192 belt-dwp256
+            belt-che128 belt-che192 belt-che256
+            belt-kwp128 belt-kwp192 belt-kwp256
+            bash-prg-ae2561)
+        string(REPLACE "-" "_" alg_id "${alg}")
+        set(test_name "bee2_interop_${alg_id}")
+        add_test(NAME ${test_name}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_aead_interop.py
+                --provider-tool $<TARGET_FILE:bee2_interop_cipher_tool>
+                --engine-tool "${BEE2_INTEROP_LEGACY_TOOL}"
+                --provider-path $<TARGET_FILE_DIR:bee2_provider>
+                --algorithm "${alg}")
+        set_tests_properties(${test_name}
+            PROPERTIES LABELS "interop;bee2evp;cipher")
+    endforeach()
     set(interop_prefix
         "${BEE2_INTEROP_PROVIDER_OPENSSL}|${BEE2_INTEROP_BEE2EVP_OPENSSL}|${BEE2_INTEROP_BEE2EVP_ENGINE}|${BEE2_INTEROP_BEE2EVP_LD_LIBRARY_PATH}|${BEE2_INTEROP_BEE2EVP_OPENSSL_CONF}|$<TARGET_FILE_DIR:bee2_provider>"
     )
@@ -501,12 +435,18 @@ if(BEE2_PROVIDER_ENABLE_INTEROP)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/openssl_bee2evp_matrix.py "${spec}")
         set_tests_properties(${test_name} PROPERTIES LABELS "interop;bee2evp;matrix")
     endforeach()
-    foreach(name IN ITEMS belt-mac256 belt-hmac)
+    foreach(name IN ITEMS belt-mac128 belt-mac192 belt-mac256 belt-hmac)
         set(digest "-")
         if(name STREQUAL "belt-hmac")
             set(digest "belt-hash")
         endif()
-        set(spec "mac|${interop_prefix}|${name}|${name}|257|32|0|${digest}|-")
+        set(key_len 32)
+        if(name STREQUAL "belt-mac128")
+            set(key_len 16)
+        elseif(name STREQUAL "belt-mac192")
+            set(key_len 24)
+        endif()
+        set(spec "mac|${interop_prefix}|${name}|${name}|257|${key_len}|0|${digest}|-")
         set(test_name "bee2_interop_matrix_${name}")
         string(REPLACE "-" "_" test_name "${test_name}")
         add_test(NAME ${test_name}
@@ -528,7 +468,7 @@ target_include_directories(bee2_bign_legacy_pbkdf2_limit SYSTEM PRIVATE
 target_link_libraries(bee2_bign_legacy_pbkdf2_limit PRIVATE
     bee2_static OpenSSL::Crypto)
 add_test(NAME bee2_bign_legacy_pbkdf2_limit
-    COMMAND bee2_bign_legacy_pbkdf2_limit)
+    COMMAND bee2_bign_legacy_pbkdf2_limit $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_legacy_pbkdf2_limit
     PROPERTIES LABELS "regression;bign;pbkdf2;native")
 
@@ -542,6 +482,31 @@ target_link_libraries(bee2_hmac_bash_crypto PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_hmac_bash_crypto
     COMMAND bee2_hmac_bash_crypto $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_hmac_bash_crypto PROPERTIES LABELS "crypto;hmac;bash;native")
+
+# Provider state transitions that are reachable through public OpenSSL APIs.
+foreach(test IN ITEMS brng_split_contract bign_private_selection
+                      hmac_params_contract aead_phase_contract)
+    add_executable(bee2_${test} ${test}.c)
+    target_link_libraries(bee2_${test} PRIVATE OpenSSL::Crypto)
+    add_test(NAME bee2_${test}
+        COMMAND bee2_${test} $<TARGET_FILE_DIR:bee2_provider>)
+endforeach()
+set_tests_properties(bee2_brng_split_contract PROPERTIES
+    LABELS "regression;rand;brng;native")
+set_tests_properties(bee2_bign_private_selection PROPERTIES
+    LABELS "regression;bign;keymgmt;native")
+set_tests_properties(bee2_hmac_params_contract PROPERTIES
+    LABELS "regression;mac;params;native")
+set_tests_properties(bee2_aead_phase_contract PROPERTIES
+    LABELS "regression;aead;evp;native")
+
+# BIGN signing and verification with a digest properties-only update.
+add_executable(bee2_bign_signature_properties bign_signature_properties.c)
+target_link_libraries(bee2_bign_signature_properties PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_signature_properties
+    COMMAND bee2_bign_signature_properties $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_signature_properties PROPERTIES
+    LABELS "bign;signature;regression;native")
 
 add_executable(bee2_bign_bake_crypto bign_bake_crypto.c)
 target_include_directories(bee2_bign_bake_crypto SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
@@ -569,3 +534,95 @@ add_test(NAME bee2_bash_prgae_evp_stb
     COMMAND bee2_bash_prgae_evp_stb $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bash_prgae_evp_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
 
+# Exercise independent EVP contexts from multiple threads using a shared
+# OpenSSL library context, including context cloning and BIGN signatures.
+if(UNIX)
+    find_package(Threads REQUIRED)
+    add_executable(bee2_provider_concurrent provider_concurrent.c)
+    target_link_libraries(bee2_provider_concurrent PRIVATE
+        OpenSSL::Crypto Threads::Threads)
+    add_test(NAME bee2_provider_concurrent
+        COMMAND bee2_provider_concurrent $<TARGET_FILE_DIR:bee2_provider>)
+    set_tests_properties(bee2_provider_concurrent PROPERTIES
+        LABELS "stress;concurrency;native;evp;bign")
+endif()
+
+# The ASN.1 implementation is intentionally linked into two unit tests.
+# Instrument those copies as well so their exercised production paths
+# are not omitted from the source coverage accounting.
+if(BEE2_PROVIDER_ENABLE_COVERAGE)
+    foreach(target IN ITEMS bee2_bign_der_framing bee2_bign_legacy_pbkdf2_limit)
+        target_compile_options(${target} PRIVATE --coverage -fprofile-update=atomic -O0 -g)
+        target_link_options(${target} PRIVATE --coverage)
+    endforeach()
+endif()
+
+# Direct provider cipher dispatch: one-shot callbacks and duplicated
+# initialized contexts must agree with normal EVP streaming for every cipher.
+add_executable(bee2_provider_cipher_dispatch provider_cipher_dispatch.c)
+target_link_libraries(bee2_provider_cipher_dispatch PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_cipher_dispatch
+    COMMAND bee2_provider_cipher_dispatch $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_cipher_dispatch PROPERTIES
+    LABELS "crypto;evp;dispatch;context;native")
+
+# The public decoder object-reference transfer path must preserve the full
+# provider-native BIGN key and reject malformed references.
+add_executable(bee2_bign_decoder_export bign_decoder_export.c)
+target_link_libraries(bee2_bign_decoder_export PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_decoder_export
+    COMMAND bee2_bign_decoder_export $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_decoder_export PROPERTIES
+    LABELS "bign;codec;native;dispatch;negative")
+# Internal secret-buffer replacement: aliasing, explicit clearing, empty keys.
+add_executable(bee2_provider_util_contract
+    provider_util_contract.c ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+target_include_directories(bee2_provider_util_contract PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(bee2_provider_util_contract PRIVATE OpenSSL::Crypto)
+if(BEE2_PROVIDER_ENABLE_COVERAGE)
+    target_compile_options(bee2_provider_util_contract PRIVATE
+        --coverage -fprofile-update=atomic -O0 -g)
+    target_link_options(bee2_provider_util_contract PRIVATE --coverage)
+endif()
+add_test(NAME bee2_provider_util_contract COMMAND bee2_provider_util_contract)
+set_tests_properties(bee2_provider_util_contract PROPERTIES
+    LABELS "regression;provider;native")
+
+# Public EVP validation of provider-controlled OSSL_PARAM types, sizes
+# and context reset behavior across all supported BELT key sizes.
+add_executable(bee2_provider_params_validation provider_params_validation.c)
+target_link_libraries(bee2_provider_params_validation PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_provider_params_validation
+    COMMAND bee2_provider_params_validation $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_provider_params_validation PROPERTIES
+    LABELS "regression;params;mac;cipher;kdf;native")
+
+# Check implicit BIGN digest selection separately from explicit digest KATs.
+add_executable(bee2_bign_default_digest bign_default_digest.c)
+target_link_libraries(bee2_bign_default_digest PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_default_digest
+    COMMAND bee2_bign_default_digest $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_default_digest PROPERTIES
+    LABELS "regression;bign;signature;native")
+# Exercise EVP BIGN signature parameter failures without modifying the key.
+add_executable(bee2_bign_signature_edge_contract bign_signature_edge_contract.c)
+target_link_libraries(bee2_bign_signature_edge_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_signature_edge_contract
+    COMMAND bee2_bign_signature_edge_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_signature_edge_contract PROPERTIES
+    LABELS "regression;bign;signature;params;native")
+
+# Confirm implicit BRNG IVs match explicitly provided zero/empty IVs.
+add_executable(bee2_brng_default_iv_contract brng_default_iv_contract.c)
+target_link_libraries(bee2_brng_default_iv_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_brng_default_iv_contract
+    COMMAND bee2_brng_default_iv_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_brng_default_iv_contract PROPERTIES
+    LABELS "regression;brng;rand;params;native")
+# The PEM reader handles CRLF and records lacking a final line ending.
+add_executable(bee2_bign_pem_framing_contract bign_pem_framing_contract.c)
+target_link_libraries(bee2_bign_pem_framing_contract PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_pem_framing_contract
+    COMMAND bee2_bign_pem_framing_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_pem_framing_contract PROPERTIES
+    LABELS "regression;bign;codec;negative;native")

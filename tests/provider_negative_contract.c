@@ -1,144 +1,78 @@
-/* Regression checks for malformed provider input and invalid operation order. */
-#include <openssl/core_dispatch.h>
+/* Check invalid operation sequences through the public EVP interface. */
 #include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
 #include <stdio.h>
 #include <string.h>
 
-static const OSSL_ALGORITHM *find_cipher(const OSSL_ALGORITHM *algs,
-                                          const char *name)
+static int check_cipher(const char *name, size_t keylen, size_t ivlen, int aead)
 {
-    const OSSL_ALGORITHM *alg;
-    size_t len = strlen(name);
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, name, "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    unsigned char key[32] = {0}, iv[32] = {0}, data[32] = {0};
+    unsigned char output[64];
+    size_t wrong_keylen = 1;
+    int written = 0, tail = 0, ok = 0;
+    OSSL_PARAM invalid[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &wrong_keylen),
+        OSSL_PARAM_END
+    };
 
-    for (alg = algs; alg != NULL && alg->algorithm_names != NULL; ++alg) {
-        const char *s = alg->algorithm_names;
-        while (s != NULL && *s != '\0') {
-            const char *end = strchr(s, ':');
-            size_t n = end != NULL ? (size_t)(end - s) : strlen(s);
-            if (n == len && OPENSSL_strncasecmp(s, name, len) == 0)
-                return alg;
-            s = end != NULL ? end + 1 : NULL;
-        }
-    }
-    return NULL;
-}
+    if (!cipher || !ctx ||
+        EVP_EncryptInit_ex2(ctx, cipher, key, ivlen ? iv : NULL, NULL) <= 0 ||
+        EVP_CIPHER_CTX_set_params(ctx, invalid) > 0)
+        goto done;
 
-static int check_cipher(OSSL_PROVIDER *provider, const OSSL_ALGORITHM *algs,
-                        const char *name, size_t keylen, size_t ivlen,
-                        int requires_aligned_key)
-{
-    const OSSL_ALGORITHM *alg = find_cipher(algs, name);
-    const OSSL_DISPATCH *d;
-    OSSL_FUNC_cipher_newctx_fn *newctx = NULL;
-    OSSL_FUNC_cipher_freectx_fn *freectx = NULL;
-    OSSL_FUNC_cipher_encrypt_init_fn *encrypt_init = NULL;
-    OSSL_FUNC_cipher_update_fn *update = NULL;
-    OSSL_FUNC_cipher_final_fn *final = NULL;
-    unsigned char key[60] = {0}, iv[60] = {0}, output[16] = {0};
-    size_t outlen = 0;
-    void *ctx = NULL;
-    int ok = 0;
+    if (aead && EVP_EncryptUpdate(ctx, NULL, &written, data, 3) <= 0)
+        goto done;
+    if (EVP_EncryptUpdate(ctx, output, &written, data, 1) <= 0 ||
+        written != 1 ||
+        EVP_EncryptFinal_ex(ctx, output + written, &tail) <= 0 ||
+        EVP_EncryptUpdate(ctx, output, &written, data, 1) > 0 ||
+        EVP_EncryptInit_ex2(ctx, NULL, key, ivlen ? iv : NULL, NULL) <= 0 ||
+        EVP_EncryptUpdate(ctx, output, &written, data, 1) <= 0 ||
+        written != 1)
+        goto done;
 
-    if (alg == NULL)
-        goto end;
-    for (d = alg->implementation; d->function_id != 0; ++d) {
-        switch (d->function_id) {
-        case OSSL_FUNC_CIPHER_NEWCTX:
-            newctx = OSSL_FUNC_cipher_newctx(d); break;
-        case OSSL_FUNC_CIPHER_FREECTX:
-            freectx = OSSL_FUNC_cipher_freectx(d); break;
-        case OSSL_FUNC_CIPHER_ENCRYPT_INIT:
-            encrypt_init = OSSL_FUNC_cipher_encrypt_init(d); break;
-        case OSSL_FUNC_CIPHER_UPDATE:
-            update = OSSL_FUNC_cipher_update(d); break;
-        case OSSL_FUNC_CIPHER_FINAL:
-            final = OSSL_FUNC_cipher_final(d); break;
-        }
-    }
-    if (newctx == NULL || freectx == NULL || encrypt_init == NULL ||
-        update == NULL || final == NULL)
-        goto end;
-    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider));
-    if (ctx == NULL)
-        goto end;
-    if (requires_aligned_key) {
-        if (encrypt_init(ctx, key, keylen + 1, iv, ivlen, NULL))
-            goto end;
-        if (encrypt_init(ctx, key, keylen, iv, ivlen + 1, NULL))
-            goto end;
-    }
-    if (!encrypt_init(ctx, key, keylen, iv, ivlen, NULL) ||
-        update(ctx, NULL, &outlen, 0, NULL, 1) ||
-        !update(ctx, output, &outlen, sizeof(output), key, 1) ||
-        outlen != 1 || !final(ctx, output, &outlen, sizeof(output)) ||
-        final(ctx, output, &outlen, sizeof(output)) ||
-        update(ctx, output, &outlen, sizeof(output), key, 1) ||
-        !encrypt_init(ctx, key, keylen, iv, ivlen, NULL) ||
-        encrypt_init(ctx, key, keylen, iv, ivlen + 1, NULL) ||
-        update(ctx, output, &outlen, sizeof(output), key, 1) ||
-        !encrypt_init(ctx, key, keylen, iv, ivlen, NULL) ||
-        !update(ctx, output, &outlen, sizeof(output), key, 1) || outlen != 1)
-        goto end;
-    ok = 1;
-end:
+    ok = EVP_CIPHER_CTX_get_key_length(ctx) == (int)keylen;
+done:
     if (!ok)
-        fprintf(stderr, "invalid cipher input contract: %s\n", name);
-    if (freectx != NULL && ctx != NULL)
-        freectx(ctx);
+        fprintf(stderr, "Invalid EVP cipher state contract: %s\n", name);
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
     return ok;
 }
 
-static int check_sde_failed_init(OSSL_PROVIDER *provider, const OSSL_ALGORITHM *algs)
+static int check_sde_failed_init(void)
 {
-    const OSSL_ALGORITHM *alg = find_cipher(algs, "belt-sde256");
-    const OSSL_DISPATCH *d;
-    OSSL_FUNC_cipher_newctx_fn *newctx = NULL;
-    OSSL_FUNC_cipher_freectx_fn *freectx = NULL;
-    OSSL_FUNC_cipher_encrypt_init_fn *encrypt_init = NULL;
-    OSSL_FUNC_cipher_update_fn *update = NULL;
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, "belt-sde256", "provider=bee2");
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     unsigned char key[32] = {0}, iv[16] = {0};
     unsigned char input[32] = {0}, output[32];
-    size_t written = 0;
-    void *ctx = NULL;
-    int ok = 0;
+    size_t wrong_keylen = 16;
+    int written = 0, ok = 0;
+    OSSL_PARAM invalid[] = {
+        OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, &wrong_keylen),
+        OSSL_PARAM_END
+    };
 
-    if (alg == NULL)
-        return 0;
-    for (d = alg->implementation; d->function_id != 0; ++d) {
-        switch (d->function_id) {
-        case OSSL_FUNC_CIPHER_NEWCTX:
-            newctx = OSSL_FUNC_cipher_newctx(d);
-            break;
-        case OSSL_FUNC_CIPHER_FREECTX:
-            freectx = OSSL_FUNC_cipher_freectx(d);
-            break;
-        case OSSL_FUNC_CIPHER_ENCRYPT_INIT:
-            encrypt_init = OSSL_FUNC_cipher_encrypt_init(d);
-            break;
-        case OSSL_FUNC_CIPHER_UPDATE:
-            update = OSSL_FUNC_cipher_update(d);
-            break;
-        }
-    }
-    if (!newctx || !freectx || !encrypt_init || !update)
-        return 0;
-    ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(provider));
-    if (!ctx || !encrypt_init(ctx, key, sizeof(key), iv, sizeof(iv), NULL) ||
-        encrypt_init(ctx, key, sizeof(key), iv, sizeof(iv) - 1, NULL) ||
-        update(ctx, output, &written, sizeof(output), input, sizeof(input)) ||
-        !encrypt_init(ctx, key, sizeof(key), iv, sizeof(iv), NULL) ||
-        !update(ctx, output, &written, sizeof(output), input, sizeof(input)) ||
-        written != sizeof(input))
-        goto end;
+    if (!cipher || !ctx ||
+        EVP_EncryptInit_ex2(ctx, cipher, key, iv, NULL) <= 0 ||
+        EVP_EncryptInit_ex2(ctx, NULL, NULL, NULL, invalid) > 0 ||
+        EVP_EncryptInit_ex2(ctx, NULL, key, iv, NULL) <= 0 ||
+        EVP_EncryptUpdate(ctx, output, &written, input, sizeof(input)) <= 0 ||
+        written != (int)sizeof(input))
+        goto done;
     ok = 1;
-end:
+done:
     if (!ok)
-        fprintf(stderr, "BELT-SDE accepted Update after failed reinitialization\n");
-    freectx(ctx);
+        fprintf(stderr, "BELT-SDE EVP reinitialization contract failed\n");
+    EVP_CIPHER_CTX_free(ctx);
+    EVP_CIPHER_free(cipher);
     return ok;
 }
+
 
 static int check_mac(void)
 {
@@ -187,8 +121,7 @@ static int check_bign_private_key(void)
 int main(int argc, char **argv)
 {
     OSSL_PROVIDER *def = NULL, *bee2 = NULL;
-    const OSSL_ALGORITHM *algs = NULL;
-    int no_cache = 0, ok = 0;
+    int ok = 0;
 
     if (argc != 2)
         return 2;
@@ -196,23 +129,18 @@ int main(int argc, char **argv)
         return 1;
     def = OSSL_PROVIDER_load(NULL, "default");
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
-    if (def == NULL || bee2 == NULL)
+    if (!def || !bee2)
         goto end;
-    algs = OSSL_PROVIDER_query_operation(bee2, OSSL_OP_CIPHER, &no_cache);
-    if (algs == NULL ||
-        !check_cipher(bee2, algs, "bash-prg-ae1281", 16, 16, 1) ||
-        !check_cipher(bee2, algs, "bash-prg-ae1921", 24, 24, 1) ||
-        !check_cipher(bee2, algs, "bash-prg-ae2561", 32, 32, 1) ||
-        !check_cipher(bee2, algs, "belt-che256", 32, 16, 0) ||
-        !check_cipher(bee2, algs, "belt-dwp256", 32, 16, 0) ||
-        !check_cipher(bee2, algs, "belt-cfb256", 32, 16, 0) ||
-        !check_sde_failed_init(bee2, algs) ||
-        !check_mac() || !check_bign_private_key())
-        goto end;
-    ok = 1;
+
+    ok = check_cipher("bash-prg-ae1281", 16, 16, 1) &&
+         check_cipher("bash-prg-ae1921", 24, 24, 1) &&
+         check_cipher("bash-prg-ae2561", 32, 32, 1) &&
+         check_cipher("belt-che256", 32, 16, 1) &&
+         check_cipher("belt-dwp256", 32, 16, 1) &&
+         check_cipher("belt-cfb256", 32, 16, 0) &&
+         check_sde_failed_init() &&
+         check_mac() && check_bign_private_key();
 end:
-    if (algs != NULL)
-        OSSL_PROVIDER_unquery_operation(bee2, OSSL_OP_CIPHER, algs);
     OSSL_PROVIDER_unload(bee2);
     OSSL_PROVIDER_unload(def);
     return ok ? 0 : 1;

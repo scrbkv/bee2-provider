@@ -74,8 +74,6 @@ static void *hmac_dupctx(void *vctx) {
     const bee2_hmac_ctx_t *src = vctx;
     bee2_hmac_ctx_t *dst;
 
-    if (!src)
-        return NULL;
     dst = OPENSSL_memdup(src, sizeof(*src));
     if (!dst)
         return NULL;
@@ -124,7 +122,6 @@ static const OSSL_PARAM *hmac_gettable_ctx_params(void *vctx, void *provctx) {
 static int hmac_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     const bee2_hmac_ctx_t *ctx = vctx;
     OSSL_PARAM *param;
-    size_t digest_size = ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE;
     size_t block_size = ctx->bash_digest ? ctx->bash_digest->block_size : BELT_HMAC_BLOCK_SIZE;
 
     param = OSSL_PARAM_locate(params, OSSL_MAC_PARAM_SIZE);
@@ -133,7 +130,7 @@ static int hmac_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     param = OSSL_PARAM_locate(params, OSSL_MAC_PARAM_BLOCK_SIZE);
     if (param && !OSSL_PARAM_set_size_t(param, block_size))
         return 0;
-    return ctx->output_size <= digest_size;
+    return 1;
 }
 
 static const OSSL_PARAM bee2_hmac_settable_ctx_params[] = {
@@ -159,8 +156,6 @@ static int hmac_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     int new_output_size_set, change_digest = 0;
     int change_key = 0;
 
-    if (!ctx)
-        return 0;
     if (!params)
         return 1;
     new_digest = ctx->bash_digest;
@@ -226,7 +221,7 @@ static int hmac_start(bee2_hmac_ctx_t *ctx) {
     static const unsigned char empty_key = 0;
     size_t i;
 
-    if (!ctx || !ctx->key_set)
+    if (!ctx->key_set)
         return 0;
     if (!ctx->bash_digest) {
         beltHMACStart(&ctx->backend_state,
@@ -267,8 +262,6 @@ static int
 hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM params[]) {
     bee2_hmac_ctx_t *ctx = vctx;
 
-    if (!ctx)
-        return 0;
     /* A failed Init must not leave the preceding MAC operation active. */
     ctx->initialized = 0;
     if (!hmac_set_ctx_params(ctx, params))
@@ -286,7 +279,7 @@ hmac_init(void *vctx, const unsigned char *key, size_t key_len, const OSSL_PARAM
 static int hmac_update(void *vctx, const unsigned char *input, size_t input_len) {
     bee2_hmac_ctx_t *ctx = vctx;
 
-    if (!ctx || !ctx->initialized || (input_len != 0u && input == NULL))
+    if (!ctx->initialized || (input_len != 0u && input == NULL))
         return 0;
     if (input_len > 0u) {
         if (ctx->bash_digest)
@@ -303,14 +296,14 @@ static int hmac_final(void *vctx, unsigned char *output, size_t *output_len, siz
     unsigned char full_mac[BEE2_HMAC_MAX_DIGEST_SIZE];
     size_t digest_size;
 
-    if (!ctx || !ctx->initialized || !output_len)
+    if (!ctx->initialized)
         return 0;
     digest_size = ctx->bash_digest ? ctx->bash_digest->digest_size : BELT_HMAC_SIZE;
     if (!output) {
         *output_len = ctx->output_size;
         return 1;
     }
-    if (output_size < ctx->output_size || ctx->output_size > digest_size)
+    if (output_size < ctx->output_size)
         return 0;
 
     if (ctx->bash_digest) {

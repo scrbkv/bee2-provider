@@ -3,6 +3,10 @@
 #include "bee2_oids.h"
 #include "provider_util.h"
 
+#include <bee2/crypto/bign128.h>
+#include <bee2/crypto/bign192.h>
+#include <bee2/crypto/bign256.h>
+
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include <string.h>
@@ -79,21 +83,57 @@ int bee2_bign_curve_init_std(const bee2_bign_variant_t *variant, bign_params *cu
     return bignParamsStd(curve, variant->curve_oid) == ERR_OK;
 }
 
+/* Fixed-curve Bee2 APIs reuse precomputed curve state. The provider only
+ * exposes these three standard curves, so a generic EC setup is unnecessary. */
 int bee2_bign_derive_pubkey(const bee2_bign_variant_t *variant,
-                            unsigned char *pub,
-                            const unsigned char *priv) {
-    int ok = 0;
-    bign_params curve;
+                            unsigned char *pub, const unsigned char *priv) {
+    if (variant == &bee2_bign_var_256)
+        return bign128PubkeyCalc(pub, priv) == ERR_OK;
+    if (variant == &bee2_bign_var_384)
+        return bign192PubkeyCalc(pub, priv) == ERR_OK;
+    if (variant == &bee2_bign_var_512)
+        return bign256PubkeyCalc(pub, priv) == ERR_OK;
+    return 0;
+}
 
-    if (!variant || !pub || !priv)
-        return 0;
-    if (!bee2_bign_curve_init_std(variant, &curve))
-        goto cleanup;
-    ok = (bignPubkeyCalc(pub, &curve, priv) == ERR_OK);
+int bee2_bign_keypair_generate(const bee2_bign_variant_t *variant,
+                               unsigned char *priv, unsigned char *pub,
+                               bee2_bign_rng_t *rng) {
+    if (variant == &bee2_bign_var_256)
+        return bign128KeypairGen(priv, pub, bee2_bign_openssl_rng, rng) == ERR_OK;
+    if (variant == &bee2_bign_var_384)
+        return bign192KeypairGen(priv, pub, bee2_bign_openssl_rng, rng) == ERR_OK;
+    if (variant == &bee2_bign_var_512)
+        return bign256KeypairGen(priv, pub, bee2_bign_openssl_rng, rng) == ERR_OK;
+    return 0;
+}
 
-cleanup:
-    bee2_bign_cleanse(&curve, sizeof(curve));
-    return ok;
+int bee2_bign_key_wrap(const bee2_bign_variant_t *variant, unsigned char *token,
+                       const unsigned char *key, size_t len,
+                       const unsigned char header[16], const unsigned char *pub,
+                       bee2_bign_rng_t *rng) {
+    if (variant == &bee2_bign_var_256)
+        return bign128KeyWrap(token, key, len, header, pub,
+                              bee2_bign_openssl_rng, rng) == ERR_OK;
+    if (variant == &bee2_bign_var_384)
+        return bign192KeyWrap(token, key, len, header, pub,
+                              bee2_bign_openssl_rng, rng) == ERR_OK;
+    if (variant == &bee2_bign_var_512)
+        return bign256KeyWrap(token, key, len, header, pub,
+                              bee2_bign_openssl_rng, rng) == ERR_OK;
+    return 0;
+}
+
+int bee2_bign_key_unwrap(const bee2_bign_variant_t *variant, unsigned char *key,
+                         const unsigned char *token, size_t len,
+                         const unsigned char header[16], const unsigned char *priv) {
+    if (variant == &bee2_bign_var_256)
+        return bign128KeyUnwrap(key, token, len, header, priv) == ERR_OK;
+    if (variant == &bee2_bign_var_384)
+        return bign192KeyUnwrap(key, token, len, header, priv) == ERR_OK;
+    if (variant == &bee2_bign_var_512)
+        return bign256KeyUnwrap(key, token, len, header, priv) == ERR_OK;
+    return 0;
 }
 
 bee2_bign_key_t *bee2_bign_key_new(const bee2_bign_variant_t *variant) {
@@ -111,33 +151,27 @@ void bee2_bign_key_free(bee2_bign_key_t *key) {
 }
 
 int bee2_bign_key_validate_public(const bee2_bign_key_t *key) {
-    bign_params curve;
-    int valid = 0;
-
     if (!key || !key->variant || !key->has_pub)
         return 0;
-    if (!bee2_bign_curve_init_std(key->variant, &curve))
-        return 0;
-    valid = bignPubkeyVal(&curve, key->pub) == ERR_OK;
-    bee2_bign_cleanse(&curve, sizeof(curve));
-    return valid;
+    if (key->variant == &bee2_bign_var_256)
+        return bign128PubkeyVal(key->pub) == ERR_OK;
+    if (key->variant == &bee2_bign_var_384)
+        return bign192PubkeyVal(key->pub) == ERR_OK;
+    if (key->variant == &bee2_bign_var_512)
+        return bign256PubkeyVal(key->pub) == ERR_OK;
+    return 0;
 }
 
 int bee2_bign_key_validate_pair(const bee2_bign_key_t *key) {
-    unsigned char derived[BEE2_BIGN_MAX_WORDS * 16];
-    size_t public_length;
-    int valid;
-
-    if (key == NULL || key->variant == NULL || !key->has_priv || !key->has_pub)
+    if (!key || !key->variant || !key->has_priv || !key->has_pub)
         return 0;
-
-    OPENSSL_cleanse(derived, sizeof(derived));
-    valid = bee2_bign_derive_pubkey(key->variant, derived, key->priv);
-    public_length = bee2_bign_pub_len(key->variant);
-    if (valid)
-        valid = bee2_constant_time_equal(derived, key->pub, public_length);
-    bee2_bign_cleanse(derived, sizeof(derived));
-    return valid;
+    if (key->variant == &bee2_bign_var_256)
+        return bign128KeypairVal(key->priv, key->pub) == ERR_OK;
+    if (key->variant == &bee2_bign_var_384)
+        return bign192KeypairVal(key->priv, key->pub) == ERR_OK;
+    if (key->variant == &bee2_bign_var_512)
+        return bign256KeypairVal(key->priv, key->pub) == ERR_OK;
+    return 0;
 }
 
 void bee2_bign_cleanse(void *ptr, size_t len) {

@@ -30,12 +30,60 @@ static int get_encoding(EVP_PKEY *key, const char *expected)
            strcmp(value, expected) == 0;
 }
 
+/* Query-only output parameters must report sizes; undersized or wrongly
+ * typed output buffers must fail without changing the existing key. */
+static int check_key_get_params(EVP_PKEY *key)
+{
+    static const char *const typed_names[] = {
+        OSSL_PKEY_PARAM_GROUP_NAME,
+        OSSL_PKEY_PARAM_BITS,
+        OSSL_PKEY_PARAM_SECURITY_BITS,
+        OSSL_PKEY_PARAM_MAX_SIZE,
+        OSSL_PKEY_PARAM_DEFAULT_DIGEST,
+        OSSL_PKEY_PARAM_PUB_KEY,
+        OSSL_PKEY_PARAM_PRIV_KEY,
+        OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
+        OSSL_PKEY_PARAM_EC_ENCODING
+    };
+    unsigned char tiny[1] = {0};
+    size_t pub_len = 0, priv_len = 0, i;
+
+    if (EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
+                                        NULL, 0, &pub_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        NULL, 0, &priv_len) <= 0 ||
+        pub_len != (size_t)EVP_PKEY_get_bits(key) / 4u ||
+        priv_len != (size_t)EVP_PKEY_get_bits(key) / 8u)
+        return 0;
+
+    for (i = 0; i < sizeof(typed_names) / sizeof(typed_names[0]); ++i) {
+        OSSL_PARAM invalid[] = {
+            OSSL_PARAM_octet_string(typed_names[i], tiny, sizeof(tiny)),
+            OSSL_PARAM_END
+        };
+        /* PUB_KEY and PRIV_KEY expect octets, but one byte is too short.
+         * All other names expect a different type (or larger buffer). */
+        if (EVP_PKEY_get_params(key, invalid) > 0)
+            return 0;
+    }
+    return 1;
+}
+
 static int check_key_params(EVP_PKEY *key)
 {
     char explicit_name[] = OSSL_PKEY_EC_ENCODING_EXPLICIT;
     char group_name[] = OSSL_PKEY_EC_ENCODING_GROUP;
     char invalid_name[] = "invalid";
     unsigned char invalid_pub[1] = {0};
+    unsigned int malformed_value = 7;
+    OSSL_PARAM bad_encoding_type[] = {
+        OSSL_PARAM_uint(OSSL_PKEY_PARAM_EC_ENCODING, &malformed_value),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM bad_group_type[] = {
+        OSSL_PARAM_uint(OSSL_PKEY_PARAM_GROUP_NAME, &malformed_value),
+        OSSL_PARAM_END
+    };
     OSSL_PARAM bad_encoding[] = {
         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_EC_ENCODING, explicit_name, sizeof(explicit_name)),
         OSSL_PARAM_utf8_string("enc_params", invalid_name, sizeof(invalid_name)),
@@ -60,6 +108,11 @@ static int check_key_params(EVP_PKEY *key)
         !get_encoding(key, OSSL_PKEY_EC_ENCODING_EXPLICIT))
         return 0;
     if (EVP_PKEY_set_params(key, bad_key) > 0 ||
+        !get_encoding(key, OSSL_PKEY_EC_ENCODING_EXPLICIT))
+        return 0;
+    /* EVP passes these typed parameters to KEYMGMT; reject atomically. */
+    if (EVP_PKEY_set_params(key, bad_encoding_type) > 0 ||
+        EVP_PKEY_set_params(key, bad_group_type) > 0 ||
         !get_encoding(key, OSSL_PKEY_EC_ENCODING_EXPLICIT))
         return 0;
     return 1;
@@ -128,6 +181,79 @@ end:
     return ok;
 }
 
+
+/* Import must reject a valid point that does not belong to the scalar.
+ * A failed EVP_PKEY_set_params must also leave the existing key unchanged. */
+static int check_mismatched_pair(EVP_PKEY *alice, EVP_PKEY *bob, const char *algorithm)
+{
+    unsigned char private_key[64], foreign_public[128], expected_public[128];
+    unsigned char actual_public[128];
+    size_t private_len = 0, foreign_len = 0, expected_len = 0, actual_len = 0;
+    EVP_PKEY_CTX *import = NULL;
+    EVP_PKEY *invalid = NULL;
+    OSSL_PARAM params[3];
+    int ok = 0;
+
+    if (EVP_PKEY_get_octet_string_param(alice, OSSL_PKEY_PARAM_PRIV_KEY,
+                                        private_key, sizeof(private_key),
+                                        &private_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(alice, OSSL_PKEY_PARAM_PUB_KEY,
+                                        expected_public, sizeof(expected_public),
+                                        &expected_len) <= 0 ||
+        EVP_PKEY_get_octet_string_param(bob, OSSL_PKEY_PARAM_PUB_KEY,
+                                        foreign_public, sizeof(foreign_public),
+                                        &foreign_len) <= 0 ||
+        expected_len != foreign_len ||
+        CRYPTO_memcmp(expected_public, foreign_public, expected_len) == 0)
+        goto end;
+
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY,
+                                                   private_key, private_len);
+    params[1] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                                   foreign_public, foreign_len);
+    params[2] = OSSL_PARAM_construct_end();
+    import = EVP_PKEY_CTX_new_from_name(NULL, algorithm, "provider=bee2");
+    if (!import || EVP_PKEY_fromdata_init(import) <= 0 ||
+        EVP_PKEY_fromdata(import, &invalid, EVP_PKEY_KEYPAIR, params) > 0 ||
+        EVP_PKEY_set_params(alice, params) > 0 ||
+        EVP_PKEY_get_octet_string_param(alice, OSSL_PKEY_PARAM_PUB_KEY,
+                                        actual_public, sizeof(actual_public),
+                                        &actual_len) <= 0 ||
+        actual_len != expected_len ||
+        CRYPTO_memcmp(actual_public, expected_public, expected_len) != 0)
+        goto end;
+    ok = 1;
+
+end:
+    if (!ok)
+        fprintf(stderr, "BIGN mismatched private/public import accepted: %s\n",
+                algorithm);
+    EVP_PKEY_free(invalid);
+    EVP_PKEY_CTX_free(import);
+    OPENSSL_cleanse(private_key, sizeof(private_key));
+    OPENSSL_cleanse(foreign_public, sizeof(foreign_public));
+    OPENSSL_cleanse(expected_public, sizeof(expected_public));
+    OPENSSL_cleanse(actual_public, sizeof(actual_public));
+    return ok;
+}
+
+static int check_keygen_from_template(EVP_PKEY *template)
+{
+    EVP_PKEY_CTX *gen = EVP_PKEY_CTX_new_from_pkey(
+        NULL, template, "provider=bee2");
+    EVP_PKEY *generated = NULL;
+    int ok = gen != NULL && EVP_PKEY_keygen_init(gen) > 0 &&
+             EVP_PKEY_keygen(gen, &generated) > 0 &&
+             EVP_PKEY_get_bits(generated) == EVP_PKEY_get_bits(template) &&
+             EVP_PKEY_eq(generated, template) == 0;
+
+    EVP_PKEY_free(generated);
+    EVP_PKEY_CTX_free(gen);
+    if (!ok)
+        fprintf(stderr, "BIGN key generation from template failed\n");
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *const names[] = {"bign-256", "bign-384", "bign-512"};
@@ -150,8 +276,11 @@ int main(int argc, char **argv)
     for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         alice = generate_key(names[i]);
         bob = generate_key(names[i]);
-        if (alice == NULL || bob == NULL || !check_key_params(alice) ||
-            !check_exchange_params(alice, bob)) {
+        if (alice == NULL || bob == NULL || !check_key_get_params(alice) ||
+            !check_key_params(alice) ||
+            !check_exchange_params(alice, bob) ||
+            !check_mismatched_pair(alice, bob, names[i]) ||
+            !check_keygen_from_template(alice)) {
             fprintf(stderr, "BIGN parameter rollback failed for %s\n", names[i]);
             goto end;
         }

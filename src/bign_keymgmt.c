@@ -56,8 +56,8 @@ bign_apply_encoding_params(int *encode_explicit, int *encode_cofactor, const OSS
     int explicit_encoding, cofactor_encoding;
     int ok = 0;
 
-    if (!encode_explicit || !encode_cofactor || !params)
-        return encode_explicit && encode_cofactor;
+    if (params == NULL)
+        return 1;
 
     explicit_encoding = *encode_explicit;
     cofactor_encoding = *encode_cofactor;
@@ -100,11 +100,6 @@ static int bign_set_variant_from_params(bee2_bign_key_t *key, const OSSL_PARAM p
     char *group = NULL;
     const bee2_bign_variant_t *variant = NULL;
 
-    if (!key)
-        return 0;
-    if (!params)
-        return key->variant != NULL;
-
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME);
     if (!p)
         return key->variant != NULL;
@@ -146,10 +141,7 @@ static void *bign_new(void *provctx) {
 }
 
 static void bign_key_free(void *vkey) {
-    bee2_bign_key_t *key = vkey;
-    if (!key)
-        return;
-    bee2_bign_key_free(key);
+    bee2_bign_key_free(vkey);
 }
 
 static int bign_has(const void *vkey, int selection) {
@@ -186,13 +178,13 @@ static int bign_match(const void *vkey1, const void *vkey2, int selection) {
     if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
         if (!k1->has_priv || !k2->has_priv)
             return 0;
-        if (!bee2_constant_time_equal(k1->priv, k2->priv, priv_len))
+        if (CRYPTO_memcmp(k1->priv, k2->priv, priv_len) != 0)
             return 0;
     }
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
         if (!k1->has_pub || !k2->has_pub)
             return 0;
-        if (!bee2_constant_time_equal(k1->pub, k2->pub, pub_len))
+        if (CRYPTO_memcmp(k1->pub, k2->pub, pub_len) != 0)
             return 0;
     }
     return 1;
@@ -201,10 +193,6 @@ static int bign_match(const void *vkey1, const void *vkey2, int selection) {
 static int bign_validate(const void *vkey, int selection, int checktype) {
     const bee2_bign_key_t *key = vkey;
     (void)checktype;
-    if (!key)
-        return 0;
-    if (!key->variant)
-        return 0;
     if (!bign_has(vkey, selection))
         return 0;
 
@@ -324,8 +312,6 @@ int bee2_bign_import_params(void *vkey, int selection, const OSSL_PARAM params[]
         goto cleanup;
     if (!bign_set_variant_from_params(&candidate, params))
         goto cleanup;
-    if (!candidate.variant)
-        goto cleanup;
 
     priv_len = bee2_bign_priv_len(candidate.variant);
     pub_len = bee2_bign_pub_len(candidate.variant);
@@ -371,7 +357,7 @@ int bee2_bign_import_params(void *vkey, int selection, const OSSL_PARAM params[]
         int valid = bee2_bign_derive_pubkey(candidate.variant, derived, candidate.priv);
 
         if (valid && candidate.has_pub)
-            valid = bee2_constant_time_equal(derived, candidate.pub, pub_len);
+            valid = CRYPTO_memcmp(derived, candidate.pub, pub_len) == 0;
         if (valid && !candidate.has_pub &&
             (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) {
             memcpy(candidate.pub, derived, pub_len);
@@ -472,8 +458,6 @@ static int bign_set_params(void *vkey, const OSSL_PARAM params[]) {
     bee2_bign_key_t *key = vkey;
     int selection = 0;
 
-    if (!vkey)
-        return 0;
     if (!params)
         return 1;
     if (OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME))
@@ -499,8 +483,6 @@ static void *bign_dup(const void *vkey_from, int selection) {
     size_t priv_len;
     size_t pub_len;
 
-    if (!src)
-        return NULL;
     if (!src->variant)
         return NULL;
     dst = bign_new_common(src->variant);
@@ -593,8 +575,6 @@ static int bign_gen_set_template(void *vgenctx, void *vtempl) {
 static int bign_gen_set_params(void *vgenctx, const OSSL_PARAM params[]) {
     bee2_bign_gen_ctx_t *gctx = vgenctx;
 
-    if (!gctx)
-        return 0;
     return bign_apply_encoding_params(&gctx->encode_explicit, &gctx->encode_cofactor, params);
 }
 
@@ -609,13 +589,12 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     bee2_bign_key_t *key = NULL;
     size_t priv_len;
     size_t pub_len;
-    bign_params curve;
     bee2_bign_rng_t rng = {0};
     int ok = 0;
 
     (void)cb;
     (void)cbarg;
-    if (!gctx || !gctx->variant)
+    if (!gctx->variant)
         return NULL;
     rng.libctx = gctx->libctx;
 
@@ -627,9 +606,7 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
 
     priv_len = bee2_bign_priv_len(gctx->variant);
     pub_len = bee2_bign_pub_len(gctx->variant);
-    if (!bee2_bign_curve_init_std(gctx->variant, &curve))
-        goto cleanup;
-    if (bignKeypairGen(key->priv, key->pub, &curve, (gen_i)bee2_bign_openssl_rng, &rng) != ERR_OK ||
+    if (!bee2_bign_keypair_generate(gctx->variant, key->priv, key->pub, &rng) ||
         rng.failed)
         goto cleanup;
 
@@ -647,7 +624,6 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     ok = 1;
 
 cleanup:
-    bee2_bign_cleanse(&curve, sizeof(curve));
     if (!ok) {
         bign_key_free(key);
         key = NULL;
@@ -657,8 +633,7 @@ cleanup:
 
 static void bign_gen_cleanup(void *vgenctx) {
     bee2_bign_gen_ctx_t *gctx = vgenctx;
-    if (!gctx)
-        return;
+
     bee2_bign_cleanse(gctx, sizeof(*gctx));
     OPENSSL_clear_free(gctx, sizeof(*gctx));
 }

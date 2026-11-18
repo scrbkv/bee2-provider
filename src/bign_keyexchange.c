@@ -45,8 +45,6 @@ static void *bign_keyexchange_dupctx(void *vctx) {
     const bee2_bign_keyexchange_ctx_t *src = vctx;
     bee2_bign_keyexchange_ctx_t *dst;
 
-    if (!src)
-        return NULL;
     dst = OPENSSL_memdup(src, sizeof(*src));
     if (!dst)
         return NULL;
@@ -66,8 +64,6 @@ static int bign_keyexchange_init(void *vctx, void *vkey, const OSSL_PARAM params
     bee2_bign_keyexchange_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = vkey;
 
-    if (!ctx)
-        return 0;
     ctx->local_key = NULL;
     ctx->peer_key = NULL;
     if (!key || !key->variant || !key->has_priv ||
@@ -81,8 +77,6 @@ static int bign_keyexchange_set_peer(void *vctx, void *vkey) {
     bee2_bign_keyexchange_ctx_t *ctx = vctx;
     bee2_bign_key_t *peer = vkey;
 
-    if (!ctx)
-        return 0;
     ctx->peer_key = NULL;
     if (!ctx->local_key || !peer || !peer->variant || !peer->has_pub ||
         peer->variant != ctx->local_key->variant || !bee2_bign_key_validate_public(peer))
@@ -181,8 +175,6 @@ static int bign_keyexchange_set_ctx_params(void *vctx, const OSSL_PARAM params[]
     int use_bake_kdf;
     int set_ukm = 0;
 
-    if (ctx == NULL)
-        return 0;
     if (params == NULL)
         return 1;
 
@@ -234,8 +226,6 @@ static int bign_keyexchange_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     OSSL_PARAM *param;
     const char *kdf_name;
 
-    if (!ctx)
-        return 0;
     kdf_name = ctx->use_bake_kdf ? BEE2_BAKE_KDF_NAME : "";
     param = OSSL_PARAM_locate(params, OSSL_EXCHANGE_PARAM_KDF_TYPE);
     if (param && !OSSL_PARAM_set_utf8_string(param, kdf_name))

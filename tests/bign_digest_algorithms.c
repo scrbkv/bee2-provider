@@ -1,7 +1,12 @@
 /* Verify advertised BIGN signature algorithm names select their digest. */
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
+
+#ifndef OSSL_SIGNATURE_PARAM_DETERMINISTIC
+#define OSSL_SIGNATURE_PARAM_DETERMINISTIC "deterministic"
+#endif
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 #include <openssl/params.h>
 #include <openssl/provider.h>
 #include <stdio.h>
@@ -47,6 +52,23 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
     const OSSL_DISPATCH *function;
     char reported[64] = {0};
     char wrong[64];
+    char deterministic_mode[] = "deterministic";
+    char invalid_mode[] = "randomized";
+    unsigned int deterministic = 0;
+    size_t digest_size = 0;
+    OSSL_PARAM query_state[] = {
+        OSSL_PARAM_uint(OSSL_SIGNATURE_PARAM_DETERMINISTIC, &deterministic),
+        OSSL_PARAM_size_t(OSSL_SIGNATURE_PARAM_DIGEST_SIZE, &digest_size),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM enable_mode[] = {
+        OSSL_PARAM_utf8_string("sig", deterministic_mode, sizeof(deterministic_mode)),
+        OSSL_PARAM_END
+    };
+    OSSL_PARAM reject_mode[] = {
+        OSSL_PARAM_utf8_string("sig", invalid_mode, sizeof(invalid_mode)),
+        OSSL_PARAM_END
+    };
     char correct[64];
     OSSL_PARAM query[] = {
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_DIGEST, reported, sizeof(reported)),
@@ -57,6 +79,12 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
         OSSL_PARAM_END
     };
     void *ctx = NULL;
+    unsigned char wrong_type_bytes[3] = {1, 2, 3};
+    static const char *const typed_parameter_names[] = {
+        OSSL_SIGNATURE_PARAM_DETERMINISTIC, "sig",
+        OSSL_SIGNATURE_PARAM_DIGEST, OSSL_SIGNATURE_PARAM_PROPERTIES
+    };
+    size_t i;
     int ok = 0;
 
     for (function = alg->implementation; function->function_id != 0; ++function) {
@@ -92,7 +120,30 @@ static int check_named_signature(const OSSL_ALGORITHM *alg,
     if (set(ctx, value) <= 0)
         goto end;
     memset(reported, 0, sizeof(reported));
-    if (get(ctx, query) <= 0 || OPENSSL_strcasecmp(reported, test->digest) != 0)
+    if (get(ctx, query) <= 0 || OPENSSL_strcasecmp(reported, test->digest) != 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 0 ||
+        digest_size != (OPENSSL_strcasecmp(test->digest, "bash384") == 0 ? 48u :
+                       OPENSSL_strcasecmp(test->digest, "bash512") == 0 ? 64u : 32u) ||
+        set(ctx, reject_mode) > 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 0 ||
+        set(ctx, enable_mode) <= 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 1)
+        goto end;
+    for (i = 0; i < sizeof(typed_parameter_names) /
+                    sizeof(typed_parameter_names[0]); ++i) {
+        OSSL_PARAM wrong_type[] = {
+            OSSL_PARAM_construct_octet_string(typed_parameter_names[i],
+                                              wrong_type_bytes,
+                                              sizeof(wrong_type_bytes)),
+            OSSL_PARAM_END
+        };
+        if (set(ctx, wrong_type) > 0)
+            goto end;
+    }
+    memset(reported, 0, sizeof(reported));
+    if (get(ctx, query) <= 0 ||
+        OPENSSL_strcasecmp(reported, test->digest) != 0 ||
+        get(ctx, query_state) <= 0 || deterministic != 1)
         goto end;
     ok = 1;
 end:
@@ -162,6 +213,71 @@ cleanup:
     return ok;
 }
 
+
+/* This public EVP one-shot path is distinct from DigestSignUpdate/Final. */
+static int check_oneshot_signature(const char *curve, const char *digest)
+{
+    unsigned char message[257], signature[128];
+    EVP_PKEY_CTX *gen = NULL;
+    EVP_PKEY *key = NULL;
+    EVP_MD_CTX *sign = NULL, *verify = NULL;
+    size_t siglen = sizeof(signature);
+    size_t i;
+    int ok = 0;
+
+    for (i = 0; i < sizeof(message); ++i)
+        message[i] = (unsigned char)(i * 37u + 9u);
+    gen = EVP_PKEY_CTX_new_from_name(NULL, curve, "provider=bee2");
+    if (!gen || EVP_PKEY_keygen_init(gen) <= 0 ||
+        EVP_PKEY_keygen(gen, &key) <= 0)
+        goto done;
+    sign = EVP_MD_CTX_new();
+    verify = EVP_MD_CTX_new();
+    if (!sign || !verify ||
+        EVP_DigestSignInit_ex(sign, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSign(sign, signature, &siglen, message, sizeof(message)) <= 0 ||
+        EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, sizeof(message)) <= 0)
+        goto done;
+    message[0] ^= 0x80;
+    if (EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, sizeof(message)) > 0)
+        goto done;
+
+    /* An empty message is valid; its signature must authenticate the empty
+     * digest and reject a modified signature. */
+    siglen = sizeof(signature);
+    if (EVP_DigestSignInit_ex(sign, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSign(sign, signature, &siglen, message, 0) <= 0 ||
+        EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, 0) <= 0)
+        goto done;
+    signature[0] ^= 1;
+    if (EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerify(verify, signature, siglen, message, 0) > 0)
+        goto done;
+
+    /* Streaming Final with no nonempty Update must sign the empty message.
+     * This must also work after a zero-byte Update. */
+    siglen = sizeof(signature);
+    if (EVP_DigestSignInit_ex(sign, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestSignUpdate(sign, message, 0) <= 0 ||
+        EVP_DigestSignFinal(sign, signature, &siglen) <= 0 ||
+        EVP_DigestVerifyInit_ex(verify, NULL, digest, NULL, "provider=bee2", key, NULL) <= 0 ||
+        EVP_DigestVerifyFinal(verify, signature, siglen) <= 0)
+        goto done;
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "BIGN one-shot signature failed: %s/%s\n", curve, digest);
+    EVP_MD_CTX_free(verify);
+    EVP_MD_CTX_free(sign);
+    EVP_PKEY_free(key);
+    EVP_PKEY_CTX_free(gen);
+    OPENSSL_cleanse(signature, sizeof(signature));
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     const OSSL_ALGORITHM *algs = NULL, *alg;
@@ -188,7 +304,11 @@ int main(int argc, char **argv)
             !check_named_signature(alg, bee2, &fixed_algorithms[i]))
             goto end;
     }
-    if (!check_digest_properties(bee2, algs))
+    if (!check_digest_properties(bee2, algs) ||
+        !check_oneshot_signature("bign-256", "belt-hash") ||
+        !check_oneshot_signature("bign-256", "bash256") ||
+        !check_oneshot_signature("bign-384", "bash384") ||
+        !check_oneshot_signature("bign-512", "bash512"))
         goto end;
     ok = 1;
 end:

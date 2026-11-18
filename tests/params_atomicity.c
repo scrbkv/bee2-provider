@@ -101,12 +101,56 @@ static int check_pbkdf(void)
              EVP_KDF_derive(ctx, again, sizeof(again), NULL) > 0 &&
              CRYPTO_memcmp(original, again, sizeof(original)) == 0;
 
+    if (ok) {
+        EVP_KDF_CTX_reset(ctx);
+        ok = EVP_KDF_derive(ctx, again, sizeof(again), NULL) <= 0 &&
+             EVP_KDF_CTX_set_params(ctx, good) > 0 &&
+             EVP_KDF_derive(ctx, again, sizeof(again), NULL) > 0 &&
+             CRYPTO_memcmp(original, again, sizeof(original)) == 0;
+    }
+
     if (!ok)
         fprintf(stderr, "BELT PBKDF rejected parameters corrupted context\n");
     EVP_KDF_CTX_free(ctx);
     EVP_KDF_free(kdf);
     OPENSSL_cleanse(original, sizeof(original));
     OPENSSL_cleanse(again, sizeof(again));
+    return ok;
+}
+
+
+
+static int check_belt_mac_copy(void)
+{
+    EVP_MAC *mac = EVP_MAC_fetch(NULL, "belt-mac256", "provider=bee2");
+    EVP_MAC_CTX *ctx = EVP_MAC_CTX_new(mac), *copy = NULL;
+    unsigned char key[32] = {1, 2, 3}, msg[57] = {7, 6, 5};
+    unsigned char a[8], b[8];
+    size_t alen = 0, blen = 0;
+    OSSL_PARAM key_param[] = {
+        OSSL_PARAM_octet_string(OSSL_MAC_PARAM_KEY, key, sizeof(key)),
+        OSSL_PARAM_END
+    };
+    int ok = 0;
+
+    if (ctx == NULL || EVP_MAC_CTX_set_params(ctx, key_param) <= 0 ||
+        EVP_MAC_init(ctx, NULL, 0, NULL) <= 0 ||
+        EVP_MAC_update(ctx, msg, 13) <= 0 ||
+        (copy = EVP_MAC_CTX_dup(ctx)) == NULL ||
+        EVP_MAC_update(ctx, msg + 13, sizeof(msg) - 13) <= 0 ||
+        EVP_MAC_update(copy, msg + 13, sizeof(msg) - 13) <= 0 ||
+        EVP_MAC_final(ctx, a, &alen, sizeof(a)) <= 0 ||
+        EVP_MAC_final(copy, b, &blen, sizeof(b)) <= 0 ||
+        alen != sizeof(a) || blen != sizeof(b) ||
+        CRYPTO_memcmp(a, b, sizeof(a)) != 0)
+        goto end;
+    ok = 1;
+end:
+    if (!ok)
+        fprintf(stderr, "BELT-MAC context duplication failed\n");
+    EVP_MAC_CTX_free(copy);
+    EVP_MAC_CTX_free(ctx);
+    EVP_MAC_free(mac);
     return ok;
 }
 
@@ -252,7 +296,8 @@ int main(int argc, char **argv)
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
     if (def == NULL || bee2 == NULL)
         goto end;
-    ok = check_hmac() && check_hmac_failed_reinit() && check_pbkdf() && check_bign_digest() &&
+    ok = check_hmac() && check_hmac_failed_reinit() && check_belt_mac_copy() &&
+         check_pbkdf() && check_bign_digest() &&
          check_belt_cipher() && check_bash_prgae();
 end:
     OSSL_PROVIDER_unload(bee2);

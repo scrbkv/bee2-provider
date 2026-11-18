@@ -102,6 +102,18 @@ set_target_properties(bee2_provider PROPERTIES
 # ---- Tests ----------------------------------------------------------
 
 option(BEE2_PROVIDER_BUILD_TESTS "Build the provider test suite" OFF)
+option(BEE2_PROVIDER_ENABLE_COVERAGE "Instrument provider source for line/branch coverage" OFF)
+
+if(BEE2_PROVIDER_ENABLE_COVERAGE)
+    if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        message(FATAL_ERROR "Coverage instrumentation currently requires GCC/gcov")
+    endif()
+    if(NOT BEE2_PROVIDER_BUILD_TESTS)
+        message(FATAL_ERROR "Coverage requires BEE2_PROVIDER_BUILD_TESTS=ON")
+    endif()
+    target_compile_options(bee2_provider PRIVATE --coverage -fprofile-update=atomic -O0 -g)
+    target_link_options(bee2_provider PRIVATE --coverage)
+endif()
 
 if(BEE2_PROVIDER_BUILD_TESTS)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")

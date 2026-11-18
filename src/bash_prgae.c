@@ -103,8 +103,6 @@ static void *bash_prgae_newctx_for_variant(void *provctx, const bash_prgae_varia
 
 static void bash_prgae_freectx(void *vctx) {
     bee2_bash_prgae_ctx_t *c = vctx;
-    if (!c)
-        return;
     OPENSSL_clear_free(c, sizeof(*c));
 }
 
@@ -227,8 +225,6 @@ static int bash_prgae_update(void *vctx,
                              const unsigned char *in,
                              size_t inl) {
     bee2_bash_prgae_ctx_t *c = vctx;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
 
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized ||
@@ -276,8 +272,6 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
     bee2_bash_prgae_ctx_t *c = vctx;
     (void)out;
     (void)outsize;
-    if (c == NULL || outl == NULL)
-        return 0;
     *outl = 0;
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized)
         return 0;
@@ -294,7 +288,7 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
             return 0;
         bashPrgSqueeze(computed, c->variant->mac_size, &c->backend_state.state);
 
-        valid = bee2_constant_time_equal(computed, c->tag, c->variant->mac_size);
+        valid = CRYPTO_memcmp(computed, c->tag, c->variant->mac_size) == 0;
         OPENSSL_cleanse(computed, sizeof(computed));
         if (!valid)
             return 0;
