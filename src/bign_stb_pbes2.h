@@ -15,18 +15,17 @@
 /* Check the PBES2 encryption OID without requesting a password. */
 int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted);
 
-/* Bound the work of the provider's legacy PBES2/PBKDF2 fallback. */
+/* Bound work in the OpenSSL PBES2/PBKDF2 decoder path. */
 int bee2_pkcs8_standard_pbkdf2_allowed(const X509_SIG *encrypted,
                                           unsigned int max_iterations);
 
 /* DER-encoded EncryptedPrivateKeyInfo, allocated with OPENSSL_malloc(). */
-unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
+unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *scalar, size_t scalar_len,
                                       const unsigned char *password, size_t password_len,
-                                      size_t key_len, unsigned int iterations,
+                                      unsigned int iterations,
                                       size_t salt_len, OSSL_LIB_CTX *libctx, size_t *out_len);
 
-/* The caller must distinguish an unrecognised legacy scheme from a malformed
- * STB scheme or an incorrect password, and never fall back for the latter. */
+/* A malformed STB PBES2 object must not fall back to other decoders. */
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
                                             const unsigned char *password,
                                             size_t password_len,

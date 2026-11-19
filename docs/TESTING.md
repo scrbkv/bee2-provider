@@ -62,12 +62,13 @@ inputs are checked in both directions where an engine implementation exists.
 ## ASN.1 and PBES2 verification
 
 `bee2_bign_codec_crypto` checks the DER `EncryptedPrivateKeyInfo` envelope,
-PBES2/PBKDF2 algorithm identifiers and parameters, BELT-KWP key lengths,
-12,000 iterations, 24-byte salt, malformed encodings and wrong passwords. In
-the STB Annex E profile, the PRF and KWP parameter fields must encode `NULL`.
-OpenSSL-native AES-128/192/256-CBC PBES2 is also tested through the normal
-encoder/decoder interfaces. The decoder enforces complete consumption of
-decrypted PKCS#8 DER, including rejection of authenticated trailing bytes.
+PBES2/PBKDF2 algorithm identifiers and parameters, mandatory BELT-KWP-256,
+12,000 iterations, 24-byte salt, malformed encodings and wrong passwords.
+The Annex E profile requires `NULL` in both PRF and KWP parameter fields.
+The published Annex E.5 wrapped BIGN private scalar is checked using the
+public decoder, and authenticated wrapping of PKCS#8 DER is rejected as a
+nonstandard payload. Native AES-128/192/256-CBC PBES2 is tested separately
+using OpenSSL's ordinary PKCS#8 encoding and decoding interfaces.
 
 The binary and PEM framing tests cover concatenated records and nonseekable
 BIO input. ASN.1 negative tests mutate and truncate DER key encodings; they

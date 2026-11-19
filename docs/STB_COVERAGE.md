@@ -59,18 +59,20 @@ operation's contract cannot be replayed through that operation.
 
 BIGN `SubjectPublicKeyInfo` uses the STB `bign-pubkey` OID, encoded public
 point and `DomainParameters` (named curve or supported explicit parameters).
+The ASN.1 `Curve.seed` field is mandatory, as specified by the BIGN module.
 BIGN private keys use OpenSSL's standard PKCS#8 `PrivateKeyInfo` structure.
 The container DER is produced and parsed by the OpenSSL ASN.1 APIs rather
 than a parallel provider ASN.1 codec.
 
-For the exact password-protection profile defined in Annex E of
-STB 34.101.45, PBES2 contains PBKDF2 with HMAC-HBELT, a 32-byte derived
-key and BELT-KWP-256. Both nested PRF and KWP identifiers have ASN.1 `NULL`
-parameters. The encrypted data is an authenticated wrapping of DER-encoded
-PKCS#8; Annex E's fixed wrapping example checks the underlying primitive
-on the standard's private scalar. The provider supports explicitly selected
-KWP-128 and KWP-192 as BELT extensions, and OpenSSL's native PBES2 when
-an application selects a conventional CBC cipher.
+STB 34.101.45, Annex E uses PBKDF2 with HMAC-HBELT, a 32-byte derived key,
+and BELT-KWP-256 on the **private scalar**, rather than on DER-encoded PKCS#8.
+Both nested PRF and KWP identifiers require ASN.1 `NULL` parameters. The
+provider emits and decodes this exact scalar protection scheme, reconstructing
+PKCS#8 with OpenSSL after authentication; the published Annex E.5 token is
+also tested through the public key decoder. Only the 256-bit KWP key is used
+for BIGN protection, regardless of BIGN curve size. KWP-128/192 are separate
+public cipher operations. Explicit selection of a conventional CBC cipher
+uses OpenSSL's native PBES2 and encrypts full PKCS#8 instead.
 
 The encoder applies the Annex E recommendations of at least 10,000 PBKDF2
 iterations and an 8-byte salt. A per-decoder upper limit prevents unbounded

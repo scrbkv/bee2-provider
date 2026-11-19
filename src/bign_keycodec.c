@@ -45,7 +45,7 @@ static int write_all(BIO *bio, const void *data, size_t len) {
     return 1;
 }
 
-static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len,
+static unsigned char *encrypt_key_material(const unsigned char *der, size_t der_len,
                                          const bee2_bign_encoder_ctx_t *ctx,
                                         OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,
                                         size_t *out_len) {
@@ -63,7 +63,7 @@ static unsigned char *encrypt_pkcs8_der(const unsigned char *der, size_t der_len
         password_len <= sizeof(password)) {
         if (key_len != 0)
             out = bee2_stb_pbes2_encrypt(der, der_len, (const unsigned char *)password,
-                                         password_len, key_len, ctx->pbkdf2_iterations,
+                                         password_len, ctx->pbkdf2_iterations,
                                          ctx->pbkdf2_salt_len, ctx->libctx, out_len);
         else
             out = bee2_bign_asn1_encrypt_standard_pkcs8(
@@ -146,9 +146,7 @@ static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         if (cipher_name && (cipher = EVP_CIPHER_fetch(ctx->libctx, cipher_name, propq)) == NULL)
             return 0;
         if (cipher) {
-            if (EVP_CIPHER_is_a(cipher, "belt-kwp128") ||
-                EVP_CIPHER_is_a(cipher, "belt-kwp192") ||
-                EVP_CIPHER_is_a(cipher, "belt-kwp256")) {
+            if (EVP_CIPHER_is_a(cipher, "belt-kwp256")) {
                 kwp_len = (size_t)EVP_CIPHER_get_key_length(cipher);
             } else if (EVP_CIPHER_get_mode(cipher) != EVP_CIPH_CBC_MODE ||
                        EVP_CIPHER_get_nid(cipher) == NID_undef ||
@@ -220,18 +218,24 @@ static int bign_encoder_encode(void *vctx,
                 ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT, "bign_encoder_encode: no private key");
             return 0;
         }
-        der = bee2_bign_asn1_encode_pkcs8_der(key, &der_len);
         label = BIGN_PEM_LABEL;
-        if (der && ctx->encrypt) {
-            unsigned char *encrypted;
-            size_t encrypted_len = 0;
-
-            encrypted = encrypt_pkcs8_der(der, der_len, ctx,
-                                          cb, cbarg, &encrypted_len);
-            OPENSSL_clear_free(der, der_len);
-            der = encrypted;
-            der_len = encrypted_len;
+        if (ctx->encrypt && ctx->kwp_key_len != 0) {
+            der = encrypt_key_material(key->priv, bee2_bign_priv_len(key->variant),
+                                       ctx, cb, cbarg, &der_len);
             label = BIGN_ENCRYPTED_PEM_LABEL;
+        } else {
+            der = bee2_bign_asn1_encode_pkcs8_der(key, &der_len);
+            if (der && ctx->encrypt) {
+                unsigned char *encrypted;
+                size_t encrypted_len = 0;
+
+                encrypted = encrypt_key_material(der, der_len, ctx,
+                                                 cb, cbarg, &encrypted_len);
+                OPENSSL_clear_free(der, der_len);
+                der = encrypted;
+                der_len = encrypted_len;
+                label = BIGN_ENCRYPTED_PEM_LABEL;
+            }
         }
     } else if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
         der = bee2_bign_asn1_encode_spki_der(key, &der_len);

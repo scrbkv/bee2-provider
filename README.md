@@ -96,19 +96,25 @@ BIGN private keys use PKCS#8 `PrivateKeyInfo` and
 `EncryptedPrivateKeyInfo`; public keys use `SubjectPublicKeyInfo`. Both DER
 and PEM encodings are supported. The OpenSSL `file:` STORE loader is supported.
 
-When an application explicitly requests private-key encryption through
-`OSSL_ENCODER_CTX_set_cipher()`, `"default"` selects BELT-KWP-256. The
-STB PBES2 profile uses OpenSSL's `X509_SIG`, `PBE2PARAM` and `PBKDF2PARAM`
-ASN.1 structures with PBKDF2-HMAC-HBELT and BELT-KWP-256. The PBKDF2 PRF and
-KWP `AlgorithmIdentifier` parameters are ASN.1 `NULL`, as required by
-STB 34.101.45, Annex E. The BELT-KWP authentication header is 16 zero bytes.
+When private-key encryption is explicitly requested with
+`OSSL_ENCODER_CTX_set_cipher()`, `"default"` or `"belt-kwp256"` selects
+STB 34.101.45, Annex E. PBKDF2-HMAC-HBELT derives a 32-byte key and
+BELT-KWP-256 protects the **raw BIGN private scalar** (32, 48 or 64 bytes)
+with a 16-byte zero header. The PBES2 envelope and algorithm identifiers are
+encoded with OpenSSL's `X509_SIG`, `PBE2PARAM` and `PBKDF2PARAM`; both the PRF
+and KWP `AlgorithmIdentifier` parameters are ASN.1 `NULL`.
 
-Applications may explicitly request `belt-kwp128` or `belt-kwp192` as
-additional BELT-KWP variants. The precisely specified Annex E BIGN profile
-uses the 256-bit key. Standard CBC ciphers such as `AES-256-CBC`,
-`AES-192-CBC` or `AES-128-CBC` select OpenSSL's native PBES2/PBKDF2
-implementation instead of the STB profile. An encoder without an encryption
-request writes unencrypted PKCS#8.
+The STB decoder authenticates the scalar and constructs an ordinary PKCS#8
+`PrivateKeyInfo` with OpenSSL. The named curve is determined by its scalar
+length. STB-encrypted keys therefore do not preserve explicit-parameter
+encoding, and generic OpenSSL PBES2 decoders cannot decrypt this STB-specific
+scalar payload without the Bee2 Provider decoder. BELT-KWP-128/192 remain
+available as standalone ciphers, not as private-key protection schemes.
+
+Applications may explicitly select standard CBC ciphers such as
+`AES-256-CBC`, `AES-192-CBC` or `AES-128-CBC`; in that case OpenSSL performs
+native PBES2/PBKDF2 over the DER-encoded PKCS#8 container. An encoder without
+encryption writes unencrypted PKCS#8.
 
 The STB PBES2 encoder defaults to 10,000 iterations and a fresh 16-byte salt.
 Use `OSSL_ENCODER_CTX_set_params()` with `stb-pbkdf2-iterations` (unsigned int)
