@@ -499,42 +499,6 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
     return 1;
 }
 
-static int append_bytes(unsigned char **buffer,
-                        size_t *length,
-                        size_t *capacity,
-                        const unsigned char *data,
-                        size_t data_length) {
-    size_t required;
-    size_t new_capacity;
-    unsigned char *expanded;
-
-    if (!buffer || !length || !capacity || (!data && data_length != 0) ||
-        data_length > SIZE_MAX - *length)
-        return 0;
-
-    required = *length + data_length;
-    if (required > *capacity) {
-        new_capacity = *capacity ? *capacity : 4096u;
-        while (new_capacity < required) {
-            if (new_capacity > SIZE_MAX / 2u) {
-                new_capacity = required;
-                break;
-            }
-            new_capacity *= 2u;
-        }
-        expanded = OPENSSL_realloc(*buffer, new_capacity);
-        if (!expanded)
-            return 0;
-        *buffer = expanded;
-        *capacity = new_capacity;
-    }
-
-    if (data_length != 0)
-        memcpy(*buffer + *length, data, data_length);
-    *length = required;
-    return 1;
-}
-
 static int read_pem_object(BIO *bio, unsigned char first,
                            unsigned char **out, size_t *len) {
     static const char begin[] = "-----BEGIN ";
@@ -543,11 +507,24 @@ static int read_pem_object(BIO *bio, unsigned char first,
     size_t used = 0, capacity = 0;
     int begun = 0, ending = 0, closed = 0;
 
-    /* Read one PEM record, including its line terminator, without read-ahead. */
+    /* Read exactly one bounded PEM record without buffering a second key. */
     for (;;) {
-        if (used == BIGN_MAX_KEY_INPUT ||
-            !append_bytes(&buf, &used, &capacity, &ch, 1))
-            break;
+        if (used == capacity) {
+            size_t next_capacity;
+            unsigned char *expanded;
+
+            if (capacity == BIGN_MAX_KEY_INPUT)
+                break;
+            next_capacity = capacity ? capacity * 2u : 4096u;
+            if (next_capacity > BIGN_MAX_KEY_INPUT)
+                next_capacity = BIGN_MAX_KEY_INPUT;
+            expanded = OPENSSL_realloc(buf, next_capacity);
+            if (expanded == NULL)
+                break;
+            buf = expanded;
+            capacity = next_capacity;
+        }
+        buf[used++] = ch;
         if (closed) {
             if (ch == '\n') {
                 *out = buf;
@@ -907,7 +884,6 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     BIO *bio = NULL;
     unsigned char *buf = NULL, *plain_der = NULL, *converted = NULL;
     const unsigned char *payload = NULL;
-    char *pem_name = NULL;
     const unsigned char *p;
     X509_SIG *encrypted = NULL;
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
@@ -925,33 +901,20 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     if (bio == NULL)
         goto end;
 
-    if (ctx->input_pem) {
-        if (!read_one_object(bio, &buf, &len))
+    if (!read_one_object(bio, &buf, &len))
+        goto end;
+    if (len == 0) {
+        ok = 1;
+        goto end;
+    }
+    payload = buf;
+    payload_len = len;
+    if (ctx->input_pem && buf[0] != 0x30) {
+        converted = pem_to_der_buf(buf, len, &payload_len, NULL);
+        if (converted == NULL || payload_len == 0 ||
+            payload_len > BIGN_MAX_KEY_INPUT)
             goto end;
-        if (len == 0) {
-            ok = 1;
-            goto end;
-        }
-        if (buf[0] == 0x30) {
-            /* A generic loader may invoke this adapter on DER input. */
-            payload = buf;
-            payload_len = len;
-        } else {
-            converted = pem_to_der_buf(buf, len, &payload_len, &pem_name);
-            if (converted == NULL || payload_len == 0 ||
-                payload_len > BIGN_MAX_KEY_INPUT)
-                goto end;
-            payload = converted;
-        }
-    } else {
-        if (!read_one_object(bio, &buf, &len))
-            goto end;
-        if (len == 0) {
-            ok = 1;
-            goto end;
-        }
-        payload = buf;
-        payload_len = len;
+        payload = converted;
     }
 
     p = payload;
@@ -1043,7 +1006,6 @@ end:
     PKCS8_PRIV_KEY_INFO_free(p8);
     X509_SIG_free(encrypted);
     OPENSSL_clear_free(converted, payload_len);
-    OPENSSL_free(pem_name);
     OPENSSL_clear_free(buf, len);
     BIO_free(bio);
     return ok;
@@ -1250,8 +1212,8 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *scalar, size_t scalar
     *out_len = 0;
     if (scalar == NULL || password == NULL || password_len > INT_MAX ||
         (scalar_len != 32 && scalar_len != 48 && scalar_len != 64) ||
-        iterations < BEE2_STB_PBKDF2_MIN_ITER || iterations > INT_MAX ||
-        salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX)
+        iterations == 0 || iterations > INT_MAX ||
+        salt_len == 0 || salt_len > INT_MAX)
         return NULL;
     salt = OPENSSL_malloc(salt_len);
     wrapped = OPENSSL_malloc(scalar_len + 16);
@@ -1442,9 +1404,8 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     iter = ASN1_INTEGER_get(kdf->iter);
     salt_len = asn_length(kdf->salt->value.octet_string);
     wrapped_len = asn_length(ciphertext);
-    if (iter < BEE2_STB_PBKDF2_MIN_ITER || iter > INT_MAX ||
-        iter > (long)max_iterations ||
-        salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX ||
+    if (iter <= 0 || iter > INT_MAX || iter > (long)max_iterations ||
+        salt_len == 0 || salt_len > INT_MAX ||
         (wrapped_len != 48 && wrapped_len != 64 && wrapped_len != 80))
         goto end;
     plaintext = OPENSSL_malloc(wrapped_len);

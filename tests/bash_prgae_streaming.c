@@ -1,4 +1,5 @@
 /* BASH-PRG-AE output must not depend on EVP Update boundaries. */
+#include <bee2/crypto/bash.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -69,7 +70,52 @@ end:
     return ok;
 }
 
-static int check_variant(const char *name, size_t key_len, size_t iv_len)
+/* Check an empty message against the STB command sequence, not just against
+ * a second EVP operation using the same provider. */
+static int check_empty_reference(EVP_CIPHER *cipher, size_t key_len, size_t d)
+{
+    unsigned char key[32], iv[32], aad[17], expected[32], tag[32], data[1] = {0};
+    void *state = OPENSSL_malloc(bashPrg_keep());
+    size_t i, aad_len;
+    int ok = 0;
+
+    if (state == NULL)
+        return 0;
+    for (i = 0; i < sizeof(key); ++i) {
+        key[i] = (unsigned char)(i * 7 + 3);
+        iv[i] = (unsigned char)(i * 11 + 5);
+    }
+    for (i = 0; i < sizeof(aad); ++i)
+        aad[i] = (unsigned char)(i * 13 + 17);
+
+    for (aad_len = 0; aad_len <= sizeof(aad); aad_len += sizeof(aad)) {
+        bashPrgStart(state, key_len * 8, d, iv, key_len, key, key_len);
+        if (aad_len != 0)
+            bashPrgAbsorb(aad, aad_len, state);
+        bashPrgEncr(data, 0, state);
+        bashPrgSqueeze(expected, key_len, state);
+
+        if (!crypt(cipher, 1, key, iv, aad, aad_len, data, 0,
+                   data, tag, key_len, 0, 0) ||
+            CRYPTO_memcmp(tag, expected, key_len) != 0 ||
+            !crypt(cipher, 0, key, iv, aad, aad_len, data, 0,
+                   data, tag, key_len, 0, 0))
+            goto end;
+        tag[0] ^= 1;
+        if (crypt(cipher, 0, key, iv, aad, aad_len, data, 0,
+                  data, tag, key_len, 0, 0))
+            goto end;
+    }
+    ok = 1;
+end:
+    OPENSSL_clear_free(state, bashPrg_keep());
+    OPENSSL_cleanse(key, sizeof(key));
+    OPENSSL_cleanse(expected, sizeof(expected));
+    OPENSSL_cleanse(tag, sizeof(tag));
+    return ok;
+}
+
+static int check_variant(const char *name, size_t key_len, size_t iv_len, size_t d)
 {
     unsigned char key[MAX_TAG_SIZE], iv[MAX_TAG_SIZE];
     unsigned char aad[AAD_SIZE], plain[TEXT_SIZE];
@@ -130,11 +176,8 @@ static int check_variant(const char *name, size_t key_len, size_t iv_len)
               recovered, other_tag, key_len, 1, 2))
         goto end;
 
-    /* Empty AAD and empty plaintext are legal and must authenticate. */
-    if (!crypt(cipher, 1, key, iv, NULL, 0, plain, 0,
-               output, other_tag, key_len, 0, 0) ||
-        !crypt(cipher, 0, key, iv, NULL, 0, plain, 0,
-               output, other_tag, key_len, 0, 0))
+    /* Empty AAD and empty plaintext must match the Bee2 STB commands. */
+    if (!check_empty_reference(cipher, key_len, d))
         goto end;
     ok = 1;
 
@@ -157,10 +200,11 @@ int main(int argc, char **argv)
         const char *name;
         size_t key_len;
         size_t iv_len;
+        size_t d;
     } variants[] = {
-        {"bash-prg-ae1281", 16, 16}, {"bash-prg-ae1282", 16, 16},
-        {"bash-prg-ae1921", 24, 24}, {"bash-prg-ae1922", 24, 24},
-        {"bash-prg-ae2561", 32, 32}, {"bash-prg-ae2562", 32, 32}
+        {"bash-prg-ae1281", 16, 16, 1}, {"bash-prg-ae1282", 16, 16, 2},
+        {"bash-prg-ae1921", 24, 24, 1}, {"bash-prg-ae1922", 24, 24, 2},
+        {"bash-prg-ae2561", 32, 32, 1}, {"bash-prg-ae2562", 32, 32, 2}
     };
     OSSL_PROVIDER *def = NULL, *bee2 = NULL;
     size_t i;
@@ -175,7 +219,8 @@ int main(int argc, char **argv)
     if (def == NULL || bee2 == NULL)
         goto end;
     for (i = 0; i < sizeof(variants) / sizeof(variants[0]); ++i) {
-        if (!check_variant(variants[i].name, variants[i].key_len, variants[i].iv_len))
+        if (!check_variant(variants[i].name, variants[i].key_len,
+                           variants[i].iv_len, variants[i].d))
             goto end;
     }
     ok = 1;

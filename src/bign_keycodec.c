@@ -85,7 +85,7 @@ static void *bign_encoder_newctx_common(const bee2_bign_variant_t *variant,
     ctx->libctx = bee2_provider_libctx(provctx);
     ctx->output_pem = output_pem;
     ctx->kwp_key_len = 32; /* Default when encryption is explicitly requested. */
-    ctx->pbkdf2_iterations = BEE2_STB_PBKDF2_MIN_ITER;
+    ctx->pbkdf2_iterations = BEE2_STB_PBKDF2_DEFAULT_ITER;
     ctx->pbkdf2_salt_len = BEE2_STB_PBKDF2_DEFAULT_SALT;
     return ctx;
 }
@@ -126,10 +126,12 @@ static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     salt_len = ctx->pbkdf2_salt_len;
     iter_param = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_ITER);
     salt_param = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_SALTLEN);
+    /* Annex E recommends work factors; it does not make them format bounds.
+     * Zero cannot represent an explicit PBKDF2 count or generated salt. */
     if ((iter_param && (!OSSL_PARAM_get_uint(iter_param, &iterations) ||
-                        iterations < BEE2_STB_PBKDF2_MIN_ITER || iterations > INT_MAX)) ||
+                        iterations == 0 || iterations > INT_MAX)) ||
         (salt_param && (!OSSL_PARAM_get_size_t(salt_param, &salt_len) ||
-                        salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX)))
+                        salt_len == 0 || salt_len > INT_MAX)))
         return 0;
     param = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_CIPHER);
     if (param != NULL) {
@@ -322,7 +324,7 @@ static int bign_decoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     if (p == NULL)
         return 1;
     if (!OSSL_PARAM_get_uint(p, &max_iterations) ||
-        max_iterations < BEE2_STB_PBKDF2_MIN_ITER || max_iterations > INT_MAX)
+        max_iterations == 0 || max_iterations > INT_MAX)
         return 0;
     ctx->max_pbkdf2_iterations = max_iterations;
     return 1;

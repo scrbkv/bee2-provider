@@ -4,8 +4,7 @@
 #include <openssl/x509.h>
 #include <stddef.h>
 
-#define BEE2_STB_PBKDF2_MIN_ITER 10000u
-#define BEE2_STB_PBKDF2_MIN_SALT 8u
+#define BEE2_STB_PBKDF2_DEFAULT_ITER 10000u
 #define BEE2_STB_PBKDF2_DEFAULT_SALT 16u
 #define BEE2_STB_PBKDF2_PARAM_ITER "stb-pbkdf2-iterations"
 #define BEE2_STB_PBKDF2_PARAM_SALTLEN "stb-pbkdf2-saltlen"

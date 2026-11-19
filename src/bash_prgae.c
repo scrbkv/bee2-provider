@@ -275,6 +275,15 @@ static int bash_prgae_final(void *vctx, unsigned char *out, size_t *outl, size_t
     *outl = 0;
     if (!c->backend_state.key_set || !c->backend_state.iv_set || c->finalized)
         return 0;
+    /* Even an empty message has a TEXT phase. The command commits a
+     * distinct domain separator before the final Squeeze. */
+    if (!c->data_started) {
+        if (c->enc)
+            bashPrgEncrStart(&c->backend_state.state);
+        else
+            bashPrgDecrStart(&c->backend_state.state);
+        c->data_started = 1;
+    }
     c->finalized = 1;
 
     if (c->enc) {

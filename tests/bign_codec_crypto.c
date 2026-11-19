@@ -682,17 +682,17 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
     const char *cipher = "belt-kwp256";
     const char *oid = "1.2.112.0.2.0.34.101.31.73";
     size_t key_len = 32u;
-    unsigned int iterations = 12000, too_few_iterations = 9999;
-    size_t salt_length = 24, too_short_salt = 7;
+    unsigned int iterations = 12000, invalid_iterations = 0;
+    size_t salt_length = 24, invalid_salt_length = 0;
     OSSL_PARAM settings[] = {
         OSSL_PARAM_uint("stb-pbkdf2-iterations", &iterations),
         OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &salt_length),
         OSSL_PARAM_END};
     OSSL_PARAM invalid_iter[] = {
-        OSSL_PARAM_uint("stb-pbkdf2-iterations", &too_few_iterations),
+        OSSL_PARAM_uint("stb-pbkdf2-iterations", &invalid_iterations),
         OSSL_PARAM_END};
     OSSL_PARAM invalid_salt[] = {
-        OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &too_short_salt),
+        OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &invalid_salt_length),
         OSSL_PARAM_END};
     int ok = 0;
 

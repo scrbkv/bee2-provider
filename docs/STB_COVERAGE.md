@@ -74,11 +74,13 @@ for BIGN protection, regardless of BIGN curve size. KWP-128/192 are separate
 public cipher operations. Explicit selection of a conventional CBC cipher
 uses OpenSSL's native PBES2 and encrypts full PKCS#8 instead.
 
-The encoder applies the Annex E recommendations of at least 10,000 PBKDF2
-iterations and an 8-byte salt. A per-decoder upper limit prevents unbounded
-work for an untrusted encrypted key container. The standalone `belt-pbkdf`
-KDF is tested against the standard's own example without these container
-policy restrictions.
+The encoder defaults to 10,000 PBKDF2 iterations and a fresh 16-byte salt.
+Both values are caller-configurable; the Annex E recommendations are not
+minimum decoding or encoding constraints. Zero values are rejected because
+they cannot express a usable explicit count or randomly generated salt in the
+PKCS#8 API. A configurable per-decoder upper bound limits PBKDF2 work on
+untrusted encrypted keys. The standalone `belt-pbkdf` KDF is tested against
+the standard's example.
 
 ## EVP-specific details
 

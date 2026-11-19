@@ -118,14 +118,20 @@ encryption writes unencrypted PKCS#8.
 
 The STB PBES2 encoder defaults to 10,000 iterations and a fresh 16-byte salt.
 Use `OSSL_ENCODER_CTX_set_params()` with `stb-pbkdf2-iterations` (unsigned int)
-and `stb-pbkdf2-saltlen` (`size_t`) to customize these values. The encoder
-requires at least 10,000 iterations and 8 salt bytes, following the guidance
-in Annex E. These minimums are a key-container policy; the standalone
-`belt-pbkdf` primitive follows its own algorithm contract.
+and `stb-pbkdf2-saltlen` (`size_t`) to customize them. The Annex E minimums
+(10,000 iterations and 8 salt bytes) are security recommendations, not format
+requirements; the encoder accepts any positive count and salt length that fit
+OpenSSL's ASN.1 API. Choosing weaker values is the caller's responsibility.
+
+The stock `openssl genpkey` and `openssl pkey` commands do not offer options for
+these provider-specific encoder parameters. `openssl pkcs8 -iter` and
+`-saltlen` apply to OpenSSL's native PBES2 output, not to the STB KWP scalar
+profile. Use an application calling `OSSL_ENCODER_CTX_set_params()` to select
+STB work factors explicitly.
 
 The STB private-key decoder permits at most 1,000,000 PBKDF2 iterations by
 default. Applications can adjust this limit using decoder context parameter
-`stb-pbkdf2-max-decode-iterations` (unsigned int, at least 10,000).
+`stb-pbkdf2-max-decode-iterations` (any positive unsigned int up to INT_MAX).
 This bound applies to the provider's STB and standard-PBKDF2 decoding paths,
 not to unrelated OpenSSL decoders. Passwords and plaintext key material are
 cleared from provider temporary buffers on cleanup.

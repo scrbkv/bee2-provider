@@ -206,6 +206,8 @@ static int check_stb_decrypt_parameters(void)
     int recognised, wrong_type, ok = 0;
 
     for (i = 0; i < sizeof(curve_oids) / sizeof(curve_oids[0]); ++i) {
+        const unsigned int iterations = i == 0 ? 1u : BEE2_STB_PBKDF2_DEFAULT_ITER;
+        const size_t salt_len = i == 0 ? 1u : BEE2_STB_PBKDF2_DEFAULT_SALT;
         const unsigned char *p, *private_bytes = NULL;
         const ASN1_OBJECT *algorithm = NULL;
         const X509_ALGOR *key_alg = NULL;
@@ -219,8 +221,7 @@ static int check_stb_decrypt_parameters(void)
         encrypted_len = 0;
         encrypted = bee2_stb_pbes2_encrypt(
             scalar, scalar_len, password, sizeof(password) - 1,
-            BEE2_STB_PBKDF2_MIN_ITER, BEE2_STB_PBKDF2_MIN_SALT,
-            NULL, &encrypted_len);
+            iterations, salt_len, NULL, &encrypted_len);
         if (encrypted == NULL)
             goto end;
         p = encrypted;

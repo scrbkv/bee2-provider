@@ -349,7 +349,7 @@ add_test(NAME bee2_bash_prgae_stb
 set_tests_properties(bee2_bash_prgae_stb PROPERTIES LABELS "stb;known_answer;bash;aead;native")
 
 add_executable(bee2_bash_prgae_streaming bash_prgae_streaming.c)
-target_link_libraries(bee2_bash_prgae_streaming PRIVATE OpenSSL::Crypto)
+target_link_libraries(bee2_bash_prgae_streaming PRIVATE bee2_static OpenSSL::Crypto)
 add_test(NAME bee2_bash_prgae_streaming
     COMMAND bee2_bash_prgae_streaming $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bash_prgae_streaming PROPERTIES LABELS "regression;bash;aead;evp;native")
