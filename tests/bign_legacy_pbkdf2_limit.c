@@ -110,7 +110,7 @@ static int check_stb_pbes2_classification(void)
         return 0;
     for (i = 0; i < sizeof(ciphers) / sizeof(ciphers[0]); ++i) {
         info = make_pbes2(10000, OID_PBKDF2, ciphers[i]);
-        if (info == NULL || !bee2_stb_pbes2_is_stb(info) ||
+        if (info == NULL || bee2_stb_pbes2_is_stb(info) != (i == 2) ||
             bee2_pkcs8_standard_pbkdf2_allowed(info, 0))
             goto end;
 
@@ -119,7 +119,7 @@ static int check_stb_pbes2_classification(void)
         recognised = 0;
         plain = bee2_stb_pbes2_decrypt(info, password,
                                        sizeof(password) - 1, 10000, NULL, &recognised);
-        if (plain != NULL || !recognised)
+        if (plain != NULL || recognised != (i == 2))
             goto end;
         X509_SIG_free(info);
         info = NULL;
@@ -135,8 +135,7 @@ end:
 
 
 
-/* Exercise PBKDF2 salt encodings omitted by the normal OpenSSL EVP tests.
- * The test starts from a genuine authenticated STB-encrypted PKCS#8 key. */
+/* Exercise PBKDF2 salt encodings with an authenticated STB scalar. */
 static int mutate_stb_salt(X509_SIG *info, int wrong_type)
 {
     static const unsigned char short_salt[7] = {0};
@@ -195,39 +194,32 @@ end:
 static int check_stb_decrypt_parameters(void)
 {
     static const unsigned char password[] = "stb-pbes2-parameter-test";
-    static const unsigned char private_data[16] = {
-        1, 3, 3, 7, 9, 2, 4, 6, 0, 5, 1, 8, 7, 3, 2, 1
+    static const unsigned char scalar[64] = {1};
+    static const char *const curve_oids[] = {
+        BEE2_OID_BIGN_CURVE256, BEE2_OID_BIGN_CURVE384,
+        BEE2_OID_BIGN_CURVE512
     };
-    PKCS8_PRIV_KEY_INFO *pkcs8 = NULL, *decoded = NULL;
-    ASN1_OBJECT *algorithm = NULL;
-    unsigned char *private_copy = NULL, *plain = NULL, *encrypted = NULL;
-    unsigned char *roundtrip = NULL;
     X509_SIG *info = NULL;
-    size_t encrypted_len = 0;
-    int plain_len = 0, roundtrip_len, recognised;
-    size_t key_len;
-    int wrong_type, ok = 0;
+    PKCS8_PRIV_KEY_INFO *decoded = NULL;
+    unsigned char *encrypted = NULL;
+    size_t encrypted_len = 0, i;
+    int recognised, wrong_type, ok = 0;
 
-    pkcs8 = PKCS8_PRIV_KEY_INFO_new();
-    algorithm = OBJ_txt2obj("1.2.3.4", 1);
-    private_copy = OPENSSL_memdup(private_data, sizeof(private_data));
-    if (pkcs8 == NULL || algorithm == NULL || private_copy == NULL ||
-        !PKCS8_pkey_set0(pkcs8, algorithm, 0, V_ASN1_NULL, NULL,
-                        private_copy, (int)sizeof(private_data)))
-        goto end;
-    algorithm = NULL;
-    private_copy = NULL;
-    plain_len = i2d_PKCS8_PRIV_KEY_INFO(pkcs8, &plain);
-    if (plain_len < 16 || plain == NULL)
-        goto end;
-
-    for (key_len = 16; key_len <= 32; key_len += 8) {
-        const unsigned char *p;
+    for (i = 0; i < sizeof(curve_oids) / sizeof(curve_oids[0]); ++i) {
+        const unsigned char *p, *private_bytes = NULL;
+        const ASN1_OBJECT *algorithm = NULL;
+        const X509_ALGOR *key_alg = NULL;
+        const void *parameters = NULL;
+        char oid[96];
+        int private_len = 0, parameter_type = 0;
+        size_t scalar_len = 32u + 16u * i;
 
         OPENSSL_clear_free(encrypted, encrypted_len);
+        encrypted = NULL;
+        encrypted_len = 0;
         encrypted = bee2_stb_pbes2_encrypt(
-            plain, (size_t)plain_len, password, sizeof(password) - 1,
-            key_len, BEE2_STB_PBKDF2_MIN_ITER, BEE2_STB_PBKDF2_MIN_SALT,
+            scalar, scalar_len, password, sizeof(password) - 1,
+            BEE2_STB_PBKDF2_MIN_ITER, BEE2_STB_PBKDF2_MIN_SALT,
             NULL, &encrypted_len);
         if (encrypted == NULL)
             goto end;
@@ -239,23 +231,28 @@ static int check_stb_decrypt_parameters(void)
             goto end;
 
         PKCS8_PRIV_KEY_INFO_free(decoded);
+        decoded = NULL;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000, NULL, &recognised);
-        if (decoded == NULL || !recognised)
+                                          sizeof(password) - 1, 10000, NULL,
+                                          &recognised);
+        if (decoded == NULL || !recognised ||
+            !PKCS8_pkey_get0(&algorithm, &private_bytes, &private_len,
+                             &key_alg, decoded) ||
+            private_len != (int)scalar_len ||
+            CRYPTO_memcmp(private_bytes, scalar, scalar_len) != 0 ||
+            OBJ_obj2txt(oid, sizeof(oid), algorithm, 1) <= 0 ||
+            strcmp(oid, BEE2_OID_BIGN_PUBKEY) != 0)
             goto end;
-        OPENSSL_free(roundtrip);
-        roundtrip = NULL;
-        roundtrip_len = i2d_PKCS8_PRIV_KEY_INFO(decoded, &roundtrip);
-        if (roundtrip_len != plain_len || roundtrip == NULL ||
-            memcmp(roundtrip, plain, (size_t)plain_len) != 0)
+        X509_ALGOR_get0(NULL, &parameter_type, &parameters, key_alg);
+        if (parameter_type != V_ASN1_OBJECT || parameters == NULL ||
+            OBJ_obj2txt(oid, sizeof(oid), parameters, 1) <= 0 ||
+            strcmp(oid, curve_oids[i]) != 0)
             goto end;
     }
 
-    /* The recognised output parameter is required; a missing one must not
-     * trigger a decryption attempt. */
     if (bee2_stb_pbes2_decrypt(info, password, sizeof(password) - 1,
-                               10000, NULL, NULL) != NULL)
+                                10000, NULL, NULL) != NULL)
         goto end;
 
     for (wrong_type = 0; wrong_type < 2; ++wrong_type) {
@@ -269,11 +266,11 @@ static int check_stb_decrypt_parameters(void)
         decoded = NULL;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000, NULL, &recognised);
+                                          sizeof(password) - 1, 10000, NULL,
+                                          &recognised);
         if (decoded != NULL || !recognised)
             goto end;
     }
-
     ok = 1;
 
 end:
@@ -281,12 +278,7 @@ end:
         fprintf(stderr, "STB PBES2 decryption parameter contract failed\n");
     X509_SIG_free(info);
     PKCS8_PRIV_KEY_INFO_free(decoded);
-    PKCS8_PRIV_KEY_INFO_free(pkcs8);
-    ASN1_OBJECT_free(algorithm);
-    OPENSSL_clear_free(private_copy, sizeof(private_data));
     OPENSSL_clear_free(encrypted, encrypted_len);
-    OPENSSL_clear_free(plain, plain_len > 0 ? (size_t)plain_len : 0);
-    OPENSSL_free(roundtrip);
     return ok;
 }
 
