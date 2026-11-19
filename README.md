@@ -33,7 +33,8 @@ The supported algorithm identifiers and normative test references are listed in
 ```sh
 git clone --recurse-submodules https://github.com/scrbkv/bee2-provider.git
 cd bee2-provider
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    -DBEE2_PROVIDER_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
