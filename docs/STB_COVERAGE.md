@@ -1,99 +1,88 @@
-# STB algorithm coverage
+# STB algorithms and normative test vectors
 
-This document describes algorithms **exposed by the OpenSSL provider**. The
-linked Bee2 submodule implements further algorithms that are not necessarily
-available through the provider. Functional tests do not constitute an
-independent certification of compliance with any STB standard.
+This document describes the OpenSSL algorithms exported by Bee2 Provider and
+the independently published STB examples used by its tests. The underlying
+Bee2 library supports additional procedures that are not exported as separate
+provider operations.
 
-| Standard | Exposed implementations | Scope and gaps |
+## Standards and algorithm identifiers
+
+| Standard | Provider interfaces |
+| --- | --- |
+| STB 34.101.31 (BELT) | ECB, CBC, CFB, CTR, DWP, CHE, KWP, MAC, Hash, BDE, SDE |
+| STB 34.101.45 (BIGN) | BIGN-256/384/512 keys, signatures, key agreement, key transport, SPKI/PKCS#8, password protection |
+| STB 34.101.47 | HMAC-HBELT, BRNG-CTR-HBELT, BRNG-HMAC-HBELT |
+| STB 34.101.77 (BASH) | BASH-256/384/512 and BASH-PRG-AE profiles |
+
+The authoritative algorithm identifiers and ASN.1 definitions are available
+in the original specification sources:
+
+- [BIGN ASN.1 module](https://github.com/bcrypto/bign/blob/master/spec/bign-module-v2.asn) and [password-protection annex](https://github.com/bcrypto/bign/blob/master/spec/96Password.tex)
+- [BELT ASN.1 module](https://github.com/bcrypto/belt/blob/master/spec/belt-module-v2.asn)
+- [BASH ASN.1 module](https://github.com/bcrypto/bash/blob/master/spec/bash-module-v2.asn)
+- [STB 34.101.50 OID registry](https://github.com/bcrypto/stb/blob/master/34.101.50/oids.md)
+- [STB 34.101.19 X.509 profile](https://github.com/bcrypto/stb/blob/master/34.101.19/x509.md)
+
+## Published examples exercised by the suite
+
+| Standard and examples | Provider test | Operation |
 | --- | --- | --- |
-| STB 34.101.31 (BELT) | ECB, CBC, CFB, CTR, MAC, DWP, CHE, KWP, hash, BDE, SDE | `belt-fmt`, `belt-krp` and a separate wide-block interface are not exported. ECB/CBC without padding support Bee2 ciphertext stealing for a final nonaligned Update of at least 16 bytes; streaming a partial final block across calls is not supported by the EVP contract. PKCS#7 is the EVP default and is distinct from CTS. BDE/SDE require block-aligned input, while CFB/CTR/AEAD/KWP accept non-aligned input. The PKCS#7 result must not be described as the standard CTS result. The provider does not enforce per-key usage quotas. |
-| STB 34.101.45 (BIGN) | Named curves 256/384/512, key validation/generation, signatures, key transport, SPKI/PKCS#8, and PBKDF using the Bee2 backend | Encrypted PKCS#8 is encoded as PBES2 with PBKDF2-HMAC-HBELT and BELT-KWP, with configurable Annex E minimum iterations/salt. Previous OpenSSL PBES2 profiles remain readable. The provider adds a DER-to-DER EncryptedPrivateKeyInfo decoder and a PEM-to-DER adapter for STB PBES2 before the standard BIGN key decoder. Identification signatures and the complete set of other password-based key protection procedures are not exposed. Independent fixed signature and transport vectors and exhaustive ASN.1 profiles are still required. |
-| STB 34.101.47 (BRNG/HMAC) | HMAC-HBELT, BRNG-CTR-HBELT and BRNG-HMAC-HBELT | BRNG delegates its cryptographic state transitions to Bee2 Start/Step functions. Caller-supplied key material is required. Prediction resistance and nonempty personalization are rejected, as is additional input for BRNG-HMAC; reseed replaces the supplied key. Declared strength bounds the supplied key length, not independently measured entropy. |
-| STB 34.101.77 (BASH) | BASH-256/384/512 digests and six BASH-PRG-AE variants | The full set of BASH PRG operations is not exposed. The named algorithms have functional coverage but not yet independent fixed vectors for every parameter and streaming combination. |
-| STB 34.101.66 (BAKE) | None | BIGN key agreement and the optional BAKE-related KDF are not implementations of the BMQV, BSTS or BPACE protocols. |
+| BELT 34.101.31, A.1–A.2 | `stb_kat.c` | Single-block BELT answers embedded in the ECB encryption/decryption KATs |
+| BELT 34.101.31, A.9–A.16 | `stb_kat.c` | ECB, CBC, CFB, CTR encryption and decryption, including published nonaligned CTS cases |
+| BELT 34.101.31, A.17 | `stb_kat.c` | MAC outputs |
+| BELT 34.101.31, A.19–A.20 | `belt_aead_stb.c` | DWP and CHE encryption, authentication and decryption |
+| BELT 34.101.31, A.21–A.22 | `stb_kat.c` | KWP wrapping and unwrapping |
+| BELT 34.101.31, A.23 | `stb_kat.c` | BELT-Hash |
+| BELT 34.101.31, A.24–A.25 | `stb_kat.c` | BDE and SDE encryption and decryption |
+| BELT 34.101.31, A.27 and §8.1.2 | `belt_keyexpand_stb.c` | 128/192/256-bit key expansion |
+| BIGN 34.101.45, G.1–G.3 | `bign_stb_verify.c` | Published BIGN key and signature verification examples |
+| BIGN 34.101.45, G.4–G.5 | `stb_kat.c` | Published key-transport token decryption |
+| BIGN 34.101.45, E.5 | `stb_kat.c` | PBKDF2-HMAC-HBELT key and protected private scalar |
+| STB 34.101.47, B.1 | `stb_kat.c` | HMAC-HBELT |
+| STB 34.101.47, B.2/B.4 | `brng_kat.c` | BRNG-CTR and BRNG-HMAC |
+| BASH 34.101.77, A.3 | `stb_kat.c` | BASH-256/384/512 |
+| BASH 34.101.77, A.4 | `bash_prgae_stb.c` | PRG encryption (128-bit security level, profile 1) |
+| BASH 34.101.77, A.6 | `bash_prgae_evp_stb.c` | BASH-PRG-AE2561 ciphertext and tag |
 
-Other STB standards, such as those defining secret sharing, X.509/CMS
-profiles, or network protocols, are outside the provider's current declared
-primitive API. Their full implementation must not be inferred from the presence
-of the underlying algorithms.
+Additional sizes and cipher variants are verified by EVP integration tests,
+Bee2 direct comparisons, and a separate `bee2evp` engine interoperability
+matrix. These comparisons are distinct from fixed, published STB outputs.
 
-## Evidence and validation
+A published example for an internal transformation is not a provider API test:
+BELT wide-block encryption, compression, FMT, key replication, BASH's internal
+permutation and standalone PRG-hash, BIGN identification signatures and
+one-time secret generation are not exposed as dedicated provider operations.
+Published examples with input lengths unsupported by an advertised EVP
+operation's contract cannot be replayed through that operation.
 
-- The compiled provider is tested on Linux using pinned OpenSSL 3.5, 4.0 and
-  4.1 releases and the pinned Bee2 submodule.
-- `tests/stb_kat.c` and `tests/belt_aead_stb.c` check independent STB appendix vectors for
-  BELT block modes, BDE, SDE, DWP, CHE, KWP, MAC, Hash, PBKDF and
-  BASH-256/384/512. The fixed outputs are not produced by the provider
-  under test.
-- `tests/brng_kat.c` contains fixed BRNG-CTR and BRNG-HMAC appendix vectors.
-- Other algorithms are often checked by round trips, cross-variant coverage
-  or internal consistency, which is weaker than independent known-answer tests.
-- Interoperability with a pinned `bee2evp` engine is exercised in an
-  independent GitHub Actions job. Its supported cipher, MAC and digest
-  algorithms are checked with fixed boundary sizes and deterministic
-  pseudorandom buffers, including cross-decryption. Extended BIGN
-  certificate interoperability checks verify certificate signatures under both
-  implementations. A separate AEAD/KWP matrix covers the legacy wire format
-  for BELT-DWP, BELT-CHE, BELT-KWP and BASH-PRG-AE2561.
-  The engine is a separate implementation interface over Bee2; it is
-  not an independent cryptographic implementation.
-- The main build matrix does not cover Windows or macOS.
-- A full conformity claim requires the relevant normative edition, algorithm
-  profiles and OIDs, exhaustive fixed vectors, boundary and negative tests,
-  interoperability, security review, and applicable certification processes.
+## ASN.1 and encrypted private keys
 
-## Test coverage by operation
+BIGN `SubjectPublicKeyInfo` uses the STB `bign-pubkey` OID, encoded public
+point and `DomainParameters` (named curve or supported explicit parameters).
+BIGN private keys use OpenSSL's standard PKCS#8 `PrivateKeyInfo` structure.
+The container DER is produced and parsed by the OpenSSL ASN.1 APIs rather
+than a parallel provider ASN.1 codec.
 
-The terms in this table are deliberately distinct: a **standard KAT**
-compares against a fixed answer published with an STB example; a
-**Bee2 interoperability** test checks the provider against upstream Bee2
-high-level functions; **bee2evp interoperability** compares a separately
-compiled OpenSSL engine; a **round-trip** only establishes internal
-consistency. These checks must not be counted as equivalent, and Bee2 and
-bee2evp share cryptographic implementation code.
+For the exact password-protection profile defined in Annex E of
+STB 34.101.45, PBES2 contains PBKDF2 with HMAC-HBELT, a 32-byte derived
+key and BELT-KWP-256. Both nested PRF and KWP identifiers have ASN.1 `NULL`
+parameters. The encrypted data is an authenticated wrapping of DER-encoded
+PKCS#8; Annex E's fixed wrapping example checks the underlying primitive
+on the standard's private scalar. The provider supports explicitly selected
+KWP-128 and KWP-192 as BELT extensions, and OpenSSL's native PBES2 when
+an application selects a conventional CBC cipher.
 
-| Operation | STB known-answer evidence | Additional validation |
-| --- | --- | --- |
-| BELT ECB/CBC/CFB/CTR | 256-bit keys, STB 34.101.31 Appendix A, including ECB/CBC ciphertext stealing (A.9-2/A.10-2/A.11-2/A.12-2); 128/192-bit key-expansion equivalence to the A.27 expanded key | Round-trips for all key lengths; bee2evp fixed/boundary/random inputs |
-| BELT BDE/SDE | 256-bit keys, A.24 encryption and A.25 decryption | Round-trips for 128/192/256; no bee2evp counterpart |
-| BELT DWP/CHE | 256-bit keys, A.19-1/2 (ciphertext and authentication tag) | Round-trips and tag-rejection for all key lengths |
-| BELT KWP | 256-bit keys, A.21 encryption and A.22 decryption | Round-trips and tamper tests for all key lengths |
-| BELT MAC | 256-bit keys, A.17 | STB A.27 expanded-key equivalence for 128/192; bee2evp MAC comparison for 256 |
-| BELT-Hash | A.23 (multiple lengths) | Streaming/one-shot API equivalence and bee2evp comparison |
-| BELT-PBKDF | STB 34.101.45 Appendix E.5 including the wrapped private-key token | EVP KDF integration |
-| HMAC-HBELT | STB 34.101.47 B.1 | bee2evp comparison, plus HMAC construction tests |
-| BRNG-CTR-HBELT / BRNG-HMAC-HBELT | STB 34.101.47 B.2/B.4 | RAND contract tests |
-| BASH-256/384/512 | STB 34.101.77 A.3, multiple boundary lengths | Streaming/one-shot and bee2evp comparisons |
-| BASH-PRG-AE (six provider variants) | STB 34.101.77 A.4 ciphertext for l=128, d=1 and A.6 ciphertext/tag for l=256, d=1 (the latter is also verified through EVP with an explicitly configured 16-byte IV); **no independent published KAT for the four other variants** | Functional round-trips and authentication failures |
-| BIGN signature/key agreement/key transport | Published BIGN-256 public key and signature verification G.1-G.3 and key-transport decryption G.4/G.5; **not yet covered by an independent STB answer for every variant and operation** | Deterministic repeatability, sign/verify, DH agreement, key transport round-trips/tampering, encoding checks and selected bee2evp certificate interoperability |
+The encoder applies the Annex E recommendations of at least 10,000 PBKDF2
+iterations and an 8-byte salt. A per-decoder upper limit prevents unbounded
+work for an untrusted encrypted key container. The standalone `belt-pbkdf`
+KDF is tested against the standard's own example without these container
+policy restrictions.
 
-The missing per-algorithm standard KATs remain release blockers for a claim
-of exhaustive normative coverage. In particular, the 128/192-bit variants
-of several BELT algorithms and four BASH-PRG-AE EVP profiles still
-require a carefully matched normative reference rather than generated
-expected values.
+## EVP-specific details
 
-## BELT key expansion against the standard
-
-The key expansion reference is **STB 34.101.31-2020**, section 8.1.2
-and Table A.27. The provider uses Bee2 `beltKeyExpand2()` followed by
-`u32To()`. `tests/belt_keyexpand_stb.c` checks the provider path for
-128-, 192- and 256-bit keys against the normative example and additional
-inputs. The `belt-keyexpand` OpenSSL KAT group verifies ECB, CBC, CFB and CTR
-results against normatively expanded 256-bit keys.
-
-## API distinctions
-
-OpenSSL EVP represents a generic application interface, not an STB protocol
-interface. EVP defaults (for example PKCS#7 padding) and standard-specific
-semantics (for example BELT ECB/CBC ciphertext stealing) must be documented
-and tested separately. BELT-BDE is not AES-XTS and has no defined EVP cipher mode. The provider
-uses mode `0` as an OpenSSL compatibility fallback (which OpenSSL labels
-`STREAM_CIPHER`), and supplies the `bee2-mode=belt-bde` algorithm parameter.
-Clients should use the cipher name rather than infer BELT-BDE properties from
-the generic EVP mode value.
-
-The pinned Bee2 API is the primary source of truth for low-level call
-preconditions. In particular, `beltSDEStepE()` and `beltSDEStepD()` accept only
-whole sectors of at least 32 bytes, a multiple of 16.
+ECB/CBC default to PKCS#7 padding, whereas the published nonaligned examples
+use STB ciphertext stealing. Their known-answer tests disable padding and
+provide the complete final partial block in one update. For SDE, sectors are
+at least 32 bytes and multiples of 16. Short or nonaligned inputs that are
+rejected by an operation's documented contract are not substituted with
+synthetic expected ciphertexts.

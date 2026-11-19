@@ -1,153 +1,67 @@
 # Bee2 Provider
 
-## What is Bee2 Provider?
-
-Bee2 Provider integrates the [Bee2](https://github.com/agievich/bee2)
-cryptographic library with [OpenSSL](https://www.openssl.org/) through the
-OpenSSL 3 provider interface. Algorithm names and behavior are compatible with
-[bee2evp](https://github.com/bcrypto/bee2evp) where the provider interface
-permits it.
+Bee2 Provider makes Belarusian STB cryptographic algorithms from the
+[Bee2 library](https://github.com/agievich/bee2) available through the
+[OpenSSL 3 provider API](https://docs.openssl.org/3.0/man7/provider/).
+It supports OpenSSL EVP, provider-based key management, encoding and decoding.
 
 ## Algorithms
 
-Bee2 Provider implements:
+| Family | Interfaces |
+| --- | --- |
+| BELT | ECB, CBC, CFB, CTR, BDE, SDE; DWP, CHE; KWP-128/192/256; BELT-Hash; BELT-MAC-128/192/256; BELT-PBKDF |
+| BASH | BASH-256/384/512; BASH-PRG-AE (128/192/256, profiles 1 and 2) |
+| HMAC | HMAC with BELT-Hash and BASH-256/384/512 |
+| BRNG | BRNG-CTR-HBELT, BRNG-HMAC-HBELT |
+| BIGN | BIGN-256/384/512 key generation, signatures, key agreement, key transport, PKCS#8/SPKI DER and PEM |
 
-- BELT block ciphers: ECB, CBC, CFB, CTR, BDE and SDE;
-- BELT authenticated encryption and key wrapping: CHE, DWP and KWP;
-- BASH-PRG authenticated encryption;
-- `belt-hash`, `bash256`, `bash384` and `bash512` digests;
-- HMAC with `belt-hash`, `bash256`, `bash384` and `bash512`;
-- `belt-mac128`, `belt-mac192` and `belt-mac256`;
-- `belt-pbkdf`;
-- `brng-ctr-hbelt` and `brng-hmac-hbelt` random generators;
-  these deterministic generators require caller-supplied keys and do not
-  independently obtain entropy or provide prediction resistance;
-- `bign-256`, `bign-384` and `bign-512` key generation, signatures,
-  Diffie--Hellman key agreement, key transport and PEM/DER encoding.
+BIGN supports named curve identifiers and explicit parameters. Signature
+algorithms include BIGN with BELT-Hash, BASH digests and explicit hSpec digest
+identifiers. With `bign-with-hspec`, select a digest of the appropriate length
+and a registered digest OID; hSpec signature identifiers contain its OID as
+an ASN.1 OBJECT parameter.
 
-For BIGN signatures, `bign-with-hspec` uses an explicitly selected digest,
-not a default digest. The digest must have a registered OID and produce 32,
-48 or 64 bytes, matching the BIGN curve. Bee2 receives the DER-encoded
-**digest OID**. The hSpec signature AlgorithmIdentifier carries this OID
-as an ASN.1 OBJECT parameter. Selecting a compatible non-STB digest (for example, SHA-256
-with `bign-256`) also selects the hSpec signature identifier. Digests with
-fixed BIGN signature identifiers continue to use those identifiers.
+The supported algorithm identifiers and normative test references are listed in
+[STB algorithms and test vectors](docs/STB_COVERAGE.md).
 
-Encrypted BIGN PKCS#8 supports two PBES2 profiles. The preferred STB profile
-uses PBKDF2-HMAC-HBELT (STB 34.101.45, Annex E) and authenticated
-BELT-KWP-128/192/256 (STB 34.101.31), with the KWP OID, HMAC-HBELT OID,
-derived-key length, salt and iteration count encoded in
-EncryptedPrivateKeyInfo. KWP uses an all-zero authentication header.
-Select `belt-kwp128`, `belt-kwp192`, `belt-kwp256` or `default` with
-`OSSL_ENCODER_CTX_set_cipher()`; `default` selects BELT-KWP-256.
+## Requirements and build
 
-For interoperability with non-STB software, callers can explicitly select
-standard CBC ciphers such as `AES-256-CBC` or `AES-128-CBC`. Those keys are
-encrypted using OpenSSL's standard PBES2/PBKDF2 implementation, **not** the
-STB HMAC-HBELT profile. The requested cipher must support OpenSSL PBES2.
-As with OpenSSL's standard encoders, omitting the encryption request produces
-an **unencrypted** PKCS#8 key; the KWP default applies only when encryption
-is explicitly selected.
-
-The encoder defaults to 10,000 iterations and a random 16-byte salt. Applications
-may set the `stb-pbkdf2-iterations` (uint) and `stb-pbkdf2-saltlen` (size_t)
-encoder context parameters via `OSSL_ENCODER_CTX_set_params()`. Values below
-10,000 iterations or 8 salt bytes are rejected when encrypting. These
-limits enforce the *recommendations* from STB Annex E as an output policy;
-Bee2's standalone `belt-pbkdf` primitive still supports all standard-defined
-inputs, including smaller test-vector parameters. Older OpenSSL-generated
-PBES2/PBKDF2 containers remain readable through the provider's bounded legacy
-decoder; other legacy KDFs are handled, when supported, by OpenSSL's normal
-decoder chain. Encrypted files using BELT-KWP follow the STB profile and require support
-for its algorithm identifiers. OpenSSL-managed CBC encryption uses conventional
-PBES2 identifiers.
-
-STB PKCS#8 decoding limits PBKDF2 to 1,000,000 iterations by default to
-bound the work requested by untrusted containers. Applications needing a
-larger limit can set the `stb-pbkdf2-max-decode-iterations` (uint) decoder
-context parameter using `OSSL_DECODER_CTX_set_params()`; values from
-10,000 through `INT_MAX` are supported. The provider applies this limit to its own STB decoder and to its
-legacy PBES2/PBKDF2 fallback, before deriving the key. It does not change
-the encoder's iteration count or impose a global limit on OpenSSL's separate
-decoders.
-The `bign-with-hspec` digest is selected independently of the signature
-provider query; set `OSSL_SIGNATURE_PARAM_PROPERTIES` to constrain its fetch.
-
-BIGN keys in PKCS#8 and SPKI PEM/DER formats use the standard OpenSSL
-`file:` store loader and this provider's key decoders. Load both the `default`
-and `bee2_provider` providers when using `openssl storeutl`. The separate
-`bign:` URI scheme is not supported.
-
-BELT-ECB and BELT-CBC use PKCS#7 padding by default. Applications can disable
-it with `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad`.
-Without padding, inputs of at least 16 bytes are accepted, including a partial
-last block: the provider uses Bee2's STB ciphertext stealing (CTS). An incomplete
-partial input must be supplied in one final `EVP_CipherUpdate()` call of at
-least 16 bytes; CTS output is emitted by Update and no subsequent input is
-allowed before Final. Aligned blocks can still be streamed across updates. With PKCS#7 enabled, plaintext may have any
-length, but the result is PKCS#7-padded BELT, **not** the STB CTS construction.
-BELT-CFB, BELT-CTR, BELT-CHE/DWP, BASH-PRG-AE and BELT-KWP accept non-aligned
-input lengths. BELT-KWP requires at least 16 bytes of plaintext. BELT-BDE and
-BELT-SDE still require complete 16-byte blocks (SDE requires at least 32 bytes).
-BELT-CBC exposes its current chaining value through
-`EVP_CIPHER_CTX_get_updated_iv()`; BELT-CFB and BELT-CTR also expose the
-current byte offset through `OSSL_CIPHER_PARAM_NUM`.
-
-BIGN key transport accepts a provider-specific `header` octet-string parameter
-of exactly 16 bytes through `EVP_PKEY_CTX_set_params()`. Its default is an
-all-zero header, preserving the original behavior. `belt-pbkdf` accepts
-explicitly set zero-length passwords and salts.
-
-## Requirements
-
-- a C11 compiler;
-- CMake 3.20 or newer;
-- OpenSSL 3.0 or newer;
-- Git.
-
-## Build
+- C11 compiler and CMake 3.20 or newer
+- OpenSSL 3.0 or newer (headers, libcrypto and command-line utility)
+- Git for the Bee2 submodule
 
 ```sh
-git clone --recurse-submodules <repository-url> bee2-provider
+git clone --recurse-submodules https://github.com/scrbkv/bee2-provider.git
 cd bee2-provider
-
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-If the repository was cloned without submodules, initialize Bee2 separately:
+With a separately installed OpenSSL, configure
+`-DOPENSSL_ROOT_DIR=/path/to/openssl`. The runtime dynamic linker must load
+`libcrypto` from the same OpenSSL installation used for building the provider.
 
-```sh
-git submodule update --init --recursive
-```
-
-To use a non-system OpenSSL installation, pass its prefix to CMake:
-
-```sh
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DOPENSSL_ROOT_DIR=/path/to/openssl
-cmake --build build --parallel
-```
-
-## Install
+## Installation and loading
 
 ```sh
 cmake --install build --prefix /usr/local
 ```
 
-The provider module is installed into `lib/ossl-modules` below the selected
-prefix by default. The directory can be changed at configure time:
+By default the module is installed under `lib/ossl-modules` within the prefix.
+Set `BEE2_PROVIDER_INSTALL_DIR` at CMake configuration time to choose another
+relative module directory. The actual module filename depends on the platform.
+
+For a session using the build-tree module:
 
 ```sh
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBEE2_PROVIDER_INSTALL_DIR=lib/ossl-modules
+OPENSSL_CONF=/dev/null OPENSSL_MODULES="$PWD/build" \
+    openssl list -provider default -provider bee2_provider -providers
+OPENSSL_CONF=/dev/null OPENSSL_MODULES="$PWD/build" \
+    openssl list -provider default -provider bee2_provider -cipher-algorithms
 ```
 
-## Configure OpenSSL
-
-The provider can be activated in `openssl.cnf`:
+For persistent loading, configure the provider in `openssl.cnf`:
 
 ```ini
 openssl_conf = openssl_init
@@ -167,53 +81,88 @@ module = /usr/local/lib/ossl-modules/bee2_provider.so
 activate = 1
 ```
 
-The module filename is platform-specific. Use `.dylib` on macOS and `.dll` on
-Windows where applicable.
+Set `module` to the actual installed path. Load the `default` provider alongside
+`bee2_provider` for standard ciphers, ASN.1 decoder chaining and `file:` STORE.
 
-The provider can also be loaded directly from the build directory:
+Use `openssl list -provider default -provider bee2_provider` with
+`-digest-algorithms`, `-mac-algorithms`, `-kdf-algorithms`,
+`-random-generators`, `-signature-algorithms` or `-key-managers` to inspect
+other interfaces.
 
-```sh
-OPENSSL_CONF=/dev/null \
-OPENSSL_MODULES="$PWD/build" \
-openssl list -provider bee2_provider -providers
-```
+## Encrypted BIGN private keys
 
-List the available implementations with the corresponding OpenSSL command:
+BIGN private keys use PKCS#8 `PrivateKeyInfo` and
+`EncryptedPrivateKeyInfo`; public keys use `SubjectPublicKeyInfo`. Both DER
+and PEM encodings are supported. The OpenSSL `file:` STORE loader is supported.
 
-```sh
-OPENSSL_CONF=/dev/null \
-OPENSSL_MODULES="$PWD/build" \
-openssl list -provider default -provider bee2_provider -cipher-algorithms
-```
+When an application explicitly requests private-key encryption through
+`OSSL_ENCODER_CTX_set_cipher()`, `"default"` selects BELT-KWP-256. The
+STB PBES2 profile uses OpenSSL's `X509_SIG`, `PBE2PARAM` and `PBKDF2PARAM`
+ASN.1 structures with PBKDF2-HMAC-HBELT and BELT-KWP-256. The PBKDF2 PRF and
+KWP `AlgorithmIdentifier` parameters are ASN.1 `NULL`, as required by
+STB 34.101.45, Annex E. The BELT-KWP authentication header is 16 zero bytes.
 
-Replace `-cipher-algorithms` with `-digest-algorithms`, `-mac-algorithms`,
-`-kdf-algorithms`, `-random-generators`, `-signature-algorithms` or
-`-key-managers` as required.
+Applications may explicitly request `belt-kwp128` or `belt-kwp192` as
+additional BELT-KWP variants. The precisely specified Annex E BIGN profile
+uses the 256-bit key. Standard CBC ciphers such as `AES-256-CBC`,
+`AES-192-CBC` or `AES-128-CBC` select OpenSSL's native PBES2/PBKDF2
+implementation instead of the STB profile. An encoder without an encryption
+request writes unencrypted PKCS#8.
 
-## Testing
+The STB PBES2 encoder defaults to 10,000 iterations and a fresh 16-byte salt.
+Use `OSSL_ENCODER_CTX_set_params()` with `stb-pbkdf2-iterations` (unsigned int)
+and `stb-pbkdf2-saltlen` (`size_t`) to customize these values. The encoder
+requires at least 10,000 iterations and 8 salt bytes, following the guidance
+in Annex E. These minimums are a key-container policy; the standalone
+`belt-pbkdf` primitive follows its own algorithm contract.
 
-The public test suite is included in this repository. From a recursive clone:
+The STB private-key decoder permits at most 1,000,000 PBKDF2 iterations by
+default. Applications can adjust this limit using decoder context parameter
+`stb-pbkdf2-max-decode-iterations` (unsigned int, at least 10,000).
+This bound applies to the provider's STB and standard-PBKDF2 decoding paths,
+not to unrelated OpenSSL decoders. Passwords and plaintext key material are
+cleared from provider temporary buffers on cleanup.
+
+## Cipher behavior
+
+BELT-ECB and BELT-CBC use PKCS#7 padding by default. Disable padding with
+`EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad` for STB
+ciphertext stealing. Nonaligned CTS input must contain at least one complete
+16-byte block, and the final partial input must be supplied in a single
+`EVP_CipherUpdate()` operation. Aligned input can be streamed across updates.
+With padding enabled, the output is PKCS#7 ciphertext rather than STB CTS.
+
+BELT-CFB, BELT-CTR, BELT-DWP, BELT-CHE, BELT-KWP and BASH-PRG-AE accept
+non-block-aligned data. BELT-KWP requires at least 16 plaintext bytes.
+BELT-BDE requires whole 16-byte blocks; BELT-SDE requires whole sectors of at
+least 32 bytes, also a multiple of 16. `EVP_CIPHER_CTX_get_updated_iv()`
+reports CBC chaining state, while CFB and CTR expose the current byte offset
+through `OSSL_CIPHER_PARAM_NUM`.
+
+BIGN key transport accepts a 16-byte provider-specific `header` octet-string
+parameter through `EVP_PKEY_CTX_set_params()`. Its default is all zeroes.
+BRNG instances require caller-provided key material; they do not automatically
+collect entropy or independently offer prediction resistance.
+
+## Testing and project resources
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DBEE2_PROVIDER_BUILD_TESTS=ON
+    -DBEE2_PROVIDER_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-GitHub Actions verifies Linux builds against pinned OpenSSL 3.0, 3.5, 4.0
-and 4.1 releases, runs ASan/UBSan checks, and builds a separate `bee2evp`
-engine for fixed, boundary and deterministic pseudorandom interoperability
-tests. EVP streaming and BIGN public-key validation regressions are part of
-the standard CTest suite. See [STB coverage](docs/STB_COVERAGE.md),
-[Testing](docs/TESTING.md), [CI](docs/CI.md) and
-[Contributing](CONTRIBUTING.md) for details.
+The suite covers published STB known-answer examples, EVP contracts, key
+encoding/decoding, interoperability and error handling. GitHub Actions tests
+selected OpenSSL releases on Linux, runs ASan/UBSan and a separate `bee2evp`
+interoperability matrix. See [Testing](docs/TESTING.md) and
+[CI](docs/CI.md).
 
-**Security note:** successful functional tests are not a security audit. The
-provider has not been independently audited or FIPS validated.
+Security issues should be reported privately as described in
+[Security Policy](SECURITY.md). The project is not FIPS validated.
 
 ## License
 
-Bee2 Provider is distributed under the Apache License, Version 2.0. See
-[`LICENSE`](LICENSE). Bee2 is distributed under its own Apache-2.0 license;
-see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Apache License 2.0. See [LICENSE](LICENSE) and
+[Third-party notices](THIRD_PARTY_NOTICES.md) for the Bee2 dependency.

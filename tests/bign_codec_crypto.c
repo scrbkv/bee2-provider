@@ -267,11 +267,12 @@ static int check_pbkdf2_params(const BUF_MEM *data, const char *kwp_oid,
 
         X509_ALGOR_get0(&oid, &type, &value, pbkdf2->prf);
         if (OBJ_obj2txt(oid_text, sizeof(oid_text), oid, 1) <= 0 ||
-            strcmp(oid_text, "1.2.112.0.2.0.34.101.47.12") != 0)
+            strcmp(oid_text, "1.2.112.0.2.0.34.101.47.12") != 0 ||
+            type != V_ASN1_NULL)
             goto cleanup;
         X509_ALGOR_get0(&oid, &type, &value, pbes2->encryption);
         if (OBJ_obj2txt(oid_text, sizeof(oid_text), oid, 1) <= 0 ||
-            strcmp(oid_text, kwp_oid) != 0 || type != V_ASN1_UNDEF)
+            strcmp(oid_text, kwp_oid) != 0 || type != V_ASN1_NULL)
             goto cleanup;
     }
     ok = 1;
@@ -304,10 +305,10 @@ static int set_test_alg(X509_ALGOR *algorithm, const char *oid, int type, void *
 static int check_pbes2_variants(const BUF_MEM *data, EVP_PKEY *key)
 {
     enum { BAD_ITER, BAD_SALT, BAD_KEYLEN, BAD_PRF, BAD_KDF, NO_PRF,
-           NO_KEYLEN, NULL_KWP, BAD_KWP, COUNT };
+           NO_KEYLEN, OMIT_KWP_PARAMS, BAD_KWP, COUNT };
     static const char *const cases[] = {
         "iterations", "salt", "keyLength", "PRF", "KDF", "missing PRF",
-        "missing keyLength", "NULL KWP parameters", "bad KWP parameters"
+        "missing keyLength", "omitted KWP parameters", "bad KWP parameters"
     };
     int variation;
 
@@ -328,7 +329,7 @@ static int check_pbes2_variants(const BUF_MEM *data, EVP_PKEY *key)
         unsigned char *der = NULL;
         char cipher_oid[96];
         int type = 0, der_len = 0, ok = 0;
-        int expected = variation == NO_KEYLEN || variation == NULL_KWP;
+        int expected = variation == NO_KEYLEN || variation == OMIT_KWP_PARAMS;
 
         encrypted = d2i_X509_SIG(NULL, &p, (long)data->length);
         if (encrypted == NULL || p != (const unsigned char *)data->data + data->length)
@@ -376,8 +377,8 @@ static int check_pbes2_variants(const BUF_MEM *data, EVP_PKEY *key)
             ASN1_INTEGER_free(pbkdf2->keylength);
             pbkdf2->keylength = NULL;
             break;
-        case NULL_KWP:
-            if (!set_test_alg(pbes2->encryption, cipher_oid, V_ASN1_NULL, NULL))
+        case OMIT_KWP_PARAMS:
+            if (!set_test_alg(pbes2->encryption, cipher_oid, V_ASN1_UNDEF, NULL))
                 goto next;
             break;
         case BAD_KWP: {
@@ -689,6 +690,10 @@ static int check_selected_cipher(EVP_PKEY *key, const char *format, const char *
         !OSSL_ENCODER_CTX_set_passphrase(encoder, password, sizeof(password) - 1) ||
         !OSSL_ENCODER_to_bio(encoder, output) ||
         !BIO_get_mem_ptr(output, &data) || !data || data->length == 0)
+        goto cleanup;
+
+    if (strcmp(cipher_name, "default") == 0 && strcmp(format, "DER") == 0 &&
+        !check_pbkdf2_params(data, "1.2.112.0.2.0.34.101.31.73", 32u))
         goto cleanup;
 
     if (!decode_key(&decoded, format, data, password, sizeof(password) - 1) ||

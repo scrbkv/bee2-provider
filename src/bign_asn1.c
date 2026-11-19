@@ -1289,7 +1289,7 @@ static X509_SIG *stb_pbes2_pack(const unsigned char *salt, size_t salt_len,
     X509_ALGOR_free(pbe->keyfunc);
     pbe->keyfunc = keyfunc;
     keyfunc = NULL;
-    if (!set_alg(pbe->encryption, kwp_oid(key_len), V_ASN1_UNDEF, NULL))
+    if (!set_alg(pbe->encryption, kwp_oid(key_len), V_ASN1_NULL, NULL))
         goto end;
     params = ASN1_item_pack(pbe, ASN1_ITEM_rptr(PBE2PARAM), NULL);
     sig = X509_SIG_new();
@@ -1318,8 +1318,6 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
                                       size_t key_len, unsigned int iterations,
                                       size_t salt_len, OSSL_LIB_CTX *libctx, size_t *out_len)
 {
-    const unsigned char *p = der;
-    PKCS8_PRIV_KEY_INFO *p8 = NULL;
     X509_SIG *sig = NULL;
     unsigned char *salt = NULL, *wrapped = NULL, *result = NULL;
     unsigned char key[32] = {0};
@@ -1334,9 +1332,6 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *der, size_t der_len,
         iterations < BEE2_STB_PBKDF2_MIN_ITER || iterations > INT_MAX ||
         salt_len < BEE2_STB_PBKDF2_MIN_SALT || salt_len > INT_MAX)
         return NULL;
-    p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)der_len);
-    if (p8 == NULL || p != der + der_len)
-        goto end;
     salt = OPENSSL_malloc(salt_len);
     wrapped = OPENSSL_malloc(der_len + 16);
     if (salt == NULL || wrapped == NULL ||
@@ -1361,7 +1356,6 @@ end:
     OPENSSL_cleanse(key, sizeof(key));
     OPENSSL_clear_free(wrapped, der_len + 16);
     OPENSSL_clear_free(salt, salt_len);
-    PKCS8_PRIV_KEY_INFO_free(p8);
     X509_SIG_free(sig);
     return result;
 }

@@ -1,26 +1,25 @@
 # Release procedure
 
-This document describes the intended GitHub release process. It is not a
-record of a completed release.
+A release is cut from a reviewed commit on `main` after its required GitHub
+Actions checks pass.
 
-1. Review and approve all source changes. Do not commit unreviewed changes.
-2. Ensure `main` is protected with required CI checks. Complete the release
-   candidate review, including the regression tests documented in TESTING.md.
-3. Check that the Bee2 submodule points to a reviewed, immutable commit and
-   that third-party licenses are correct.
-4. Build from a clean recursive clone; run CTest with all required backends,
-   sanitizers, and representative supported OpenSSL releases.
-5. Update CHANGELOG.md, README.md, version in CMakeLists.txt and release
-   notes. Review API/algorithm naming and compatibility changes.
-6. Create a signed annotated release tag after approval, then publish the
-   corresponding source archive and build artifacts through GitHub Releases.
-7. Verify that a clean user can install and load the released provider without
-   the developer's build directory.
+1. Review cryptographic behavior, OIDs, ASN.1 formats, API compatibility and
+   dependency versions. Confirm the Bee2 submodule is pinned to a reviewed
+   immutable commit.
+2. Run the complete native CTest suite and the separate `bee2evp`
+   interoperability suite. Verify the OpenSSL compatibility matrix,
+   ASan/UBSan results and coverage report in GitHub Actions.
+3. Confirm the README examples, install layout, package licenses and
+   third-party notices match the release candidate.
+4. Build from a clean recursive checkout. Install into a temporary prefix and
+   confirm that OpenSSL loads the installed module without build-tree paths.
+5. Set the release version in CMake and prepare GitHub release notes describing
+   the included algorithms and relevant compatibility changes.
+6. Create a signed, annotated tag from the approved commit and publish the
+   source distribution and release notes through GitHub Releases.
+7. Confirm that the published source distribution contains or retrieves the
+   pinned Bee2 submodule. A GitHub-generated ZIP does not embed submodule
+   contents and is not, by itself, an offline source distribution.
 
-Source archives alone do not contain the contents of the Bee2 git submodule.
-Publish a self-contained distribution archive or provide explicit source
-retrieval instructions; do not advertise a normal GitHub source ZIP as a
-complete offline build artifact.
-
-Do not create an automatic release on a normal branch push. Release publishing
-should require an explicit maintainer decision.
+Publication is an explicit maintainer action; regular branch pushes do not
+publish releases.
