@@ -123,11 +123,39 @@ and `stb-pbkdf2-saltlen` (`size_t`) to customize them. The Annex E minimums
 requirements; the encoder accepts any positive count and salt length that fit
 OpenSSL's ASN.1 API. Choosing weaker values is the caller's responsibility.
 
-The stock `openssl genpkey` and `openssl pkey` commands do not offer options for
-these provider-specific encoder parameters. `openssl pkcs8 -iter` and
-`-saltlen` apply to OpenSSL's native PBES2 output, not to the STB KWP scalar
-profile. Use an application calling `OSSL_ENCODER_CTX_set_params()` to select
-STB work factors explicitly.
+Generate and encrypt a BIGN key using stock OpenSSL (load the `default` and
+`bee2_provider` providers; set `OPENSSL_MODULES` or use `-provider-path`):
+
+```sh
+openssl genpkey -provider default -provider bee2_provider \
+    -algorithm bign-256 -belt-kwp256 -pass env:BIGN_PASSWORD -out key.pem
+openssl pkey -provider default -provider bee2_provider \
+    -in key.pem -passin env:BIGN_PASSWORD -pubout -out key.pub.pem
+```
+
+For an existing unencrypted key, use `openssl pkey -in plain.pem
+-belt-kwp256 -passout env:BIGN_PASSWORD -out key.pem` with the providers
+loaded. A password without an explicitly selected cipher does not enable
+encryption in stock OpenSSL.
+
+OpenSSL 4.0 and later accept provider encoder options from the command line:
+
+```sh
+openssl genpkey -provider default -provider bee2_provider \
+    -algorithm bign-256 -belt-kwp256 -pass env:BIGN_PASSWORD \
+    -encopt stb-pbkdf2-iterations:12000 -encopt stb-pbkdf2-saltlen:24 \
+    -out key.pem
+```
+
+The same `-encopt` options work with `openssl pkey` in OpenSSL 4.0 and later.
+OpenSSL 3.x does not expose encoder parameters on these commands; use
+`OSSL_ENCODER_CTX_set_params()` in an application to change the STB defaults.
+
+`openssl pkcs8 -topk8` cannot produce the Annex E encrypted BIGN scalar:
+its `-v2`, `-v2prf`, `-iter` and `-saltlen` act on the **whole PKCS#8 DER
+key** through OpenSSL's generic PBES2 implementation, not on the raw
+BIGN scalar. Selecting STB algorithm identifiers does not change that
+input format. Use `genpkey` or `pkey` with `-belt-kwp256` instead.
 
 The STB private-key decoder permits at most 1,000,000 PBKDF2 iterations by
 default. Applications can adjust this limit using decoder context parameter

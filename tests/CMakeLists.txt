@@ -100,6 +100,27 @@ set_property(TEST bee2_bee2evp_bign_cert_interop_bign_cert_512_explicit APPEND P
 endif()
 
 # Independent key-expansion KAT from STB 34.101.31-2020, 8.1.2 / A.27.
+# Test CLI encryption, decryption and exact STB PBES2 parameters.
+add_executable(bee2_bign_cli_profile bign_cli_profile.c)
+target_include_directories(bee2_bign_cli_profile PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(bee2_bign_cli_profile PRIVATE OpenSSL::Crypto)
+
+foreach(bits 256 384 512)
+    math(EXPR scalar_bytes "${bits} / 8")
+    add_test(NAME bee2_bign_cli_pbes2_${bits}
+        COMMAND ${CMAKE_COMMAND}
+            "-DOPENSSL_EXECUTABLE=${BEE2_OPENSSL_EXECUTABLE}"
+            "-DPROVIDER_PATH=$<TARGET_FILE_DIR:bee2_provider>"
+            "-DPROFILE_CHECKER=$<TARGET_FILE:bee2_bign_cli_profile>"
+            "-DWORK_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/bign_cli_${bits}"
+            "-DALGORITHM=bign-${bits}"
+            "-DSCALAR_LENGTH=${scalar_bytes}"
+            "-DOPENSSL_VERSION=${OPENSSL_VERSION}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/bign_cli_pbes2.cmake)
+    set_tests_properties(bee2_bign_cli_pbes2_${bits}
+        PROPERTIES LABELS "bign;codec;cli;stb;pbkdf2")
+endforeach()
+
 add_executable(bee2_belt_keyexpand_stb belt_keyexpand_stb.c)
 target_include_directories(bee2_belt_keyexpand_stb PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_include_directories(bee2_belt_keyexpand_stb SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)

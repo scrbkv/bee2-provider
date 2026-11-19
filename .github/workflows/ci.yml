@@ -138,10 +138,11 @@ jobs:
 
       - name: Run native C tests with sanitizers
         run: |
-          # Keep native selection automatic as the suite grows.
+          # External OpenSSL CLI tests load the ASan provider into a
+          # non-instrumented openssl binary. Test them in the normal matrix.
           ctest --test-dir build-sanitize --output-on-failure --timeout 180 \
             -E '^bee2_(bign_options|bign_asn1_negative|bign_codec_roundtrip)$' \
-            --output-junit sanitizer-tests.xml
+            -LE '^cli$' --output-junit sanitizer-tests.xml
 
       - name: Upload sanitizer test report
         if: always()
