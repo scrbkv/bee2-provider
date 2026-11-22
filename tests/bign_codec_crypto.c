@@ -16,9 +16,49 @@
 #include <openssl/x509.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
+# include <unistd.h>
+#endif
 
 static const unsigned char password[] = "bee2-key-roundtrip";
 static const unsigned char wrong_password[] = "incorrect-password";
+
+/* A pipe-backed FILE BIO supports PEM's BIO_gets but not seeking. */
+static BIO *nonseekable_key_bio(const void *data, size_t len)
+{
+#ifdef _WIN32
+    return len <= INT_MAX ? BIO_new_mem_buf(data, (int)len) : NULL;
+#else
+    int fd[2];
+    const unsigned char *p = data;
+    size_t offset = 0;
+    FILE *file;
+    BIO *bio;
+
+    if (pipe(fd) != 0)
+        return NULL;
+    while (offset < len) {
+        ssize_t n = write(fd[1], p + offset, len - offset);
+
+        if (n <= 0) {
+            close(fd[0]);
+            close(fd[1]);
+            return NULL;
+        }
+        offset += (size_t)n;
+    }
+    close(fd[1]);
+    file = fdopen(fd[0], "rb");
+    if (file == NULL) {
+        close(fd[0]);
+        return NULL;
+    }
+    bio = BIO_new_fp(file, BIO_CLOSE);
+    if (bio == NULL)
+        fclose(file);
+    return bio;
+#endif
+}
 
 static EVP_PKEY *generate_key(const char *name)
 {
@@ -754,7 +794,7 @@ static int check_selected_cipher(EVP_PKEY *key, const char *format, const char *
 {
     OSSL_ENCODER_CTX *encoder = NULL;
     EVP_PKEY *decoded = NULL, *wrong = NULL, *streamed = NULL;
-    BIO *output = NULL, *reader = NULL, *writer = NULL;
+    BIO *output = NULL, *stream_input = NULL;
     OSSL_DECODER_CTX *stream_decoder = NULL;
     BUF_MEM *data = NULL;
     unsigned int iterations = 12000;
@@ -785,17 +825,15 @@ static int check_selected_cipher(EVP_PKEY *key, const char *format, const char *
         decode_key(&wrong, format, data, wrong_password, sizeof(wrong_password) - 1) ||
         wrong != NULL)
         goto cleanup;
-    if (data->length > INT_MAX ||
-        !BIO_new_bio_pair(&reader, 0, &writer, 0) ||
-        BIO_write(writer, data->data, (int)data->length) != (int)data->length ||
-        BIO_shutdown_wr(writer) <= 0)
+    stream_input = nonseekable_key_bio(data->data, data->length);
+    if (stream_input == NULL)
         goto cleanup;
     stream_decoder = OSSL_DECODER_CTX_new_for_pkey(
         &streamed, format, NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
     if (stream_decoder == NULL ||
         !OSSL_DECODER_CTX_set_passphrase(stream_decoder, password,
                                          sizeof(password) - 1) ||
-        OSSL_DECODER_from_bio(stream_decoder, reader) <= 0 ||
+        OSSL_DECODER_from_bio(stream_decoder, stream_input) <= 0 ||
         streamed == NULL || !same_private_key(key, streamed))
         goto cleanup;
     ok = 1;
@@ -809,8 +847,7 @@ cleanup:
     EVP_PKEY_free(decoded);
     EVP_PKEY_free(streamed);
     OSSL_DECODER_CTX_free(stream_decoder);
-    BIO_free(writer);
-    BIO_free(reader);
+    BIO_free(stream_input);
     BIO_free(output);
     OSSL_ENCODER_CTX_free(encoder);
     return ok;
@@ -824,7 +861,7 @@ static int check_foreign_key(const char *algorithm, const char *format, int encr
     EVP_PKEY *original = NULL, *decoded = NULL;
     OSSL_ENCODER_CTX *encoder = NULL;
     OSSL_DECODER_CTX *decoder = NULL;
-    BIO *output = NULL, *input = NULL, *reader = NULL, *writer = NULL;
+    BIO *output = NULL, *input = NULL, *stream_input = NULL;
     BUF_MEM *data = NULL;
     int ok = 0;
 
@@ -868,16 +905,15 @@ static int check_foreign_key(const char *algorithm, const char *format, int encr
 
     /* The provider must not lose foreign key containers on a BIO
      * without rewind support. Supply EOF explicitly for PEM. */
-    if (!BIO_new_bio_pair(&reader, 0, &writer, 0) ||
-        BIO_write(writer, data->data, (int)data->length) != (int)data->length ||
-        BIO_shutdown_wr(writer) <= 0)
+    stream_input = nonseekable_key_bio(data->data, data->length);
+    if (stream_input == NULL)
         goto cleanup;
     decoder = OSSL_DECODER_CTX_new_for_pkey(
         &decoded, format, NULL, NULL, OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
     if (!decoder ||
         (encrypted && !OSSL_DECODER_CTX_set_passphrase(
                            decoder, password, sizeof(password) - 1)) ||
-        OSSL_DECODER_from_bio(decoder, reader) <= 0 ||
+        OSSL_DECODER_from_bio(decoder, stream_input) <= 0 ||
         !decoded || !EVP_PKEY_is_a(decoded, algorithm) ||
         EVP_PKEY_eq(original, decoded) != 1)
         goto cleanup;
@@ -890,8 +926,7 @@ cleanup:
         ERR_print_errors_fp(stderr);
     }
     BIO_free(input);
-    BIO_free(writer);
-    BIO_free(reader);
+    BIO_free(stream_input);
     BIO_free(output);
     OSSL_DECODER_CTX_free(decoder);
     OSSL_ENCODER_CTX_free(encoder);
