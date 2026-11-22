@@ -21,10 +21,6 @@
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 
-#define BIGN_PEM_LABEL "PRIVATE KEY"
-#define BIGN_ENCRYPTED_PEM_LABEL "ENCRYPTED PRIVATE KEY"
-#define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
-
 int bign_der_sequence_body(const unsigned char *data, size_t length,
                                   const unsigned char **body)
 {
@@ -46,6 +42,46 @@ int bign_der_sequence_body(const unsigned char *data, size_t length,
 
     *body = p;
     return 1;
+}
+
+
+/* Identify DER key envelopes before invoking ASN.1 decoders. In particular,
+ * SPKI must not be speculatively decoded as PKCS#8: failed d2i calls leave
+ * errors on the application's OpenSSL error queue. */
+typedef enum {
+    BIGN_DER_UNKNOWN,
+    BIGN_DER_PRIVATE,
+    BIGN_DER_ENCRYPTED,
+    BIGN_DER_PUBLIC
+} BIGN_DER_KIND;
+
+static BIGN_DER_KIND bign_der_kind(const unsigned char *der, size_t len)
+{
+    const unsigned char *p, *end;
+    long alg_len;
+    int tag, xclass, status;
+
+    if (!bign_der_sequence_body(der, len, &p))
+        return BIGN_DER_UNKNOWN;
+    end = der + len;
+    if (p == end)
+        return BIGN_DER_UNKNOWN;
+    if (*p == V_ASN1_INTEGER)
+        return BIGN_DER_PRIVATE;
+    if (*p != (V_ASN1_CONSTRUCTED | V_ASN1_SEQUENCE))
+        return BIGN_DER_UNKNOWN;
+
+    status = ASN1_get_object(&p, &alg_len, &tag, &xclass, (long)(end - p));
+    if ((status & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
+        xclass != V_ASN1_UNIVERSAL || alg_len < 0 ||
+        (size_t)alg_len >= (size_t)(end - p))
+        return BIGN_DER_UNKNOWN;
+    p += alg_len;
+    if (*p == V_ASN1_OCTET_STRING)
+        return BIGN_DER_ENCRYPTED;
+    if (*p == V_ASN1_BIT_STRING)
+        return BIGN_DER_PUBLIC;
+    return BIGN_DER_UNKNOWN;
 }
 
 
@@ -285,75 +321,73 @@ static void bign_free_algorithm_params(int parameter_type, void *parameter_value
         ASN1_STRING_free(parameter_value);
 }
 
-unsigned char *bee2_bign_asn1_encode_pkcs8_der(const bee2_bign_key_t *key, size_t *out_len) {
+/* PKCS#8 construction is shared by key encoding and STB scalar unwrap. */
+static PKCS8_PRIV_KEY_INFO *bign_make_pkcs8(const unsigned char *scalar,
+                                            const bee2_bign_variant_t *variant,
+                                            int explicit_params, int cofactor)
+{
+    bee2_bign_key_t encoding = {0};
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
     ASN1_OBJECT *alg = NULL;
     void *parameters = NULL;
-    int parameter_type = V_ASN1_UNDEF;
     unsigned char *priv = NULL;
-    unsigned char *der = NULL;
-    size_t priv_len = 0;
+    size_t priv_len;
+    int parameter_type = V_ASN1_UNDEF;
 
-    if (!key || !key->variant || !key->has_priv || !out_len) {
-        ERR_raise_data(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER, "encode_pkcs8_der: invalid key");
+    encoding.variant = variant;
+    encoding.encode_explicit = explicit_params;
+    encoding.encode_cofactor = cofactor;
+    priv_len = bee2_bign_priv_len(variant);
+    priv = OPENSSL_memdup(scalar, priv_len);
+    p8 = PKCS8_PRIV_KEY_INFO_new();
+    alg = OBJ_txt2obj(BEE2_OID_BIGN_PUBKEY, 1);
+    if (priv == NULL || p8 == NULL || alg == NULL ||
+        !bign_encode_algorithm_params(&encoding, &parameter_type, &parameters) ||
+        !PKCS8_pkey_set0(p8, alg, 0, parameter_type, parameters,
+                         priv, (int)priv_len)) {
+        PKCS8_PRIV_KEY_INFO_free(p8);
+        p8 = NULL;
+    } else {
+        alg = NULL;
+        parameters = NULL;
+        priv = NULL;
+    }
+    ASN1_OBJECT_free(alg);
+    bign_free_algorithm_params(parameter_type, parameters);
+    OPENSSL_clear_free(priv, priv_len);
+    return p8;
+}
+
+unsigned char *bee2_bign_asn1_encode_pkcs8_der(const bee2_bign_key_t *key,
+                                                size_t *out_len)
+{
+    PKCS8_PRIV_KEY_INFO *p8;
+    unsigned char *der = NULL;
+    int len;
+
+    if (key == NULL || key->variant == NULL || !key->has_priv || out_len == NULL) {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT,
+                       "encode_pkcs8_der: invalid key");
         return NULL;
     }
     *out_len = 0;
-
-    priv_len = bee2_bign_priv_len(key->variant);
-    priv = OPENSSL_malloc(priv_len);
-    if (!priv) {
-        ERR_raise_data(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE, "encode_pkcs8_der: alloc priv");
+    p8 = bign_make_pkcs8(key->priv, key->variant,
+                          key->encode_explicit, key->encode_cofactor);
+    if (p8 == NULL) {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR,
+                       "encode_pkcs8_der: PKCS#8 construction failed");
         return NULL;
     }
-    memcpy(priv, key->priv, priv_len);
-
-    p8 = PKCS8_PRIV_KEY_INFO_new();
-    if (!p8) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_MALLOC_FAILURE, "encode_pkcs8_der: PKCS8_PRIV_KEY_INFO_new");
-        goto err;
-    }
-
-    alg = OBJ_txt2obj(BEE2_OID_BIGN_PUBKEY, 1);
-    if (!alg || !bign_encode_algorithm_params(key, &parameter_type, &parameters)) {
-        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "encode_pkcs8_der: OBJ_txt2obj failed");
-        goto err;
-    }
-
-    if (!PKCS8_pkey_set0(p8, alg, 0, parameter_type, parameters, priv, (int)priv_len)) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "encode_pkcs8_der: PKCS8_pkey_set0 failed");
-        goto err;
-    }
-    alg = NULL;
-    parameters = NULL;
-    priv = NULL;
-
-    int der_len = i2d_PKCS8_PRIV_KEY_INFO(p8, &der);
-    if (der_len <= 0) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "encode_pkcs8_der: i2d_PKCS8_PRIV_KEY_INFO failed");
-        goto err;
-    }
-    *out_len = (size_t)der_len;
-
+    len = i2d_PKCS8_PRIV_KEY_INFO(p8, &der);
     PKCS8_PRIV_KEY_INFO_free(p8);
-    return der;
-
-err:
-    if (alg)
-        ASN1_OBJECT_free(alg);
-    bign_free_algorithm_params(parameter_type, parameters);
-    if (priv) {
-        OPENSSL_cleanse(priv, priv_len);
-        OPENSSL_free(priv);
-    }
-    if (p8)
-        PKCS8_PRIV_KEY_INFO_free(p8);
-    if (der)
+    if (len <= 0) {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR,
+                       "encode_pkcs8_der: DER encoding failed");
         OPENSSL_free(der);
-    return NULL;
+        return NULL;
+    }
+    *out_len = (size_t)len;
+    return der;
 }
 
 
@@ -406,55 +440,12 @@ int bee2_bign_asn1_decode_pkcs8_der(const unsigned char *buf, size_t len,
     return ok;
 }
 
-int bee2_bign_asn1_decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
-                                      const bee2_bign_variant_t *expected,
-                                      bee2_bign_key_t *key, OSSL_LIB_CTX *libctx,
-                                      unsigned int max_pbkdf2_iterations,
-                                      OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg) {
-    const unsigned char *p = buf;
-    X509_SIG *encrypted = NULL;
-    PKCS8_PRIV_KEY_INFO *p8 = NULL;
-    char password[PEM_BUFSIZE];
-    size_t password_len = 0;
-    int recognised = 0;
-    int ok = 0;
-
-    if (!bign_der_sequence_body(buf, len, &p))
-        return 0;
-    p = buf;
-    ERR_set_mark();
-    encrypted = d2i_X509_SIG(NULL, &p, (long)len);
-    ERR_pop_to_mark();
-    if (!encrypted || p != buf + len)
-        goto cleanup;
-    if (!cb)
-        goto cleanup;
-
-    OPENSSL_cleanse(password, sizeof(password));
-    if (!cb(password, sizeof(password), &password_len, NULL, cbarg) ||
-        password_len > sizeof(password) || password_len > INT_MAX)
-        goto clear_password;
-    p8 = bee2_stb_pbes2_decrypt(encrypted, (const unsigned char *)password,
-                                password_len, max_pbkdf2_iterations, libctx, &recognised);
-    if (!recognised && p8 == NULL &&
-        bee2_pkcs8_standard_pbkdf2_allowed(encrypted, max_pbkdf2_iterations))
-        p8 = PKCS8_decrypt_ex(encrypted, password, (int)password_len, libctx, NULL);
-    if (p8)
-        ok = decode_pkcs8_info(p8, expected, key);
-
-clear_password:
-    OPENSSL_cleanse(password, sizeof(password));
-cleanup:
-    PKCS8_PRIV_KEY_INFO_free(p8);
-    X509_SIG_free(encrypted);
-    return ok;
-}
-
-
-/* A decoder consumes one record, not the entire underlying stream. */
-static int read_exact(BIO *bio, unsigned char *out, size_t len) {
-    while (len != 0) {
+/* Read exactly one bounded DER object from a nonseekable core BIO. */
+static int read_exact(BIO *bio, unsigned char *out, size_t len)
+{
+    while (len > 0) {
         size_t n = 0;
+
         if (!BIO_read_ex(bio, out, len, &n) || n == 0)
             return 0;
         out += n;
@@ -463,12 +454,16 @@ static int read_exact(BIO *bio, unsigned char *out, size_t len) {
     return 1;
 }
 
-static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
-    unsigned char header[5] = {0x30}, *der;
-    size_t headlen = 2, bodylen = 0, i;
+static int read_der_object(BIO *bio, unsigned char **out, size_t *len)
+{
+    unsigned char header[5];
+    unsigned char *der = NULL;
+    size_t headlen = 2, bodylen = 0, n = 0, i;
     unsigned int count;
 
-    if (!read_exact(bio, header + 1, 1))
+    if (!BIO_read_ex(bio, header, 1, &n) || n == 0)
+        return !BIO_should_retry(bio) && BIO_eof(bio) > 0;
+    if (header[0] != 0x30 || !read_exact(bio, header + 1, 1))
         return 0;
     if (header[1] < 128) {
         bodylen = header[1];
@@ -486,7 +481,7 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
     if (bodylen > BIGN_MAX_KEY_INPUT - headlen)
         return 0;
     der = OPENSSL_malloc(headlen + bodylen);
-    if (!der)
+    if (der == NULL)
         return 0;
     memcpy(der, header, headlen);
     if (!read_exact(bio, der + headlen, bodylen)) {
@@ -498,150 +493,43 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len) {
     return 1;
 }
 
-static int read_pem_object(BIO *bio, unsigned char first,
-                           unsigned char **out, size_t *len) {
-    static const char begin[] = "-----BEGIN ";
-    static const char end[] = "-----END ";
-    unsigned char *buf = NULL, ch = first;
-    size_t used = 0, capacity = 0;
-    int begun = 0, ending = 0, closed = 0;
-
-    /* Read exactly one bounded PEM record without buffering a second key. */
-    for (;;) {
-        if (used == capacity) {
-            size_t next_capacity;
-            unsigned char *expanded;
-
-            if (capacity == BIGN_MAX_KEY_INPUT)
-                break;
-            next_capacity = capacity ? capacity * 2u : 4096u;
-            if (next_capacity > BIGN_MAX_KEY_INPUT)
-                next_capacity = BIGN_MAX_KEY_INPUT;
-            expanded = OPENSSL_realloc(buf, next_capacity);
-            if (expanded == NULL)
-                break;
-            buf = expanded;
-            capacity = next_capacity;
-        }
-        buf[used++] = ch;
-        if (closed) {
-            if (ch == '\n') {
-                *out = buf;
-                *len = used;
-                return 1;
-            }
-            if (ch != '\r' && ch != ' ' && ch != '\t')
-                break;
-        }
-        if (!begun && used >= sizeof(begin) - 1 &&
-            memcmp(buf + used - (sizeof(begin) - 1), begin, sizeof(begin) - 1) == 0)
-            begun = 1;
-        if (begun && !ending && used >= sizeof(end) - 1 &&
-            memcmp(buf + used - (sizeof(end) - 1), end, sizeof(end) - 1) == 0)
-            ending = 1;
-        if (ending && used >= 5 && memcmp(buf + used - 5, "-----", 5) == 0)
-            closed = 1;
-        if (!read_exact(bio, &ch, 1)) {
-            if (closed && !BIO_should_retry(bio) && BIO_eof(bio) > 0) {
-                *out = buf;
-                *len = used;
-                return 1;
-            }
-            break;
-        }
-    }
-    OPENSSL_clear_free(buf, capacity);
-    return 0;
-}
-
-static int read_one_object(BIO *bio, unsigned char **out, size_t *len) {
-    unsigned char first;
-    size_t n = 0;
-
-    if (!bio || !out || !len)
-        return 0;
-    *out = NULL;
-    *len = 0;
-    if (!BIO_read_ex(bio, &first, 1, &n) || n == 0)
-        return !BIO_should_retry(bio) && BIO_eof(bio) > 0;
-    if (first == 0x30)
-        return read_der_object(bio, out, len);
-    if (first == '\t' || first == '\r' || first == '\n' ||
-        (first >= 0x20 && first <= 0x7e))
-        return read_pem_object(bio, first, out, len);
-    return 0;
-}
-
-static unsigned char *
-pem_to_der_buf(const unsigned char *buf, size_t len, size_t *out_len, char **out_name)
-{
-    BIO *bio;
-    char *name = NULL, *header = NULL;
-    unsigned char *der = NULL;
-    long der_len = 0;
-
-    if (out_len == NULL)
-        return NULL;
-    *out_len = 0;
-    if (out_name != NULL)
-        *out_name = NULL;
-    if (buf == NULL || len > INT_MAX)
-        return NULL;
-
-    bio = BIO_new_mem_buf(buf, (int)len);
-    if (bio != NULL && PEM_read_bio(bio, &name, &header, &der, &der_len) &&
-        der_len > 0) {
-        *out_len = (size_t)der_len;
-        if (out_name != NULL) {
-            *out_name = name;
-            name = NULL;
-        }
-    } else {
-        OPENSSL_clear_free(der, der_len > 0 ? (size_t)der_len : 0);
-        der = NULL;
-    }
-
-    BIO_free(bio);
-    OPENSSL_free(header);
-    OPENSSL_free(name);
-    return der;
-}
-
-/* Read one DER or PEM record, even from a nonseekable core BIO. */
 typedef struct {
-    unsigned char *record;
-    size_t record_len;
     unsigned char *der;
     size_t der_len;
     char *pem_name;
 } BIGN_INPUT;
 
-static int bign_read_input(OSSL_LIB_CTX *libctx, OSSL_CORE_BIO *in,
-                           int decode_pem, BIGN_INPUT *input)
+static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
+                           OSSL_CORE_BIO *in, BIGN_INPUT *input)
 {
-    BIO *bio = BIO_new_from_core_bio(libctx, in);
-    int ok;
+    BIO *bio = BIO_new_from_core_bio(ctx->libctx, in);
+    char *header = NULL;
+    long len = 0;
+    int ok = 0;
 
     if (bio == NULL)
         return 0;
-    ok = read_one_object(bio, &input->record, &input->record_len);
+    if (ctx->input_pem) {
+        /* OpenSSL's own PEM reader reads exactly one PEM object. */
+        if (PEM_read_bio(bio, &input->pem_name, &header, &input->der, &len) > 0) {
+            if (len > 0)
+                input->der_len = (size_t)len;
+            ok = len > 0 && (size_t)len <= BIGN_MAX_KEY_INPUT;
+        } else {
+            /* A different decoder may recognise this input. */
+            ok = !BIO_should_retry(bio) && BIO_eof(bio) > 0;
+        }
+    } else {
+        ok = read_der_object(bio, &input->der, &input->der_len);
+    }
+    OPENSSL_free(header);
     BIO_free(bio);
-    if (!ok || input->record_len == 0)
-        return ok;
-
-    input->der = input->record;
-    input->der_len = input->record_len;
-    if (decode_pem && input->record[0] != 0x30)
-        input->der = pem_to_der_buf(input->record, input->record_len,
-                                    &input->der_len, &input->pem_name);
-    return 1;
+    return ok;
 }
 
 static void bign_free_input(BIGN_INPUT *input)
 {
-    if (input->der != input->record)
-        OPENSSL_clear_free(input->der, input->der_len);
-    OPENSSL_clear_free(input->record, input->record_len);
+    OPENSSL_clear_free(input->der, input->der_len);
     OPENSSL_free(input->pem_name);
 }
 
@@ -800,11 +688,13 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
     bee2_bign_key_t *key = NULL;
     int decoded = 0, ok = 0;
 
+    (void)pw_cb;
+    (void)pw_cbarg;
     if (ctx == NULL || data_cb == NULL)
         return 0;
-    if (!bign_read_input(ctx->libctx, in, 1, &input))
+    if (!bign_read_input(ctx, in, &input))
         goto end;
-    if (input.record_len == 0 || input.der == NULL || input.der_len == 0) {
+    if (input.der == NULL || input.der_len == 0) {
         ok = 1;
         goto end;
     }
@@ -812,27 +702,17 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
     if (key == NULL)
         goto end;
 
-    if (input.pem_name != NULL) {
-        if (strcmp(input.pem_name, BIGN_PEM_LABEL) == 0)
-            decoded = bee2_bign_asn1_decode_pkcs8_der(input.der, input.der_len,
-                                                       ctx->variant, key);
-        else if (strcmp(input.pem_name, BIGN_ENCRYPTED_PEM_LABEL) == 0)
-            decoded = bee2_bign_asn1_decode_encrypted_pkcs8_der(
-                input.der, input.der_len, ctx->variant, key, ctx->libctx,
-                ctx->max_pbkdf2_iterations, pw_cb, pw_cbarg);
-        else if (strcmp(input.pem_name, BIGN_PUB_PEM_LABEL) == 0)
-            decoded = bee2_bign_asn1_decode_spki_der(input.der, input.der_len,
-                                                      ctx->variant, key);
-    } else {
+    switch (bign_der_kind(input.der, input.der_len)) {
+    case BIGN_DER_PRIVATE:
         decoded = bee2_bign_asn1_decode_pkcs8_der(input.der, input.der_len,
                                                    ctx->variant, key);
-        if (!decoded)
-            decoded = bee2_bign_asn1_decode_encrypted_pkcs8_der(
-                input.der, input.der_len, ctx->variant, key, ctx->libctx,
-                ctx->max_pbkdf2_iterations, pw_cb, pw_cbarg);
-        if (!decoded)
-            decoded = bee2_bign_asn1_decode_spki_der(input.der, input.der_len,
-                                                      ctx->variant, key);
+        break;
+    case BIGN_DER_PUBLIC:
+        decoded = bee2_bign_asn1_decode_spki_der(input.der, input.der_len,
+                                                  ctx->variant, key);
+        break;
+    default:
+        break;
     }
     if (!decoded) {
         /* Other decoders may recognise the same PKCS#8 envelope. */
@@ -901,65 +781,38 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     const unsigned char *p;
     X509_SIG *encrypted = NULL;
     PKCS8_PRIV_KEY_INFO *p8 = NULL;
-    const ASN1_OBJECT *key_oid = NULL;
     unsigned char *plain_der = NULL;
     char password[PEM_BUFSIZE] = {0};
-    char key_type[128];
     size_t password_len = 0;
     int plain_len = 0, recognised = 0, ok = 0;
 
     (void)selection;
     if (ctx == NULL || in == NULL || data_cb == NULL)
         return 0;
-    if (!bign_read_input(ctx->libctx, in, ctx->input_pem, &input))
+    if (!bign_read_input(ctx, in, &input))
         goto end;
-    if (input.record_len == 0) {
+    if (input.der_len == 0) {
         ok = 1;
         goto end;
     }
-    if (input.der == NULL || input.der_len == 0 ||
-        input.der_len > BIGN_MAX_KEY_INPUT)
+    if (input.der == NULL)
         goto end;
 
+    /* Plain PKCS#8/SPKI and ordinary PBES2 are decoded by OpenSSL.
+     * Only STB password protection needs an additional decoder. */
+    if ((ctx->input_pem &&
+         (input.pem_name == NULL ||
+          strcmp(input.pem_name, "ENCRYPTED PRIVATE KEY") != 0)) ||
+        bign_der_kind(input.der, input.der_len) != BIGN_DER_ENCRYPTED) {
+        ok = 1;
+        goto end;
+    }
+
     p = input.der;
-    ERR_set_mark();
     encrypted = d2i_X509_SIG(NULL, &p, (long)input.der_len);
-    ERR_pop_to_mark();
     if (encrypted == NULL || p != input.der + input.der_len ||
         !bee2_stb_pbes2_is_stb(encrypted)) {
-        PKCS8_PRIV_KEY_INFO *plain_p8 = NULL;
-        X509_PUBKEY *pub = NULL;
-        const ASN1_OBJECT *private_oid = NULL;
-        ASN1_OBJECT *public_oid = NULL;
-        const char *structure = NULL;
-
-        /* Forward plain BIGN keys: another decoder cannot reread a
-         * nonseekable BIO after this DER-to-DER decoder consumes it. */
-        p = input.der;
-        ERR_set_mark();
-        plain_p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)input.der_len);
-        ERR_pop_to_mark();
-        if (plain_p8 != NULL && p == input.der + input.der_len &&
-            PKCS8_pkey_get0(&private_oid, NULL, NULL, NULL, plain_p8) &&
-            oid_equals(private_oid, BEE2_OID_BIGN_PUBKEY)) {
-            structure = "PrivateKeyInfo";
-        } else {
-            p = input.der;
-            ERR_set_mark();
-            pub = d2i_X509_PUBKEY(NULL, &p, (long)input.der_len);
-            ERR_pop_to_mark();
-            if (pub != NULL && p == input.der + input.der_len &&
-                X509_PUBKEY_get0_param(&public_oid, NULL, NULL, NULL, pub) &&
-                oid_equals(public_oid, BEE2_OID_BIGN_PUBKEY))
-                structure = "SubjectPublicKeyInfo";
-        }
-        if (structure != NULL)
-            ok = bign_emit_der(data_cb, data_cbarg, "bign", structure,
-                               input.der, input.der_len);
-        else
-            ok = 1; /* Leave other algorithms to OpenSSL. */
-        PKCS8_PRIV_KEY_INFO_free(plain_p8);
-        X509_PUBKEY_free(pub);
+        ok = 1; /* Other encrypted key formats belong to OpenSSL. */
         goto end;
     }
 
@@ -970,15 +823,12 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     p8 = bee2_stb_pbes2_decrypt(encrypted, (const unsigned char *)password,
                                 password_len, ctx->max_pbkdf2_iterations,
                                 ctx->libctx, &recognised);
-    if (!recognised || p8 == NULL ||
-        !PKCS8_pkey_get0(&key_oid, NULL, NULL, NULL, p8) ||
-        key_oid == NULL ||
-        OBJ_obj2txt(key_type, sizeof(key_type), key_oid, 1) <= 0)
+    if (!recognised || p8 == NULL)
         goto end;
     plain_len = i2d_PKCS8_PRIV_KEY_INFO(p8, &plain_der);
     if (plain_len <= 0 || plain_der == NULL)
         goto end;
-    ok = bign_emit_der(data_cb, data_cbarg, key_type, "PrivateKeyInfo",
+    ok = bign_emit_der(data_cb, data_cbarg, "bign", "PrivateKeyInfo",
                        plain_der, (size_t)plain_len);
 
 end:
@@ -1260,47 +1110,10 @@ int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
     return recognised;
 }
 
-/* Only bounded PBKDF2 is attempted by the standard PBES2 fallback.
- * Other KDFs are left to OpenSSL's normal decoder chain. */
-int bee2_pkcs8_standard_pbkdf2_allowed(const X509_SIG *encrypted,
-                                          unsigned int max_iterations)
-{
-    const ASN1_OBJECT *oid = NULL;
-    const void *value = NULL;
-    PBE2PARAM *pbe = NULL;
-    PBKDF2PARAM *kdf = NULL;
-    long iterations;
-    int type, allowed = 0;
-
-    if (max_iterations == 0)
-        return 0;
-    pbe = unpack_pbes2(encrypted);
-    if (pbe == NULL)
-        return 0;
-    X509_ALGOR_get0(&oid, &type, &value, pbe->keyfunc);
-    if (!oid_equals(oid, BEE2_OID_PBKDF2) ||
-        type != V_ASN1_SEQUENCE || value == NULL)
-        goto end;
-    kdf = ASN1_item_unpack((const ASN1_STRING *)value,
-                           ASN1_ITEM_rptr(PBKDF2PARAM));
-    if (kdf == NULL)
-        goto end;
-    iterations = ASN1_INTEGER_get(kdf->iter);
-    allowed = iterations > 0 && (unsigned long)iterations <= max_iterations;
-end:
-    PBKDF2PARAM_free(kdf);
-    PBE2PARAM_free(pbe);
-    return allowed;
-}
-
-/* STB 34.101.45, Annex E: authenticated plaintext is a BIGN scalar.
- * OpenSSL builds the ordinary PrivateKeyInfo around it for the decoder. */
+/* STB Annex E carries only the scalar, so the curve is determined by its size. */
 static PKCS8_PRIV_KEY_INFO *stb_scalar_to_pkcs8(const unsigned char *scalar, size_t len)
 {
     const bee2_bign_variant_t *variant;
-    PKCS8_PRIV_KEY_INFO *p8 = NULL;
-    ASN1_OBJECT *algorithm = NULL, *curve = NULL;
-    unsigned char *copy = NULL;
 
     switch (len) {
     case 32: variant = bee2_bign_variant_256(); break;
@@ -1308,21 +1121,7 @@ static PKCS8_PRIV_KEY_INFO *stb_scalar_to_pkcs8(const unsigned char *scalar, siz
     case 64: variant = bee2_bign_variant_512(); break;
     default: return NULL;
     }
-    p8 = PKCS8_PRIV_KEY_INFO_new();
-    algorithm = OBJ_txt2obj(BEE2_OID_BIGN_PUBKEY, 1);
-    curve = OBJ_txt2obj(variant->curve_oid, 1);
-    copy = OPENSSL_memdup(scalar, len);
-    if (p8 == NULL || algorithm == NULL || curve == NULL || copy == NULL ||
-        !PKCS8_pkey_set0(p8, algorithm, 0, V_ASN1_OBJECT, curve, copy, (int)len))
-        goto err;
-    return p8;
-
-err:
-    ASN1_OBJECT_free(algorithm);
-    ASN1_OBJECT_free(curve);
-    OPENSSL_clear_free(copy, len);
-    PKCS8_PRIV_KEY_INFO_free(p8);
-    return NULL;
+    return bign_make_pkcs8(scalar, variant, 0, 0);
 }
 
 PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,

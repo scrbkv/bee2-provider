@@ -17,11 +17,6 @@ int bee2_bign_asn1_decode_pkcs8_der(const unsigned char *buf, size_t len,
                                     const bee2_bign_variant_t *expected, bee2_bign_key_t *key);
 int bee2_bign_asn1_decode_spki_der(const unsigned char *buf, size_t len,
                                   const bee2_bign_variant_t *expected, bee2_bign_key_t *key);
-int bee2_bign_asn1_decode_encrypted_pkcs8_der(const unsigned char *buf, size_t len,
-                                              const bee2_bign_variant_t *expected,
-                                              bee2_bign_key_t *key, OSSL_LIB_CTX *libctx,
-                                              unsigned int max_pbkdf2_iterations,
-                                              OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg);
 int bee2_bign_asn1_decoder_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
                                   OSSL_CALLBACK *data_cb, void *data_cbarg,
                                   OSSL_PASSPHRASE_CALLBACK *pw_cb, void *pw_cbarg);

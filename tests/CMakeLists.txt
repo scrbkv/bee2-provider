@@ -478,20 +478,20 @@ if(BEE2_PROVIDER_ENABLE_INTEROP)
 endif()
 
 # BIGN PKCS#8/SPKI cryptographic key serialization in PEM and DER.
-add_executable(bee2_bign_legacy_pbkdf2_limit
-    bign_legacy_pbkdf2_limit.c
+add_executable(bee2_bign_stb_pbes2_contract
+    bign_stb_pbes2_contract.c
     ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
     ${CMAKE_SOURCE_DIR}/src/bign_common.c
     ${CMAKE_SOURCE_DIR}/src/provider_util.c)
-target_include_directories(bee2_bign_legacy_pbkdf2_limit PRIVATE
+target_include_directories(bee2_bign_stb_pbes2_contract PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
-target_include_directories(bee2_bign_legacy_pbkdf2_limit SYSTEM PRIVATE
+target_include_directories(bee2_bign_stb_pbes2_contract SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/bee2/include)
-target_link_libraries(bee2_bign_legacy_pbkdf2_limit PRIVATE
+target_link_libraries(bee2_bign_stb_pbes2_contract PRIVATE
     bee2_static OpenSSL::Crypto)
-add_test(NAME bee2_bign_legacy_pbkdf2_limit
-    COMMAND bee2_bign_legacy_pbkdf2_limit $<TARGET_FILE_DIR:bee2_provider>)
-set_tests_properties(bee2_bign_legacy_pbkdf2_limit
+add_test(NAME bee2_bign_stb_pbes2_contract
+    COMMAND bee2_bign_stb_pbes2_contract $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_stb_pbes2_contract
     PROPERTIES LABELS "regression;bign;pbkdf2;native")
 
 add_executable(bee2_bign_codec_crypto bign_codec_crypto.c)
@@ -573,7 +573,7 @@ endif()
 # Instrument those copies as well so their exercised production paths
 # are not omitted from the source coverage accounting.
 if(BEE2_PROVIDER_ENABLE_COVERAGE)
-    foreach(target IN ITEMS bee2_bign_der_framing bee2_bign_legacy_pbkdf2_limit)
+    foreach(target IN ITEMS bee2_bign_der_framing bee2_bign_stb_pbes2_contract)
         target_compile_options(${target} PRIVATE --coverage -fprofile-update=atomic -O0 -g)
         target_link_options(${target} PRIVATE --coverage)
     endforeach()
@@ -648,3 +648,11 @@ add_test(NAME bee2_bign_pem_framing_contract
     COMMAND bee2_bign_pem_framing_contract $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_pem_framing_contract PROPERTIES
     LABELS "regression;bign;codec;negative;native")
+
+# A successful BIGN SPKI decode must not leave speculative ASN.1 errors.
+add_executable(bee2_bign_decoder_error_queue bign_decoder_error_queue.c)
+target_link_libraries(bee2_bign_decoder_error_queue PRIVATE OpenSSL::Crypto)
+add_test(NAME bee2_bign_decoder_error_queue
+    COMMAND bee2_bign_decoder_error_queue $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_decoder_error_queue PROPERTIES
+    LABELS "regression;bign;codec;native")
