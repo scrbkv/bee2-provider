@@ -134,18 +134,27 @@ end:
 
 static int append_trailing_byte(ASN1_STRING *encoded)
 {
-    int len = ASN1_STRING_length(encoded);
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    size_t len = ASN1_STRING_get_length(encoded);
+#else
+    int legacy_len = ASN1_STRING_length(encoded);
+    size_t len = legacy_len > 0 ? (size_t)legacy_len : 0;
+#endif
     unsigned char *copy;
     int ok;
 
-    if (len <= 0 || len == INT_MAX)
+    if (len == 0 || len >= INT_MAX)
         return 0;
-    copy = OPENSSL_malloc((size_t)len + 1);
+    copy = OPENSSL_malloc(len + 1);
     if (copy == NULL)
         return 0;
-    memcpy(copy, ASN1_STRING_get0_data(encoded), (size_t)len);
+    memcpy(copy, ASN1_STRING_get0_data(encoded), len);
     copy[len] = 0;
-    ok = ASN1_STRING_set(encoded, copy, len + 1);
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    ok = ASN1_STRING_set1_data(encoded, copy, len + 1);
+#else
+    ok = ASN1_STRING_set(encoded, copy, (int)len + 1);
+#endif
     OPENSSL_free(copy);
     return ok;
 }
@@ -277,17 +286,26 @@ static int check_stb_decrypt_parameters(void)
 
         X509_SIG_free(info);
         info = d2i_X509_SIG(NULL, &p, (long)encrypted_len);
-        if (info == NULL || !mutate_stb_salt(info, wrong_type) ||
-            bee2_stb_pbes2_is_stb(info) != (wrong_type != 3))
+        if (info == NULL || !mutate_stb_salt(info, wrong_type)) {
+            fprintf(stderr, "STB PBES2 mutation failed: case %d\n", wrong_type);
             goto end;
+        }
+        if (bee2_stb_pbes2_is_stb(info) != (wrong_type != 3)) {
+            fprintf(stderr, "STB PBES2 classification failed: case %d\n", wrong_type);
+            goto end;
+        }
         PKCS8_PRIV_KEY_INFO_free(decoded);
         decoded = NULL;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
                                           sizeof(password) - 1, 10000, NULL,
                                           &recognised);
-        if (decoded != NULL || recognised != (wrong_type != 3))
+        if (decoded != NULL || recognised != (wrong_type != 3)) {
+            fprintf(stderr,
+                    "STB PBES2 nested DER validation failed: case %d, recognised %d\n",
+                    wrong_type, recognised);
             goto end;
+        }
     }
     ok = 1;
 
