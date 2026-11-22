@@ -677,6 +677,39 @@ cleanup:
 }
 
 
+/* Read only the AlgorithmIdentifier, even if key material is malformed.
+ * This probe does not decode or validate the BIGN key itself. */
+static int bign_der_has_bign_oid(const unsigned char *der, size_t len,
+                                BIGN_DER_KIND kind)
+{
+    const unsigned char *p, *end;
+    ASN1_INTEGER *version = NULL;
+    X509_ALGOR *alg = NULL;
+    const ASN1_OBJECT *oid = NULL;
+    int match = 0;
+
+    if ((kind != BIGN_DER_PRIVATE && kind != BIGN_DER_PUBLIC) ||
+        !bign_der_sequence_body(der, len, &p))
+        return 0;
+    end = der + len;
+    ERR_set_mark();
+    if (kind == BIGN_DER_PRIVATE) {
+        version = d2i_ASN1_INTEGER(NULL, &p, (long)(end - p));
+        if (version == NULL)
+            goto end;
+    }
+    alg = d2i_X509_ALGOR(NULL, &p, (long)(end - p));
+    if (alg != NULL) {
+        X509_ALGOR_get0(&oid, NULL, NULL, alg);
+        match = oid_equals(oid, BEE2_OID_BIGN_PUBKEY);
+    }
+end:
+    ASN1_INTEGER_free(version);
+    X509_ALGOR_free(alg);
+    ERR_pop_to_mark();
+    return match;
+}
+
 int bee2_bign_asn1_decoder_decode(void *vctx,
                                   OSSL_CORE_BIO *in, int selection,
                                   OSSL_CALLBACK *data_cb, void *data_cbarg,
@@ -714,8 +747,10 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
         break;
     }
     if (!decoded) {
-        /* Other decoders may recognise the same PKCS#8 envelope. */
-        ok = 1;
+        /* The BIGN OID makes malformed key material a fatal decode error.
+         * For other algorithms leave the key to another decoder. */
+        ok = bign_der_has_bign_oid(input.der, input.der_len,
+                                  bign_der_kind(input.der, input.der_len)) ? 0 : 1;
         goto end;
     }
     if (selection != 0) {
@@ -756,53 +791,30 @@ static int bign_emit_der(OSSL_CALLBACK *data_cb, void *data_cbarg,
                          const unsigned char *der, size_t der_len)
 {
     int obj_type = OSSL_OBJECT_PKEY;
-    OSSL_PARAM params[] = {
-        OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, (char *)name, 0),
-        OSSL_PARAM_utf8_string(OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0),
-        OSSL_PARAM_octet_string(OSSL_OBJECT_PARAM_DATA, (void *)der, der_len),
-        OSSL_PARAM_int(OSSL_OBJECT_PARAM_TYPE, &obj_type),
-        OSSL_PARAM_END
-    };
+    OSSL_PARAM params[5], *param = params;
 
+    if (name != NULL)
+        *param++ = OSSL_PARAM_construct_utf8_string(
+            OSSL_OBJECT_PARAM_DATA_TYPE, (char *)name, 0);
+    *param++ = OSSL_PARAM_construct_utf8_string(
+        OSSL_OBJECT_PARAM_DATA_STRUCTURE, (char *)structure, 0);
+    *param++ = OSSL_PARAM_construct_octet_string(
+        OSSL_OBJECT_PARAM_DATA, (void *)der, der_len);
+    *param++ = OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &obj_type);
+    *param = OSSL_PARAM_construct_end();
     return data_cb(params, data_cbarg);
 }
 
-/* Pass unencrypted BIGN keys to the next DER decoder.  This step has
- * consumed the nonseekable input BIO, so simply returning without a callback
- * would lose the key.  OpenSSL owns both ASN.1 container types. */
+/* The incoming BIO has been consumed. Pass plain keys to the native DER
+ * chain even when they belong to another algorithm. */
 static int bign_forward_plain(OSSL_CALLBACK *data_cb, void *data_cbarg,
                               const unsigned char *der, size_t len,
                               BIGN_DER_KIND kind)
 {
-    const unsigned char *p = der;
-    const ASN1_OBJECT *oid = NULL;
-    ASN1_OBJECT *pub_oid = NULL;
-    PKCS8_PRIV_KEY_INFO *p8 = NULL;
-    X509_PUBKEY *spki = NULL;
-    const char *structure = NULL;
-    int ok = 1;
+    const char *structure = kind == BIGN_DER_PRIVATE
+                            ? "PrivateKeyInfo" : "SubjectPublicKeyInfo";
 
-    ERR_set_mark();
-    if (kind == BIGN_DER_PRIVATE) {
-        p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
-        if (p8 != NULL && p == der + len &&
-            PKCS8_pkey_get0(&oid, NULL, NULL, NULL, p8) &&
-            oid_equals(oid, BEE2_OID_BIGN_PUBKEY))
-            structure = "PrivateKeyInfo";
-    } else if (kind == BIGN_DER_PUBLIC) {
-        spki = d2i_X509_PUBKEY(NULL, &p, (long)len);
-        if (spki != NULL && p == der + len &&
-            X509_PUBKEY_get0_param(&pub_oid, NULL, NULL, NULL, spki) &&
-            oid_equals(pub_oid, BEE2_OID_BIGN_PUBKEY))
-            structure = "SubjectPublicKeyInfo";
-    }
-    ERR_pop_to_mark();
-
-    if (structure != NULL)
-        ok = bign_emit_der(data_cb, data_cbarg, "bign", structure, der, len);
-    PKCS8_PRIV_KEY_INFO_free(p8);
-    X509_PUBKEY_free(spki);
-    return ok;
+    return bign_emit_der(data_cb, data_cbarg, NULL, structure, der, len);
 }
 
 /* The OpenSSL DER decoder chain first unwraps EncryptedPrivateKeyInfo and
@@ -858,7 +870,11 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     encrypted = d2i_X509_SIG(NULL, &p, (long)input.der_len);
     if (encrypted == NULL || p != input.der + input.der_len ||
         !bee2_stb_pbes2_is_stb(encrypted)) {
-        ok = 1; /* Other encrypted key formats belong to OpenSSL. */
+        /* Delegate other PBES2 schemes to OpenSSL without requiring the
+         * original BIO to support seeking or rewinding. */
+        ok = bign_emit_der(data_cb, data_cbarg, NULL,
+                           "EncryptedPrivateKeyInfo",
+                           input.der, input.der_len);
         goto end;
     }
 
