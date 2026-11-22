@@ -160,9 +160,10 @@ input format. Use `genpkey` or `pkey` with `-belt-kwp256` instead.
 The STB private-key decoder permits at most 1,000,000 PBKDF2 iterations by
 default. Applications can adjust this limit using decoder context parameter
 `stb-pbkdf2-max-decode-iterations` (any positive unsigned int up to INT_MAX).
-This bound applies to the provider's STB and standard-PBKDF2 decoding paths,
-not to unrelated OpenSSL decoders. Passwords and plaintext key material are
-cleared from provider temporary buffers on cleanup.
+This bound applies to STB PBES2 only. Ordinary PBES2 (such as AES-CBC) uses
+OpenSSL's own decoder, which does not use this provider-specific limit.
+Passwords and plaintext key material are cleared from provider temporary
+buffers on cleanup.
 
 ## Cipher behavior
 

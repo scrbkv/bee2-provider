@@ -1,8 +1,7 @@
-/* PBES2 iteration limits must be checked before starting password derivation. */
+/* STB PBES2 classification and password protection contracts. */
 #include "bign_stb_pbes2.h"
 #include "bee2_oids.h"
 
-#include <limits.h>
 #include <string.h>
 #include <openssl/crypto.h>
 #include <stdio.h>
@@ -13,7 +12,6 @@
 
 #define OID_PBES2 "1.2.840.113549.1.5.13"
 #define OID_PBKDF2 "1.2.840.113549.1.5.12"
-#define OID_SCRYPT "1.3.6.1.4.1.11591.4.11"
 
 static int set_algorithm(X509_ALGOR *alg, const char *oid, int type, void *value)
 {
@@ -105,13 +103,11 @@ static int check_stb_pbes2_classification(void)
     size_t i;
     int recognised, ok = 0;
 
-    if (bee2_stb_pbes2_is_stb(NULL) ||
-        bee2_pkcs8_standard_pbkdf2_allowed(NULL, 10000))
+    if (bee2_stb_pbes2_is_stb(NULL))
         return 0;
     for (i = 0; i < sizeof(ciphers) / sizeof(ciphers[0]); ++i) {
         info = make_pbes2(10000, OID_PBKDF2, ciphers[i]);
-        if (info == NULL || bee2_stb_pbes2_is_stb(info) != (i == 2) ||
-            bee2_pkcs8_standard_pbkdf2_allowed(info, 0))
+        if (info == NULL || bee2_stb_pbes2_is_stb(info) != (i == 2))
             goto end;
 
         /* The fixture deliberately carries an AES-style IV rather than
@@ -285,58 +281,15 @@ end:
 
 int main(int argc, char **argv)
 {
-    static const struct {
-        long iterations;
-        unsigned int maximum;
-        int allowed;
-    } cases[] = {
-        {0, 10000u, 0},
-        {1, 10000u, 1},
-        {9999, 10000u, 1},
-        {10000, 10000u, 1},
-        {10001, 10000u, 0},
-        {LONG_MAX, 10000u, 0},
-    };
-    size_t i;
-    X509_SIG *unknown = NULL;
     OSSL_PROVIDER *bee2 = NULL, *def = NULL;
-    int ok = 0;
+    int ok;
 
     if (argc != 2 || !OSSL_PROVIDER_set_default_search_path(NULL, argv[1]))
         return 2;
     def = OSSL_PROVIDER_load(NULL, "default");
     bee2 = OSSL_PROVIDER_load(NULL, "bee2_provider");
-    if (def == NULL || bee2 == NULL) {
-        OSSL_PROVIDER_unload(bee2);
-        OSSL_PROVIDER_unload(def);
-        return 1;
-    }
-
-    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-        X509_SIG *info = make_pbes2(cases[i].iterations, OID_PBKDF2,
-                                    "2.16.840.1.101.3.4.1.42");
-        int result;
-
-        if (!info) {
-            fprintf(stderr, "PBES2 test fixture construction failed at case %zu\n", i);
-            goto end;
-        }
-        result = bee2_pkcs8_standard_pbkdf2_allowed(info, cases[i].maximum);
-        X509_SIG_free(info);
-        if (result != cases[i].allowed) {
-            fprintf(stderr, "PBES2 iteration limit mismatch at case %zu\n", i);
-            goto end;
-        }
-    }
-    unknown = make_pbes2(1, OID_SCRYPT, "2.16.840.1.101.3.4.1.42");
-    if (!unknown || bee2_pkcs8_standard_pbkdf2_allowed(unknown, 10000u)) {
-        fprintf(stderr, "Unrecognised PBES2 KDF was accepted\n");
-        goto end;
-    }
-    ok = check_stb_pbes2_classification() && check_stb_decrypt_parameters();
-
-end:
-    X509_SIG_free(unknown);
+    ok = def != NULL && bee2 != NULL &&
+         check_stb_pbes2_classification() && check_stb_decrypt_parameters();
     OSSL_PROVIDER_unload(bee2);
     OSSL_PROVIDER_unload(def);
     return ok ? 0 : 1;
