@@ -9,7 +9,6 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
-#include <openssl/core_names.h>
 #include <stdint.h>
 #include <openssl/provider.h>
 #include <openssl/rsa.h>

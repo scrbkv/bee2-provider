@@ -3,6 +3,7 @@
 #include "bee2_oids.h"
 
 #include <string.h>
+#include <limits.h>
 #include <openssl/crypto.h>
 #include <stdio.h>
 #include <openssl/asn1t.h>
@@ -131,8 +132,26 @@ end:
 
 
 
-/* Exercise PBKDF2 salt encodings with an authenticated STB scalar. */
-static int mutate_stb_salt(X509_SIG *info, int wrong_type)
+static int append_trailing_byte(ASN1_STRING *encoded)
+{
+    int len = ASN1_STRING_length(encoded);
+    unsigned char *copy;
+    int ok;
+
+    if (len <= 0 || len == INT_MAX)
+        return 0;
+    copy = OPENSSL_malloc((size_t)len + 1);
+    if (copy == NULL)
+        return 0;
+    memcpy(copy, ASN1_STRING_get0_data(encoded), (size_t)len);
+    copy[len] = 0;
+    ok = ASN1_STRING_set(encoded, copy, len + 1);
+    OPENSSL_free(copy);
+    return ok;
+}
+
+/* Exercise invalid STB PBKDF2 parameters and trailing nested DER. */
+static int mutate_stb_salt(X509_SIG *info, int mode)
 {
     static const unsigned char short_salt[7] = {0};
     X509_ALGOR *outer = NULL;
@@ -162,19 +181,20 @@ static int mutate_stb_salt(X509_SIG *info, int wrong_type)
     if (kdf == NULL)
         goto end;
 
-    if (wrong_type) {
+    if (mode == 1) {
         ASN1_TYPE_set(kdf->salt, V_ASN1_NULL, NULL);
-    } else if (!ASN1_OCTET_STRING_set(kdf->salt->value.octet_string,
-                                       short_salt, sizeof(short_salt))) {
+    } else if (mode == 0 &&
+               !ASN1_OCTET_STRING_set(kdf->salt->value.octet_string,
+                                      short_salt, sizeof(short_salt))) {
         goto end;
     }
     packed = ASN1_item_pack(kdf, ASN1_ITEM_rptr(PBKDF2PARAM), NULL);
-    if (packed == NULL ||
+    if (packed == NULL || (mode == 2 && !append_trailing_byte(packed)) ||
         !set_algorithm(pbe->keyfunc, OID_PBKDF2, V_ASN1_SEQUENCE, packed))
         goto end;
     packed = NULL;
     packed = ASN1_item_pack(pbe, ASN1_ITEM_rptr(PBE2PARAM), NULL);
-    if (packed == NULL ||
+    if (packed == NULL || (mode == 3 && !append_trailing_byte(packed)) ||
         !set_algorithm(outer, OID_PBES2, V_ASN1_SEQUENCE, packed))
         goto end;
     packed = NULL;
@@ -252,12 +272,13 @@ static int check_stb_decrypt_parameters(void)
                                 10000, NULL, NULL) != NULL)
         goto end;
 
-    for (wrong_type = 0; wrong_type < 2; ++wrong_type) {
+    for (wrong_type = 0; wrong_type < 4; ++wrong_type) {
         const unsigned char *p = encrypted;
 
         X509_SIG_free(info);
         info = d2i_X509_SIG(NULL, &p, (long)encrypted_len);
-        if (info == NULL || !mutate_stb_salt(info, wrong_type))
+        if (info == NULL || !mutate_stb_salt(info, wrong_type) ||
+            bee2_stb_pbes2_is_stb(info) != (wrong_type != 3))
             goto end;
         PKCS8_PRIV_KEY_INFO_free(decoded);
         decoded = NULL;
@@ -265,7 +286,7 @@ static int check_stb_decrypt_parameters(void)
         decoded = bee2_stb_pbes2_decrypt(info, password,
                                           sizeof(password) - 1, 10000, NULL,
                                           &recognised);
-        if (decoded != NULL || !recognised)
+        if (decoded != NULL || recognised != (wrong_type != 3))
             goto end;
     }
     ok = 1;

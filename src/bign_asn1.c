@@ -677,10 +677,8 @@ cleanup:
 }
 
 
-/* Read only the AlgorithmIdentifier, even if key material is malformed.
- * This probe does not decode or validate the BIGN key itself. */
-static int bign_der_has_bign_oid(const unsigned char *der, size_t len,
-                                BIGN_DER_KIND kind)
+/* Recognise the BIGN algorithm without decoding the key payload. */
+static int bign_der_has_bign_oid(const unsigned char *der, size_t len)
 {
     const unsigned char *p, *end;
     ASN1_INTEGER *version = NULL;
@@ -688,12 +686,15 @@ static int bign_der_has_bign_oid(const unsigned char *der, size_t len,
     const ASN1_OBJECT *oid = NULL;
     int match = 0;
 
-    if ((kind != BIGN_DER_PRIVATE && kind != BIGN_DER_PUBLIC) ||
-        !bign_der_sequence_body(der, len, &p))
+    if (!bign_der_sequence_body(der, len, &p) || p == der + len)
         return 0;
     end = der + len;
+    if (*p != V_ASN1_INTEGER &&
+        *p != (V_ASN1_CONSTRUCTED | V_ASN1_SEQUENCE))
+        return 0;
+
     ERR_set_mark();
-    if (kind == BIGN_DER_PRIVATE) {
+    if (*p == V_ASN1_INTEGER) {
         version = d2i_ASN1_INTEGER(NULL, &p, (long)(end - p));
         if (version == NULL)
             goto end;
@@ -718,6 +719,7 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
     bee2_bign_decoder_ctx_t *ctx = vctx;
     BIGN_INPUT input = {0};
     bee2_bign_key_t *key = NULL;
+    BIGN_DER_KIND kind;
     int decoded = 0, ok = 0;
 
     (void)pw_cb;
@@ -730,11 +732,18 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
         ok = 1;
         goto end;
     }
+    /* Skip foreign key types without allocating a key or attempting
+     * full BIGN parsing. Invalid data with the BIGN OID is fatal. */
+    if (!bign_der_has_bign_oid(input.der, input.der_len)) {
+        ok = 1;
+        goto end;
+    }
     key = bee2_bign_key_new(NULL);
     if (key == NULL)
         goto end;
 
-    switch (bign_der_kind(input.der, input.der_len)) {
+    kind = bign_der_kind(input.der, input.der_len);
+    switch (kind) {
     case BIGN_DER_PRIVATE:
         decoded = bee2_bign_asn1_decode_pkcs8_der(input.der, input.der_len,
                                                    ctx->variant, key);
@@ -746,13 +755,8 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
     default:
         break;
     }
-    if (!decoded) {
-        /* The BIGN OID makes malformed key material a fatal decode error.
-         * For other algorithms leave the key to another decoder. */
-        ok = bign_der_has_bign_oid(input.der, input.der_len,
-                                  bign_der_kind(input.der, input.der_len)) ? 0 : 1;
+    if (!decoded)
         goto end;
-    }
     if (selection != 0) {
         if (((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) && !key->has_priv) ||
             ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !key->has_pub)) {
@@ -1135,8 +1139,31 @@ end:
     return result;
 }
 
-/* PBES2 itself is an OpenSSL ASN.1 structure.  Parse it in one place
- * instead of repeating its envelope checks in each STB policy helper. */
+/* ASN1_item_unpack() does not reject bytes after the first DER object.
+ * For password-protection parameters accept only one complete sequence. */
+static void *unpack_sequence_exact(const ASN1_STRING *encoded,
+                                   const ASN1_ITEM *item)
+{
+    const unsigned char *p, *start;
+    size_t len;
+    ASN1_VALUE *value;
+
+    if (encoded == NULL)
+        return NULL;
+    len = asn_length(encoded);
+    start = ASN1_STRING_get0_data(encoded);
+    if (start == NULL || len == 0 || len > LONG_MAX)
+        return NULL;
+    p = start;
+    value = ASN1_item_d2i(NULL, &p, (long)len, item);
+    if (value != NULL && p != start + len) {
+        ASN1_item_free(value, item);
+        value = NULL;
+    }
+    return value;
+}
+
+/* PBES2 itself is an OpenSSL ASN.1 structure. */
 static PBE2PARAM *unpack_pbes2(const X509_SIG *encrypted)
 {
     const X509_ALGOR *algorithm = NULL;
@@ -1152,8 +1179,8 @@ static PBE2PARAM *unpack_pbes2(const X509_SIG *encrypted)
     if (!oid_equals(oid, BEE2_OID_PBES2) ||
         type != V_ASN1_SEQUENCE || value == NULL)
         return NULL;
-    return ASN1_item_unpack((const ASN1_STRING *)value,
-                            ASN1_ITEM_rptr(PBE2PARAM));
+    return unpack_sequence_exact((const ASN1_STRING *)value,
+                                  ASN1_ITEM_rptr(PBE2PARAM));
 }
 
 int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
@@ -1221,7 +1248,8 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
     if (!oid_equals(obj, BEE2_OID_PBKDF2) ||
         type != V_ASN1_SEQUENCE || value == NULL)
         goto end;
-    kdf = ASN1_item_unpack((const ASN1_STRING *)value, ASN1_ITEM_rptr(PBKDF2PARAM));
+    kdf = unpack_sequence_exact((const ASN1_STRING *)value,
+                                ASN1_ITEM_rptr(PBKDF2PARAM));
     if (kdf == NULL || kdf->prf == NULL ||
         kdf->salt == NULL || kdf->salt->type != V_ASN1_OCTET_STRING)
         goto end;
