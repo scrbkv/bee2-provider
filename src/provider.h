@@ -150,6 +150,5 @@ extern const OSSL_DISPATCH bee2_bign_pem_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_der_encoder_functions[];
 extern const OSSL_DISPATCH bee2_bign_decoder_functions[];
 extern const OSSL_DISPATCH bee2_stb_epki_decoder_functions[];
-extern const OSSL_DISPATCH bee2_stb_pem_decoder_functions[];
 
 #endif /* BEE2_PROVIDER_H */

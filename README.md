@@ -96,6 +96,15 @@ BIGN private keys use PKCS#8 `PrivateKeyInfo` and
 `EncryptedPrivateKeyInfo`; public keys use `SubjectPublicKeyInfo`. Both DER
 and PEM encodings are supported. The OpenSSL `file:` STORE loader is supported.
 
+OpenSSL's default PEM-to-DER and PKCS#8/SPKI decoder chain handles the
+standard containers and dispatches by algorithm OID. The registered BIGN OID
+alias routes the key payload to the BIGN-specific decoder. Bee2 Provider adds
+only the decryption step required by STB PBES2.
+
+For PEM and standard PBES2 decoding, leave the decoder property query broad
+enough to include the default provider; `provider=bee2` alone excludes the
+standard PEM and generic PBES2 decoder steps.
+
 When private-key encryption is explicitly requested with
 `OSSL_ENCODER_CTX_set_cipher()`, `"default"` or `"belt-kwp256"` selects
 STB 34.101.45, Annex E. PBKDF2-HMAC-HBELT derives a 32-byte key and

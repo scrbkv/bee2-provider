@@ -1,4 +1,4 @@
-/* BIGN ASN.1, DER/PEM framing, PKCS#8 and PBES2 serialization. */
+/* BIGN ASN.1 key payloads and PBES2 serialization. */
 #include "bign_asn1.h"
 #include "bign_der_frame.h"
 #include "bign_stb_pbes2.h"
@@ -496,33 +496,17 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len)
 typedef struct {
     unsigned char *der;
     size_t der_len;
-    char *pem_name;
 } BIGN_INPUT;
 
 static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
                            OSSL_CORE_BIO *in, BIGN_INPUT *input)
 {
     BIO *bio = BIO_new_from_core_bio(ctx->libctx, in);
-    char *header = NULL;
-    long len = 0;
-    int ok = 0;
+    int ok;
 
     if (bio == NULL)
         return 0;
-    if (ctx->input_pem) {
-        /* OpenSSL's own PEM reader reads exactly one PEM object. */
-        if (PEM_read_bio(bio, &input->pem_name, &header, &input->der, &len) > 0) {
-            if (len > 0)
-                input->der_len = (size_t)len;
-            ok = len > 0 && (size_t)len <= BIGN_MAX_KEY_INPUT;
-        } else {
-            /* A different decoder may recognise this input. */
-            ok = !BIO_should_retry(bio) && BIO_eof(bio) > 0;
-        }
-    } else {
-        ok = read_der_object(bio, &input->der, &input->der_len);
-    }
-    OPENSSL_free(header);
+    ok = read_der_object(bio, &input->der, &input->der_len);
     BIO_free(bio);
     return ok;
 }
@@ -530,7 +514,6 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
 static void bign_free_input(BIGN_INPUT *input)
 {
     OPENSSL_clear_free(input->der, input->der_len);
-    OPENSSL_free(input->pem_name);
 }
 
 
@@ -846,10 +829,7 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
                                     input.der_len, kind);
             goto end;
         }
-        if (kind != BIGN_DER_ENCRYPTED ||
-            (ctx->input_pem &&
-             (input.pem_name == NULL ||
-              strcmp(input.pem_name, "ENCRYPTED PRIVATE KEY") != 0))) {
+        if (kind != BIGN_DER_ENCRYPTED) {
             ok = 1;
             goto end;
         }

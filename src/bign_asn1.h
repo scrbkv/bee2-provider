@@ -8,7 +8,6 @@ typedef struct {
     const bee2_bign_variant_t *variant;
     OSSL_LIB_CTX *libctx;
     unsigned int max_pbkdf2_iterations;
-    int input_pem;
 } bee2_bign_decoder_ctx_t;
 
 unsigned char *bee2_bign_asn1_encode_pkcs8_der(const bee2_bign_key_t *key, size_t *out_len);

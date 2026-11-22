@@ -368,14 +368,6 @@ static void *bign_decoder_newctx(void *provctx) {
     return bign_decoder_newctx_common(NULL, provctx);
 }
 
-static void *bign_stb_pem_newctx(void *provctx) {
-    bee2_bign_decoder_ctx_t *ctx = bign_decoder_newctx_common(NULL, provctx);
-
-    if (ctx)
-        ctx->input_pem = 1;
-    return ctx;
-}
-
 static void *bign_pem_encoder_newctx(void *provctx) {
     return bign_encoder_newctx_common(NULL, 1, provctx);
 }
@@ -428,15 +420,6 @@ const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
 
 const OSSL_DISPATCH bee2_stb_epki_decoder_functions[] = {
     {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
-    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
-    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
-     (void (*)(void))bign_decoder_settable_ctx_params},
-    {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
-    {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bee2_bign_asn1_stb_epki_decode},
-    {0, NULL}};
-
-const OSSL_DISPATCH bee2_stb_pem_decoder_functions[] = {
-    {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_stb_pem_newctx},
     {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
     {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
      (void (*)(void))bign_decoder_settable_ctx_params},

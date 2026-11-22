@@ -1,4 +1,4 @@
-/* BIGN PEM decoder: CRLF, no trailing newline, and a malformed footer. */
+/* OpenSSL's default PEM decoder chain: CRLF, no final newline, malformed footer. */
 #include <openssl/core_names.h>
 #include <openssl/decoder.h>
 #include <openssl/encoder.h>
@@ -13,7 +13,7 @@ static EVP_PKEY *load_key(const unsigned char *data, size_t length, int selectio
 {
     EVP_PKEY *key = NULL;
     OSSL_DECODER_CTX *ctx = OSSL_DECODER_CTX_new_for_pkey(
-        &key, "PEM", NULL, "BIGN", selection, NULL, "provider=bee2");
+        &key, "PEM", NULL, "BIGN", selection, NULL, NULL);
     const unsigned char *p = data;
     size_t remaining = length;
 
