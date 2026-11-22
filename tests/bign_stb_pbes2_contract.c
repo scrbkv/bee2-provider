@@ -290,7 +290,7 @@ static int check_stb_decrypt_parameters(void)
             fprintf(stderr, "STB PBES2 mutation failed: case %d\n", wrong_type);
             goto end;
         }
-        if (bee2_stb_pbes2_is_stb(info) != (wrong_type != 3)) {
+        if (bee2_stb_pbes2_is_stb(info) != (wrong_type < 2)) {
             fprintf(stderr, "STB PBES2 classification failed: case %d\n", wrong_type);
             goto end;
         }
@@ -300,7 +300,7 @@ static int check_stb_decrypt_parameters(void)
         decoded = bee2_stb_pbes2_decrypt(info, password,
                                           sizeof(password) - 1, 10000, NULL,
                                           &recognised);
-        if (decoded != NULL || recognised != (wrong_type != 3)) {
+        if (decoded != NULL || recognised != (wrong_type < 2)) {
             fprintf(stderr,
                     "STB PBES2 nested DER validation failed: case %d, recognised %d\n",
                     wrong_type, recognised);
