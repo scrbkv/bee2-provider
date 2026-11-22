@@ -118,6 +118,75 @@ done:
     return ok;
 }
 
+typedef struct {
+    size_t bytes;
+} read_counter_t;
+
+static long count_pem_reads(BIO *bio, int operation, const char *argp,
+                            size_t len, int argi, long argl,
+                            int ret, size_t *processed)
+{
+    read_counter_t *counter = (read_counter_t *)BIO_get_callback_arg(bio);
+
+    (void)argp;
+    (void)len;
+    (void)argi;
+    (void)argl;
+    if (operation == (BIO_CB_GETS | BIO_CB_RETURN) &&
+        ret > 0 && processed != NULL)
+        counter->bytes += *processed;
+    return ret;
+}
+
+/* Verify the provider's read cap, not merely rejection of invalid DER. */
+static int test_oversized_pem(void)
+{
+    static const char header[] = "-----BEGIN ENCRYPTED PRIVATE KEY-----\n";
+    static const char footer[] = "-----END ENCRYPTED PRIVATE KEY-----\n";
+    const size_t max_text = 2u * 1024u * 1024u;
+    const size_t base64_chars = max_text + 4096u;
+    char *pem = NULL;
+    size_t i, length = 0;
+    BIO *input = NULL;
+    OSSL_DECODER_CTX *decoder = NULL;
+    EVP_PKEY *key = NULL;
+    read_counter_t counter = {0};
+    int decoded = 0, ok = 0;
+
+    pem = OPENSSL_malloc(base64_chars + base64_chars / 64 + 128);
+    if (pem == NULL)
+        goto done;
+    memcpy(pem, header, sizeof(header) - 1);
+    length = sizeof(header) - 1;
+    for (i = 0; i < base64_chars; ++i) {
+        pem[length++] = 'A';
+        if (i % 64 == 63)
+            pem[length++] = '\n';
+    }
+    memcpy(pem + length, footer, sizeof(footer) - 1);
+    length += sizeof(footer) - 1;
+    input = BIO_new_mem_buf(pem, (int)length);
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &key, "PEM", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR,
+        NULL, "provider=bee2");
+    if (input == NULL || decoder == NULL)
+        goto done;
+    BIO_set_callback_arg(input, (char *)&counter);
+    BIO_set_callback_ex(input, count_pem_reads);
+    decoded = OSSL_DECODER_from_bio(decoder, input);
+    ok = decoded <= 0 && key == NULL &&
+         counter.bytes >= max_text && counter.bytes <= max_text + 255;
+done:
+    if (!ok)
+        fprintf(stderr, "BIGN PEM read limit failed (read %zu bytes)\n",
+                counter.bytes);
+    OSSL_DECODER_CTX_free(decoder);
+    EVP_PKEY_free(key);
+    BIO_free(input);
+    OPENSSL_clear_free(pem, base64_chars + base64_chars / 64 + 128);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     static const char *names[] = {"bign-256", "bign-384", "bign-512"};
@@ -135,6 +204,8 @@ int main(int argc, char **argv)
         if (!test_case(names[i], 0) || !test_case(names[i], 1))
             goto done;
     }
+    if (!test_oversized_pem())
+        goto done;
     ok = 1;
 done:
     OSSL_PROVIDER_unload(bee2);

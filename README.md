@@ -101,7 +101,10 @@ standard containers and dispatches by algorithm OID. The registered BIGN OID
 alias routes the key payload to the BIGN-specific decoder. Bee2 Provider adds
 the STB PBES2 decryption step and a small PEM bridge for STB-encrypted keys:
 OpenSSL's generic PBES2 decoder otherwise attempts BELT-KWP as an ordinary
-cipher before STB-specific private-scalar decryption can run.
+cipher before STB-specific private-scalar decryption can run. The bridge uses
+OpenSSL's native PEM parser and limits raw PEM input to 2 MiB, alongside the
+1 MiB limit on decoded key DER. This is a provider-bridge limit; it does not
+change the limits of OpenSSL's default decoder.
 
 For PEM and standard PBES2 decoding, leave the decoder property query broad
 enough to include the default provider; `provider=bee2` alone excludes the

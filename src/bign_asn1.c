@@ -493,6 +493,43 @@ static int read_der_object(BIO *bio, unsigned char **out, size_t *len)
     return 1;
 }
 
+/* PEM decoding uses OpenSSL, but bound its raw input before the library
+ * allocates the entire Base64-decoded object. The bound includes PEM text. */
+#define BIGN_MAX_PEM_TEXT (BIGN_MAX_KEY_INPUT * 2u)
+
+typedef struct {
+    size_t bytes;
+    int too_large;
+} BIGN_PEM_LIMIT;
+
+static long bign_pem_limit_callback(BIO *bio, int operation,
+                                    const char *argp, size_t len,
+                                    int argi, long argl, int ret,
+                                    size_t *processed)
+{
+    BIGN_PEM_LIMIT *limit = (BIGN_PEM_LIMIT *)BIO_get_callback_arg(bio);
+
+    (void)argp;
+    (void)len;
+    (void)argi;
+    (void)argl;
+    if ((operation & ~BIO_CB_RETURN) != BIO_CB_GETS)
+        return ret;
+    if (!(operation & BIO_CB_RETURN)) {
+        if (limit->bytes >= BIGN_MAX_PEM_TEXT) {
+            limit->too_large = 1;
+            return 0;
+        }
+    } else if (ret > 0 && processed != NULL) {
+        limit->bytes += *processed;
+        if (limit->bytes > BIGN_MAX_PEM_TEXT) {
+            limit->too_large = 1;
+            return 0;
+        }
+    }
+    return ret;
+}
+
 typedef struct {
     unsigned char *der;
     size_t der_len;
@@ -505,12 +542,15 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
     BIO *bio = BIO_new_from_core_bio(ctx->libctx, in);
     char *header = NULL;
     long len = 0;
+    BIGN_PEM_LIMIT limit = {0};
     int ok = 0;
 
     if (bio == NULL)
         return 0;
     if (ctx->input_pem) {
-        /* Use OpenSSL's PEM parser only for the STB-specific decoder path. */
+        BIO_set_callback_arg(bio, (char *)&limit);
+        BIO_set_callback_ex(bio, bign_pem_limit_callback);
+        /* Keep the standard OpenSSL PEM parser, not a custom Base64 parser. */
         if (PEM_read_bio(bio, &input->pem_name, &header, &input->der, &len) > 0) {
             if (len > 0)
                 input->der_len = (size_t)len;
@@ -518,6 +558,9 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
         } else {
             ok = !BIO_should_retry(bio) && BIO_eof(bio) > 0;
         }
+        BIO_set_callback_ex(bio, NULL);
+        if (limit.too_large)
+            ok = 0;
     } else {
         ok = read_der_object(bio, &input->der, &input->der_len);
     }
