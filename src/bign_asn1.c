@@ -768,6 +768,44 @@ static int bign_emit_der(OSSL_CALLBACK *data_cb, void *data_cbarg,
     return data_cb(params, data_cbarg);
 }
 
+/* Pass unencrypted BIGN keys to the next DER decoder.  This step has
+ * consumed the nonseekable input BIO, so simply returning without a callback
+ * would lose the key.  OpenSSL owns both ASN.1 container types. */
+static int bign_forward_plain(OSSL_CALLBACK *data_cb, void *data_cbarg,
+                              const unsigned char *der, size_t len,
+                              BIGN_DER_KIND kind)
+{
+    const unsigned char *p = der;
+    const ASN1_OBJECT *oid = NULL;
+    ASN1_OBJECT *pub_oid = NULL;
+    PKCS8_PRIV_KEY_INFO *p8 = NULL;
+    X509_PUBKEY *spki = NULL;
+    const char *structure = NULL;
+    int ok = 1;
+
+    ERR_set_mark();
+    if (kind == BIGN_DER_PRIVATE) {
+        p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
+        if (p8 != NULL && p == der + len &&
+            PKCS8_pkey_get0(&oid, NULL, NULL, NULL, p8) &&
+            oid_equals(oid, BEE2_OID_BIGN_PUBKEY))
+            structure = "PrivateKeyInfo";
+    } else if (kind == BIGN_DER_PUBLIC) {
+        spki = d2i_X509_PUBKEY(NULL, &p, (long)len);
+        if (spki != NULL && p == der + len &&
+            X509_PUBKEY_get0_param(&pub_oid, NULL, NULL, NULL, spki) &&
+            oid_equals(pub_oid, BEE2_OID_BIGN_PUBKEY))
+            structure = "SubjectPublicKeyInfo";
+    }
+    ERR_pop_to_mark();
+
+    if (structure != NULL)
+        ok = bign_emit_der(data_cb, data_cbarg, "bign", structure, der, len);
+    PKCS8_PRIV_KEY_INFO_free(p8);
+    X509_PUBKEY_free(spki);
+    return ok;
+}
+
 /* The OpenSSL DER decoder chain first unwraps EncryptedPrivateKeyInfo and
  * then passes an ordinary PrivateKeyInfo to the key-type decoder. The default
  * unwrap decoder cannot handle HMAC-HBELT, so provide a DER -> DER step for
@@ -798,14 +836,23 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     if (input.der == NULL)
         goto end;
 
-    /* Plain PKCS#8/SPKI and ordinary PBES2 are decoded by OpenSSL.
-     * Only STB password protection needs an additional decoder. */
-    if ((ctx->input_pem &&
-         (input.pem_name == NULL ||
-          strcmp(input.pem_name, "ENCRYPTED PRIVATE KEY") != 0)) ||
-        bign_der_kind(input.der, input.der_len) != BIGN_DER_ENCRYPTED) {
-        ok = 1;
-        goto end;
+    /* Forward ordinary BIGN key envelopes after consuming their BIO.
+     * Other encrypted-key algorithms remain OpenSSL's responsibility. */
+    {
+        BIGN_DER_KIND kind = bign_der_kind(input.der, input.der_len);
+
+        if (kind == BIGN_DER_PRIVATE || kind == BIGN_DER_PUBLIC) {
+            ok = bign_forward_plain(data_cb, data_cbarg, input.der,
+                                    input.der_len, kind);
+            goto end;
+        }
+        if (kind != BIGN_DER_ENCRYPTED ||
+            (ctx->input_pem &&
+             (input.pem_name == NULL ||
+              strcmp(input.pem_name, "ENCRYPTED PRIVATE KEY") != 0))) {
+            ok = 1;
+            goto end;
+        }
     }
 
     p = input.der;
