@@ -531,8 +531,14 @@ static long bign_pem_limit_callback(BIO *bio, int operation,
             limit->too_large = 1;
             return 0;
         }
-    } else if (ret > 0 && processed != NULL) {
-        limit->bytes += *processed;
+    } else if (ret > 0) {
+        size_t bytes = processed != NULL ? *processed : (size_t)ret;
+
+        if (bytes > BIGN_MAX_PEM_TEXT - limit->bytes) {
+            limit->too_large = 1;
+            return 0;
+        }
+        limit->bytes += bytes;
         if (limit->bytes > BIGN_MAX_PEM_TEXT) {
             limit->too_large = 1;
             return 0;
@@ -544,6 +550,7 @@ static long bign_pem_limit_callback(BIO *bio, int operation,
 typedef struct {
     unsigned char *der;
     size_t der_len;
+    size_t der_alloc_len;
     char *pem_name;
 } BIGN_INPUT;
 
@@ -585,7 +592,7 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
         /* Keep the standard OpenSSL PEM parser, not a custom Base64 parser. */
         if (PEM_read_bio(bio, &input->pem_name, &header, &input->der, &len) > 0) {
             if (len > 0)
-                input->der_len = (size_t)len;
+                input->der_len = input->der_alloc_len = (size_t)len;
             ok = len > 0 && (size_t)len <= BIGN_MAX_KEY_INPUT;
             if (ok && header != NULL && strlen(header) > 10) {
                 EVP_CIPHER_INFO cipher_info;
@@ -593,6 +600,8 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
                 if (!PEM_get_EVP_CIPHER_INFO(header, &cipher_info) ||
                     !PEM_do_header(&cipher_info, input->der, &len,
                                    bign_pem_password, &password)) {
+                    ok = 0;
+                } else if (len < 0 || (size_t)len > input->der_alloc_len) {
                     ok = 0;
                 } else {
                     input->der_len = (size_t)len;
@@ -606,6 +615,7 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
             ok = 0;
     } else {
         ok = read_der_object(bio, &input->der, &input->der_len);
+        input->der_alloc_len = input->der_len;
     }
     OPENSSL_free(header);
     BIO_free(bio);
@@ -614,7 +624,9 @@ static int bign_read_input(bee2_bign_decoder_ctx_t *ctx,
 
 static void bign_free_input(BIGN_INPUT *input)
 {
-    OPENSSL_clear_free(input->der, input->der_len);
+    /* Traditional encrypted PEM is decrypted in place. Padding removal
+     * reduces der_len but must not reduce the region cleansed on free. */
+    OPENSSL_clear_free(input->der, input->der_alloc_len);
     OPENSSL_free(input->pem_name);
 }
 
