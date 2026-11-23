@@ -1174,6 +1174,8 @@ static int stb_kwp_crypt(OSSL_LIB_CTX *libctx, int encrypt,
     int ok = 0;
 
     *out_len = 0;
+    if (ctx != NULL)
+        EVP_CIPHER_CTX_set_flags(ctx, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
     if (ctx != NULL && in_len <= INT_MAX &&
         EVP_CipherInit_ex2(ctx, cipher, key, NULL, encrypt, NULL) > 0 &&
         EVP_CipherUpdate(ctx, out, &processed, in, (int)in_len) > 0 &&

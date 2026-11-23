@@ -90,6 +90,9 @@ static int inspect(const OSSL_ALGORITHM *alg, OSSL_PROVIDER *provider)
 
     cipher = EVP_CIPHER_fetch(NULL, name, "provider=bee2");
     evp = EVP_CIPHER_CTX_new();
+    if (evp != NULL && cipher != NULL &&
+        EVP_CIPHER_get_mode(cipher) == EVP_CIPH_WRAP_MODE)
+        EVP_CIPHER_CTX_set_flags(evp, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
     if (!cipher || !evp ||
         EVP_EncryptInit_ex2(evp, cipher, key, ivlen ? iv : NULL, NULL) <= 0 ||
         (!is_aead && EVP_CIPHER_CTX_set_padding(evp, 0) <= 0) ||

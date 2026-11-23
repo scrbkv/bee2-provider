@@ -676,6 +676,7 @@ static int check_pbes2_reject_wrapped_der(const BUF_MEM *encoded, EVP_PKEY *key)
         if (EVP_KDF_derive(kdf_ctx, derived, sizeof(derived), params) <= 0)
             goto end;
     }
+    EVP_CIPHER_CTX_set_flags(cipher_ctx, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
     if (EVP_CipherInit_ex2(cipher_ctx, cipher, derived, NULL, 1, NULL) <= 0 ||
         EVP_CipherUpdate(cipher_ctx, wrapped, &part,
                           (const unsigned char *)plain->data, (int)plain->length) <= 0 ||

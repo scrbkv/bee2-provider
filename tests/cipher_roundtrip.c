@@ -292,8 +292,10 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed, size_t
     }
     enc = EVP_CIPHER_CTX_new();
     dec = EVP_CIPHER_CTX_new();
-    if (!enc || !dec)
+    if (!enc || !dec || EVP_CIPHER_get_mode(cipher) != EVP_CIPH_WRAP_MODE)
         goto cleanup;
+    EVP_CIPHER_CTX_set_flags(enc, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
+    EVP_CIPHER_CTX_set_flags(dec, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
 
     fill_bytes(key, tc->key_len, (unsigned char)(seed ^ 0x41u));
     fill_bytes(iv, tc->iv_len, (unsigned char)(seed ^ 0x42u));
@@ -343,6 +345,7 @@ static int run_kwp_roundtrip(const cipher_case_t *tc, unsigned char seed, size_t
     dec = EVP_CIPHER_CTX_new();
     if (!dec)
         goto cleanup;
+    EVP_CIPHER_CTX_set_flags(dec, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
     ct[0] ^= 1u;
     if (EVP_DecryptInit_ex2(dec, cipher, key, iv, NULL) != 1 ||
         EVP_CIPHER_CTX_set_padding(dec, 0) != 1) {

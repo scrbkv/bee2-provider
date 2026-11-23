@@ -121,6 +121,10 @@ int main(int argc, char **argv)
 #endif
     if (cipher == NULL) goto done;
     ctx = EVP_CIPHER_CTX_new();
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    if (ctx != NULL && EVP_CIPHER_get_mode(cipher) == EVP_CIPH_WRAP_MODE)
+        EVP_CIPHER_CTX_set_flags(ctx, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
+#endif
     if (ctx == NULL || !EVP_CipherInit_ex(ctx, cipher, NULL, NULL, NULL, enc))
         goto done;
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
