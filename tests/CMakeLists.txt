@@ -2,10 +2,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Werror)
 endif()
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 find_program(BEE2_OPENSSL_EXECUTABLE NAMES openssl REQUIRED)
 
 option(BEE2_PROVIDER_ENABLE_INTEROP "Register bee2evp engine interoperability tests" OFF)
+if(BEE2_PROVIDER_ENABLE_INTEROP)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+endif()
 
 add_executable(bee2_provider_algorithms provider_algorithms.c)
 target_link_libraries(bee2_provider_algorithms PRIVATE OpenSSL::Crypto)
@@ -154,14 +156,13 @@ target_link_libraries(bee2_bign_sign_contract PRIVATE OpenSSL::Crypto)
 add_executable(bee2_bign_keyexchange_contract bign_keyexchange_contract.c)
 target_link_libraries(bee2_bign_keyexchange_contract PRIVATE OpenSSL::Crypto)
 
-add_test(
-    NAME bee2_bign_options
-    COMMAND
-        ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/bign_options.py
-        --provider-path $<TARGET_FILE_DIR:bee2_provider>
-        --openssl ${BEE2_OPENSSL_EXECUTABLE}
-)
+add_test(NAME bee2_bign_options
+    COMMAND ${CMAKE_COMMAND}
+        "-DOPENSSL_EXECUTABLE=${BEE2_OPENSSL_EXECUTABLE}"
+        "-DPROVIDER_PATH=$<TARGET_FILE_DIR:bee2_provider>"
+        "-DWORK_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/bign-options"
+        "-DCASE=options"
+        -P "${CMAKE_SOURCE_DIR}/tests/bign_cli_contract.cmake")
 set_property(TEST bee2_bign_options APPEND PROPERTY LABELS regression bign)
 
 set(BEE2_BIGN_ALGS
@@ -297,16 +298,19 @@ foreach(mode IN ITEMS ecb cbc)
     endforeach()
 endforeach()
 
+add_executable(bee2_bign_asn1_negative bign_asn1_negative.c)
+target_link_libraries(bee2_bign_asn1_negative PRIVATE OpenSSL::Crypto)
 add_test(NAME bee2_bign_asn1_negative
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bign_asn1_negative.py
-        --provider-path $<TARGET_FILE_DIR:bee2_provider>
-        --openssl ${BEE2_OPENSSL_EXECUTABLE})
-set_tests_properties(bee2_bign_asn1_negative PROPERTIES LABELS "regression;bign;asn1")
+    COMMAND bee2_bign_asn1_negative $<TARGET_FILE_DIR:bee2_provider>)
+set_tests_properties(bee2_bign_asn1_negative PROPERTIES LABELS "regression;bign;asn1;native")
 
 add_test(NAME bee2_bign_codec_roundtrip
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bign_codec_roundtrip.py
-        --provider-path $<TARGET_FILE_DIR:bee2_provider>
-        --openssl ${BEE2_OPENSSL_EXECUTABLE})
+    COMMAND ${CMAKE_COMMAND}
+        "-DOPENSSL_EXECUTABLE=${BEE2_OPENSSL_EXECUTABLE}"
+        "-DPROVIDER_PATH=$<TARGET_FILE_DIR:bee2_provider>"
+        "-DWORK_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/bign-codec-roundtrip"
+        "-DCASE=roundtrip"
+        -P "${CMAKE_SOURCE_DIR}/tests/bign_cli_contract.cmake")
 set_tests_properties(bee2_bign_codec_roundtrip PROPERTIES LABELS "regression;bign;codec")
 
 add_executable(bee2_bign_der_framing
