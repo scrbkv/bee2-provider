@@ -856,7 +856,7 @@ cleanup:
 /* Foreign encrypted PKCS#8 objects must remain decodable when the BIGN
  * decoder is loaded alongside OpenSSL's default provider. */
 static int check_foreign_key(const char *algorithm, const char *format,
-                             int encrypted, int public_only)
+                             int encrypted, int public_only, int traditional)
 {
     EVP_PKEY_CTX *gen = NULL;
     EVP_PKEY *original = NULL, *decoded = NULL;
@@ -866,7 +866,8 @@ static int check_foreign_key(const char *algorithm, const char *format,
     BUF_MEM *data = NULL;
     const int selection = public_only ? OSSL_KEYMGMT_SELECT_PUBLIC_KEY :
                                        OSSL_KEYMGMT_SELECT_KEYPAIR;
-    const char *structure = public_only ? "SubjectPublicKeyInfo" : "PrivateKeyInfo";
+    const char *structure = traditional ? "type-specific" :
+                            public_only ? "SubjectPublicKeyInfo" : "PrivateKeyInfo";
     int ok = 0;
 
     gen = EVP_PKEY_CTX_new_from_name(NULL, algorithm, "provider=default");
@@ -927,6 +928,7 @@ cleanup:
     if (!ok) {
         fprintf(stderr, "%s %s %s key loading with BIGN provider failed\n",
                 algorithm, format,
+                traditional ? "traditional PEM" :
                 public_only ? "public" : encrypted ? "encrypted" : "plain");
         ERR_print_errors_fp(stderr);
     }
@@ -941,6 +943,53 @@ cleanup:
     return ok;
 }
 
+
+/* Version-one OneAsymmetricKey may carry a separate public key.
+ * The STB PrivateKeyInfo decoder accepts only version zero. */
+static int check_unsupported_pkcs8_version(EVP_PKEY *key)
+{
+    OSSL_ENCODER_CTX *encoder = NULL;
+    OSSL_DECODER_CTX *decoder = NULL;
+    EVP_PKEY *decoded = NULL;
+    unsigned char *der = NULL;
+    const unsigned char *body, *p;
+    size_t der_len = 0, remaining;
+    long body_len = 0;
+    int tag = 0, xclass = 0, status, ok = 0;
+
+    encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, "DER", "PrivateKeyInfo",
+        "provider=bee2");
+    if (encoder == NULL || !OSSL_ENCODER_to_data(encoder, &der, &der_len) ||
+        der == NULL || der_len > LONG_MAX)
+        goto done;
+    p = der;
+    status = ASN1_get_object(&p, &body_len, &tag, &xclass, (long)der_len);
+    if ((status & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
+        xclass != V_ASN1_UNIVERSAL || p + 3 > der + der_len ||
+        p[0] != V_ASN1_INTEGER || p[1] != 1 || p[2] != 0)
+        goto done;
+    body = p;
+    der[body - (const unsigned char *)der + 2] = 1;
+    decoder = OSSL_DECODER_CTX_new_for_pkey(
+        &decoded, "DER", NULL, "bign", OSSL_KEYMGMT_SELECT_KEYPAIR,
+        NULL, NULL);
+    p = der;
+    remaining = der_len;
+    if (decoder == NULL || OSSL_DECODER_from_data(decoder, &p, &remaining) > 0 ||
+        decoded != NULL)
+        goto done;
+    ok = 1;
+done:
+    if (!ok)
+        fprintf(stderr, "BIGN PKCS#8 version-one rejection failed\n");
+    ERR_clear_error();
+    OSSL_ENCODER_CTX_free(encoder);
+    OSSL_DECODER_CTX_free(decoder);
+    EVP_PKEY_free(decoded);
+    OPENSSL_clear_free(der, der_len);
+    return ok;
+}
 
 /* Failed cipher selection must not poison the encoder.  Writable output must
  * still succeed; read-only BIO output must fail rather than losing the key. */
@@ -998,6 +1047,7 @@ int main(int argc, char **argv)
             goto cleanup;
         if ((i == 0 && (!check_encoder_failures(key, "DER") ||
                         !check_encoder_failures(key, "PEM"))) ||
+            !check_unsupported_pkcs8_version(key) ||
             !check_public_only_decoding(key) ||
             !check_key_stream(key, "DER") || !check_key_stream(key, "PEM"))
             goto cleanup;
@@ -1014,14 +1064,22 @@ int main(int argc, char **argv)
         key = NULL;
     }
     for (i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i) {
-        if (!check_foreign_key("RSA", formats[i], 0, 0) ||
-            !check_foreign_key("EC", formats[i], 0, 0) ||
-            !check_foreign_key("RSA", formats[i], 1, 0) ||
-            !check_foreign_key("EC", formats[i], 1, 0) ||
-            !check_foreign_key("RSA", formats[i], 0, 1) ||
-            !check_foreign_key("EC", formats[i], 0, 1))
+        if (!check_foreign_key("RSA", formats[i], 0, 0, 0) ||
+            !check_foreign_key("EC", formats[i], 0, 0, 0) ||
+            !check_foreign_key("RSA", formats[i], 1, 0, 0) ||
+            !check_foreign_key("EC", formats[i], 1, 0, 0) ||
+            !check_foreign_key("RSA", formats[i], 0, 1, 0) ||
+            !check_foreign_key("EC", formats[i], 0, 1, 0))
             goto cleanup;
     }
+    /* A PEM-to-DER bridge must not turn traditional SEC1/PKCS#1
+     * containers into PKCS#8, with or without legacy PEM encryption. */
+    if (!check_foreign_key("RSA", "PEM", 0, 0, 1) ||
+        !check_foreign_key("EC", "PEM", 0, 0, 1) ||
+        !check_foreign_key("RSA", "PEM", 1, 0, 1) ||
+        !check_foreign_key("EC", "PEM", 1, 0, 1) ||
+        !check_foreign_key("RSA", "PEM", 0, 1, 1))
+        goto cleanup;
     ok = 1;
 
 cleanup:
