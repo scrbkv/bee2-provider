@@ -539,10 +539,6 @@ static long bign_pem_limit_callback(BIO *bio, int operation,
             return 0;
         }
         limit->bytes += bytes;
-        if (limit->bytes > BIGN_MAX_PEM_TEXT) {
-            limit->too_large = 1;
-            return 0;
-        }
     }
     return ret;
 }
