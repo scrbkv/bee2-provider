@@ -1251,8 +1251,9 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *scalar, size_t scalar
     if (scalar == NULL || password == NULL || password_len > INT_MAX ||
         (scalar_len != 32 && scalar_len != 48 && scalar_len != 64) ||
         iterations == 0 || iterations > INT_MAX ||
-        salt_len == 0 || salt_len > INT_MAX)
+        salt_len == 0 || salt_len >= BIGN_MAX_KEY_INPUT)
         return NULL;
+    /* Reject a salt that cannot fit the whole permitted key envelope. */
     salt = OPENSSL_malloc(salt_len);
     wrapped = OPENSSL_malloc(scalar_len + 16);
     if (salt == NULL || wrapped == NULL ||
@@ -1267,8 +1268,8 @@ unsigned char *bee2_stb_pbes2_encrypt(const unsigned char *scalar, size_t scalar
     if (sig == NULL)
         goto end;
     n = i2d_X509_SIG(sig, &result);
-    if (n <= 0) {
-        OPENSSL_free(result);
+    if (n <= 0 || (size_t)n > BIGN_MAX_KEY_INPUT) {
+        OPENSSL_clear_free(result, n > 0 ? (size_t)n : 0);
         result = NULL;
     } else {
         *out_len = (size_t)n;
@@ -1479,7 +1480,7 @@ unsigned char *bee2_bign_asn1_encrypt_standard_pkcs8(const unsigned char *der, s
         return NULL;
     *out_len = 0;
     if (!der || !pass || !cipher || der_len > LONG_MAX || pass_len > INT_MAX ||
-        salt_len > INT_MAX || iterations > INT_MAX ||
+        salt_len >= BIGN_MAX_KEY_INPUT || iterations > INT_MAX ||
         !bign_der_sequence_body(der, der_len, &p))
         return NULL;
     p = der;
@@ -1491,8 +1492,8 @@ unsigned char *bee2_bign_asn1_encrypt_standard_pkcs8(const unsigned char *der, s
     if (!encrypted)
         goto end;
     n = i2d_X509_SIG(encrypted, &out);
-    if (n <= 0) {
-        OPENSSL_free(out);
+    if (n <= 0 || (size_t)n > BIGN_MAX_KEY_INPUT) {
+        OPENSSL_clear_free(out, n > 0 ? (size_t)n : 0);
         out = NULL;
     } else {
         *out_len = (size_t)n;

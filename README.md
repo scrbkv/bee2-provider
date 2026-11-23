@@ -134,8 +134,10 @@ The STB PBES2 encoder defaults to 10,000 iterations and a fresh 16-byte salt.
 Use `OSSL_ENCODER_CTX_set_params()` with `stb-pbkdf2-iterations` (unsigned int)
 and `stb-pbkdf2-saltlen` (`size_t`) to customize them. The Annex E minimums
 (10,000 iterations and 8 salt bytes) are security recommendations, not format
-requirements; the encoder accepts any positive count and salt length that fit
-OpenSSL's ASN.1 API. Choosing weaker values is the caller's responsibility.
+requirements; the encoder accepts positive iteration counts up to INT_MAX.
+The resulting encrypted DER container must fit the provider's 1 MiB input
+limit; oversized salts and encodings are rejected. Choosing weaker values
+is the caller's responsibility.
 
 Generate and encrypt a BIGN key using stock OpenSSL (load the `default` and
 `bee2_provider` providers; set `OPENSSL_MODULES` or use `-provider-path`):
@@ -174,8 +176,11 @@ input format. Use `genpkey` or `pkey` with `-belt-kwp256` instead.
 The STB private-key decoder permits at most 1,000,000 PBKDF2 iterations by
 default. Applications can adjust this limit using decoder context parameter
 `stb-pbkdf2-max-decode-iterations` (any positive unsigned int up to INT_MAX).
-This bound applies to STB PBES2 only. Ordinary PBES2 (such as AES-CBC) uses
-OpenSSL's own decoder, which does not use this provider-specific limit.
+When requesting more than 1,000,000 STB PBKDF2 iterations, the application
+must explicitly raise the decoder limit before loading that encrypted key.
+This limit is a resource-safety policy, not a restriction of STB itself.
+Ordinary PBES2 (such as AES-CBC) uses OpenSSL's decoder and does not use
+this provider-specific iteration limit.
 Passwords and plaintext key material are cleared from provider temporary
 buffers on cleanup.
 

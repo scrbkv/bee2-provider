@@ -284,6 +284,20 @@ static int check_stb_decrypt_parameters(void)
                                 10000, NULL, NULL) != NULL)
         goto end;
 
+    /* A salt larger than the maximum DER object must fail before PBKDF2. */
+    {
+        unsigned char *oversized;
+        size_t oversized_len = 17;
+
+        oversized = bee2_stb_pbes2_encrypt(
+            scalar, 32, password, sizeof(password) - 1,
+            1, 1024u * 1024u, NULL, &oversized_len);
+        if (oversized != NULL || oversized_len != 0) {
+            OPENSSL_clear_free(oversized, oversized_len);
+            goto end;
+        }
+    }
+
     for (wrong_type = 0; wrong_type < 4; ++wrong_type) {
         const unsigned char *p = encrypted;
 
