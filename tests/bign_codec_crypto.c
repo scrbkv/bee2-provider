@@ -859,10 +859,10 @@ static int check_foreign_key(const char *algorithm, const char *format,
                              int encrypted, int public_only, int traditional)
 {
     EVP_PKEY_CTX *gen = NULL;
-    EVP_PKEY *original = NULL, *decoded = NULL;
+    EVP_PKEY *original = NULL, *decoded = NULL, *rejected = NULL;
     OSSL_ENCODER_CTX *encoder = NULL;
-    OSSL_DECODER_CTX *decoder = NULL;
-    BIO *output = NULL, *input = NULL, *stream_input = NULL;
+    OSSL_DECODER_CTX *decoder = NULL, *reject_decoder = NULL;
+    BIO *output = NULL, *input = NULL, *stream_input = NULL, *wrong_input = NULL;
     BUF_MEM *data = NULL;
     const int selection = public_only ? OSSL_KEYMGMT_SELECT_PUBLIC_KEY :
                                        OSSL_KEYMGMT_SELECT_KEYPAIR;
@@ -922,6 +922,21 @@ static int check_foreign_key(const char *algorithm, const char *format,
         !decoded || !EVP_PKEY_is_a(decoded, algorithm) ||
         EVP_PKEY_eq(original, decoded) != 1)
         goto cleanup;
+
+    /* No password fallback, including traditional Proc-Type/DEK-Info
+     * encryption and the generic AES PBES2 decoder. */
+    if (encrypted) {
+        wrong_input = nonseekable_key_bio(data->data, data->length);
+        reject_decoder = OSSL_DECODER_CTX_new_for_pkey(
+            &rejected, format, NULL, NULL, selection, NULL, NULL);
+        if (wrong_input == NULL || reject_decoder == NULL ||
+            !OSSL_DECODER_CTX_set_passphrase(
+                reject_decoder, wrong_password, sizeof(wrong_password) - 1) ||
+            OSSL_DECODER_from_bio(reject_decoder, wrong_input) > 0 ||
+            rejected != NULL)
+            goto cleanup;
+        ERR_clear_error();
+    }
     ok = 1;
 
 cleanup:
@@ -934,11 +949,14 @@ cleanup:
     }
     BIO_free(input);
     BIO_free(stream_input);
+    BIO_free(wrong_input);
     BIO_free(output);
     OSSL_DECODER_CTX_free(decoder);
+    OSSL_DECODER_CTX_free(reject_decoder);
     OSSL_ENCODER_CTX_free(encoder);
     EVP_PKEY_free(original);
     EVP_PKEY_free(decoded);
+    EVP_PKEY_free(rejected);
     EVP_PKEY_CTX_free(gen);
     return ok;
 }
