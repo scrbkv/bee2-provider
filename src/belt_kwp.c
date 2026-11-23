@@ -28,6 +28,7 @@
 #include "provider.h"
 
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 /* KWP header size equals one BELT block (16 bytes). */
 #define BELT_KWP_HDR_SIZE BELT_IV_SIZE
