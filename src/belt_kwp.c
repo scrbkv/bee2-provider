@@ -28,6 +28,7 @@
 #include "provider.h"
 
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 /* KWP header size equals one BELT block (16 bytes). */
 #define BELT_KWP_HDR_SIZE BELT_IV_SIZE
@@ -225,6 +226,7 @@ static const OSSL_PARAM bee2_kwp_gettable_params[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_KEYLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_BLOCK_SIZE, NULL),
+    OSSL_PARAM_uint(OSSL_CIPHER_PARAM_MODE, NULL),
     OSSL_PARAM_END};
 
 static const OSSL_PARAM *belt_kwp_gettable_params(void *provctx) {
@@ -234,6 +236,11 @@ static const OSSL_PARAM *belt_kwp_gettable_params(void *provctx) {
 
 static int belt_kwp_get_params_len(OSSL_PARAM params[], size_t key_len) {
     OSSL_PARAM *p;
+    unsigned int mode = EVP_CIPH_WRAP_MODE;
+
+    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_MODE);
+    if (p && !OSSL_PARAM_set_uint(p, mode))
+        return 0;
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_KEYLEN);
     if (p && !OSSL_PARAM_set_size_t(p, key_len))
         return 0;

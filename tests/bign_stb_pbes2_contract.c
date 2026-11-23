@@ -5,6 +5,9 @@
 #include <string.h>
 #include <limits.h>
 #include <openssl/crypto.h>
+#include <openssl/decoder.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
 #include <stdio.h>
 #include <openssl/asn1t.h>
 #include <openssl/objects.h>
@@ -290,7 +293,7 @@ static int check_stb_decrypt_parameters(void)
             fprintf(stderr, "STB PBES2 mutation failed: case %d\n", wrong_type);
             goto end;
         }
-        if (bee2_stb_pbes2_is_stb(info) != (wrong_type < 2)) {
+        if (!bee2_stb_pbes2_is_stb(info)) {
             fprintf(stderr, "STB PBES2 classification failed: case %d\n", wrong_type);
             goto end;
         }
@@ -300,11 +303,43 @@ static int check_stb_decrypt_parameters(void)
         decoded = bee2_stb_pbes2_decrypt(info, password,
                                           sizeof(password) - 1, 10000, NULL,
                                           &recognised);
-        if (decoded != NULL || recognised != (wrong_type < 2)) {
+        if (decoded != NULL || !recognised) {
             fprintf(stderr,
                     "STB PBES2 nested DER validation failed: case %d, recognised %d\n",
                     wrong_type, recognised);
             goto end;
+        }
+        {
+            unsigned char *bad_der = NULL, *current = NULL;
+            EVP_PKEY *key = NULL;
+            OSSL_DECODER_CTX *decoder = NULL;
+            int n = i2d_X509_SIG(info, &bad_der);
+            int invalid = 0;
+
+            if (n > 0 && bad_der != NULL) {
+                size_t length = (size_t)n;
+                const unsigned char *p = bad_der;
+
+                decoder = OSSL_DECODER_CTX_new_for_pkey(
+                    &key, "DER", NULL, "bign",
+                    OSSL_KEYMGMT_SELECT_KEYPAIR, NULL, NULL);
+                if (decoder != NULL &&
+                    OSSL_DECODER_CTX_set_passphrase(decoder, password,
+                                                    sizeof(password) - 1)) {
+                    invalid = OSSL_DECODER_from_data(decoder, &p, &length) <= 0 &&
+                              key == NULL;
+                }
+            }
+            current = bad_der;
+            OSSL_DECODER_CTX_free(decoder);
+            EVP_PKEY_free(key);
+            OPENSSL_free(current);
+            if (!invalid) {
+                fprintf(stderr,
+                        "STB PBES2 decoder fallback accepted case %d\n", wrong_type);
+                goto end;
+            }
+            ERR_clear_error();
         }
     }
     ok = 1;
