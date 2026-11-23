@@ -426,10 +426,21 @@ int bee2_bign_asn1_decode_pkcs8_der(const unsigned char *buf, size_t len,
                             const bee2_bign_variant_t *expected, bee2_bign_key_t *key) {
     const unsigned char *p = buf;
     PKCS8_PRIV_KEY_INFO *p8;
+    ASN1_INTEGER *version;
     int ok = 0;
 
     if (!key || !bign_der_sequence_body(buf, len, &p))
         return 0;
+    /* The STB BIGN key format uses PrivateKeyInfo version zero. Reject
+     * OneAsymmetricKey v1 rather than silently ignoring its public key. */
+    version = d2i_ASN1_INTEGER(NULL, &p, (long)(buf + len - p));
+    if (version == NULL)
+        return 0;
+    ok = ASN1_INTEGER_get(version) == 0;
+    ASN1_INTEGER_free(version);
+    if (!ok)
+        return 0;
+    ok = 0;
     p = buf;
     p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &p, (long)len);
     if (!p8)
@@ -1312,19 +1323,56 @@ static PBE2PARAM *unpack_pbes2(const X509_SIG *encrypted)
                                   ASN1_ITEM_rptr(PBE2PARAM));
 }
 
+/* Identify the encryptionScheme before validating nested PBKDF2 and
+ * PBES2 parameters. A malformed STB envelope must not be offered to the
+ * default PBES2 decoder just because strict ASN.1 decoding failed. */
 int bee2_stb_pbes2_is_stb(const X509_SIG *encrypted)
 {
+    const X509_ALGOR *outer = NULL;
+    const ASN1_OCTET_STRING *ciphertext = NULL;
     const ASN1_OBJECT *oid = NULL;
     const void *value = NULL;
-    PBE2PARAM *pbe;
-    int type, recognised = 0;
+    const unsigned char *p, *end;
+    X509_ALGOR *scheme = NULL;
+    size_t size;
+    long n;
+    int type, tag, xclass, status, recognised = 0;
 
-    pbe = unpack_pbes2(encrypted);
-    if (pbe == NULL)
+    if (encrypted == NULL)
         return 0;
-    X509_ALGOR_get0(&oid, &type, &value, pbe->encryption);
-    recognised = oid_equals(oid, BEE2_OID_BELT_KWP);
-    PBE2PARAM_free(pbe);
+    X509_SIG_get0(encrypted, &outer, &ciphertext);
+    if (outer == NULL)
+        return 0;
+    X509_ALGOR_get0(&oid, &type, &value, outer);
+    if (!oid_equals(oid, BEE2_OID_PBES2) ||
+        type != V_ASN1_SEQUENCE || value == NULL)
+        return 0;
+    size = asn_length((const ASN1_STRING *)value);
+    p = ASN1_STRING_get0_data((const ASN1_STRING *)value);
+    if (p == NULL || size == 0 || size > BIGN_MAX_KEY_INPUT)
+        return 0;
+    end = p + size;
+    ERR_set_mark();
+    status = ASN1_get_object(&p, &n, &tag, &xclass, (long)size);
+    if ((status & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
+        xclass != V_ASN1_UNIVERSAL || n <= 0 || n > (long)(end - p))
+        goto done;
+    end = p + n;
+    /* Skip the complete KDF AlgorithmIdentifier, including its opaque
+     * parameters, which may themselves contain malformed DER. */
+    status = ASN1_get_object(&p, &n, &tag, &xclass, (long)(end - p));
+    if ((status & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
+        xclass != V_ASN1_UNIVERSAL || n <= 0 || n > (long)(end - p))
+        goto done;
+    p += n;
+    scheme = d2i_X509_ALGOR(NULL, &p, (long)(end - p));
+    if (scheme != NULL) {
+        X509_ALGOR_get0(&oid, NULL, NULL, scheme);
+        recognised = oid_equals(oid, BEE2_OID_BELT_KWP);
+    }
+done:
+    X509_ALGOR_free(scheme);
+    ERR_pop_to_mark();
     return recognised;
 }
 
@@ -1362,16 +1410,15 @@ PKCS8_PRIV_KEY_INFO *bee2_stb_pbes2_decrypt(const X509_SIG *encrypted,
 
     if (recognised == NULL)
         return NULL;
-    *recognised = 0;
-    if (encrypted == NULL || password == NULL || password_len > INT_MAX)
+    *recognised = bee2_stb_pbes2_is_stb(encrypted);
+    if (!*recognised || password == NULL || password_len > INT_MAX)
         return NULL;
     X509_SIG_get0(encrypted, &algorithm, &ciphertext);
     pbe = unpack_pbes2(encrypted);
     if (pbe == NULL)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->encryption);
-    *recognised = oid_equals(obj, BEE2_OID_BELT_KWP);
-    if (!*recognised || type != V_ASN1_NULL)
+    if (!oid_equals(obj, BEE2_OID_BELT_KWP) || type != V_ASN1_NULL)
         goto end;
     X509_ALGOR_get0(&obj, &type, &value, pbe->keyfunc);
     if (!oid_equals(obj, BEE2_OID_PBKDF2) ||
