@@ -103,15 +103,17 @@ static int check_generation_selections(
             native = generate(genctx, NULL, NULL);
         if (native != NULL &&
             key_has(native, selection) == 1 &&
-            key_has(native, other) == 0 &&
+            key_has(native, other) ==
+                (selection == OSSL_KEYMGMT_SELECT_PRIVATE_KEY ? 1 : 0) &&
             key_validate(native, selection, OSSL_KEYMGMT_VALIDATE_FULL_CHECK) == 1 &&
             key_get_params(native, public_params) == 1) {
             if (selection == OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
                 valid = key_get_params(native, private_params) == 0;
             } else {
-                /* Deriving the public bytes must not modify the private-only key. */
+                /* A private key includes its derived public point. A
+                 * public-only copy must omit the private scalar. */
                 public_copy = key_dup(native, OSSL_KEYMGMT_SELECT_PUBLIC_KEY);
-                valid = key_has(native, OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 0 &&
+                valid = key_has(native, OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 1 &&
                         public_copy != NULL &&
                         key_has(public_copy, OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 1 &&
                         key_has(public_copy, OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0 &&

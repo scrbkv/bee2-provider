@@ -24,14 +24,14 @@ static int check_private_only(const char *alg, size_t priv_len)
         EVP_PKEY_fromdata(ctx, &key, EVP_PKEY_PRIVATE_KEY, params) <= 0 ||
         !(check = EVP_PKEY_CTX_new_from_pkey(NULL, key, "provider=bee2")) ||
         EVP_PKEY_private_check(check) != 1 ||
-        EVP_PKEY_public_check(check) == 1 ||
+        EVP_PKEY_public_check(check) != 1 ||
         EVP_PKEY_get_octet_string_param(key, OSSL_PKEY_PARAM_PUB_KEY,
                                         public_a, sizeof(public_a), &len_a) != 1 ||
         len_a != priv_len * 2)
         goto end;
 
-    /* EVP_PKEY_dup asks the provider to copy KEYPAIR selection. The source
-     * deliberately contains no cached public component. */
+    /* Private-scalar import now caches its derived public point. Both
+     * components must survive a KEYPAIR duplication. */
     copy = EVP_PKEY_dup(key);
     if (!copy || !(copy_check = EVP_PKEY_CTX_new_from_pkey(NULL, copy, "provider=bee2")) ||
         EVP_PKEY_public_check(copy_check) != 1)

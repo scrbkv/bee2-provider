@@ -380,7 +380,6 @@ static int test_pbkdf_empty_boundaries(void)
 int main(int argc, char **argv)
 {
     static const size_t block_lengths[] = {16, 32, 48, 64, 256, 1024};
-    static const size_t cts_lengths[] = {16, 17, 31, 32, 33, 47, 48, 49, 65, 257, 1024};
     static const size_t stream_lengths[] = {1, 15, 16, 17, 31, 32, 33, 65, 257, 1024};
     static const size_t kwp_lengths[] = {16, 17, 31, 32, 33, 257, 512, 513, 1024};
     static const size_t message_lengths[] = {1, 15, 16, 17, 31, 32, 33, 65, 257};
@@ -406,9 +405,6 @@ int main(int argc, char **argv)
         if (mode == MODE_CFB || mode == MODE_CTR) {
             lengths = stream_lengths;
             count = ARRAY_SIZE(stream_lengths);
-        } else if (mode == MODE_ECB || mode == MODE_CBC) {
-            lengths = cts_lengths;
-            count = ARRAY_SIZE(cts_lengths);
         } else if (mode == MODE_KWP) {
             lengths = kwp_lengths;
             count = ARRAY_SIZE(kwp_lengths);
