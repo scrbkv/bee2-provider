@@ -27,57 +27,6 @@ static void fill_bytes(unsigned char *buf, size_t len, unsigned char seed) {
 }
 
 
-/* ECB/CBC ciphertext stealing consumes a final partial block in one
- * Update.  Accepting subsequent bytes would silently change its output.
- * A fresh Init must make the same context usable again. */
-static int check_cts_end_of_stream(EVP_CIPHER *cipher,
-                                   const unsigned char *key,
-                                   const unsigned char *iv,
-                                   const unsigned char *plain)
-{
-    EVP_CIPHER_CTX *enc = EVP_CIPHER_CTX_new();
-    EVP_CIPHER_CTX *dec = EVP_CIPHER_CTX_new();
-    unsigned char ciphertext[48], recovered[48];
-    int encrypted = 0, recovered_len = 0, final_len = 0;
-    int ok = 0;
-
-    if (enc == NULL || dec == NULL ||
-        EVP_EncryptInit_ex2(enc, cipher, key, iv, NULL) <= 0 ||
-        EVP_CIPHER_CTX_set_padding(enc, 0) <= 0 ||
-        EVP_EncryptUpdate(enc, ciphertext, &encrypted, plain, 17) <= 0 ||
-        encrypted != 17 ||
-        EVP_EncryptUpdate(enc, ciphertext + encrypted, &final_len,
-                          plain + 17, 1) > 0)
-        goto end;
-
-    if (EVP_DecryptInit_ex2(dec, cipher, key, iv, NULL) <= 0 ||
-        EVP_CIPHER_CTX_set_padding(dec, 0) <= 0 ||
-        EVP_DecryptUpdate(dec, recovered, &recovered_len,
-                          ciphertext, encrypted) <= 0 ||
-        recovered_len != 17 ||
-        CRYPTO_memcmp(recovered, plain, 17) != 0 ||
-        EVP_DecryptUpdate(dec, recovered + recovered_len, &final_len,
-                          ciphertext, 1) > 0)
-        goto end;
-
-    if (EVP_EncryptInit_ex2(enc, cipher, key, iv, NULL) <= 0 ||
-        EVP_CIPHER_CTX_set_padding(enc, 0) <= 0 ||
-        EVP_EncryptUpdate(enc, ciphertext, &encrypted, plain, 32) <= 0 ||
-        encrypted != 32 ||
-        EVP_EncryptFinal_ex(enc, ciphertext + encrypted, &final_len) <= 0 ||
-        final_len != 0)
-        goto end;
-    ok = 1;
-end:
-    if (!ok)
-        fprintf(stderr, "BELT ECB/CBC CTS end-of-stream contract failed\n");
-    EVP_CIPHER_CTX_free(dec);
-    EVP_CIPHER_CTX_free(enc);
-    OPENSSL_cleanse(ciphertext, sizeof(ciphertext));
-    OPENSSL_cleanse(recovered, sizeof(recovered));
-    return ok;
-}
-
 static int run_block_cipher_roundtrip(const cipher_case_t *tc, unsigned char seed) {
     int ok = 0;
     EVP_CIPHER *cipher = NULL;
@@ -135,11 +84,6 @@ static int run_block_cipher_roundtrip(const cipher_case_t *tc, unsigned char see
         fprintf(stderr, "[FAIL] EVP_CIPHER_CTX_set_padding(enc, %s)\n", tc->name);
         goto cleanup;
     }
-    if ((strstr(tc->name, "-ecb") != NULL ||
-         strstr(tc->name, "-cbc") != NULL) &&
-        !check_cts_end_of_stream(cipher, key,
-                                 tc->iv_len ? iv : NULL, pt))
-        goto cleanup;
     if (EVP_EncryptUpdate(enc, ct, &outl, pt, (int)tc->msg_len) != 1) {
         fprintf(stderr, "[FAIL] EVP_EncryptUpdate(%s)\n", tc->name);
         goto cleanup;

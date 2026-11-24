@@ -357,37 +357,6 @@ static int check_belt_block_vectors(const unsigned char h[256])
          "389CDEE5826D40E2D4BD80F49A93F5D2"
          "12F6333166456F169043CC5F"}
     };
-    /* Normative ciphertext-stealing cases: STB 34.101.31 A.9-2/A.11-2.
-     * One Update must contain the complete final partial block. */
-    static const struct {
-        const char *name;
-        size_t length;
-        const char *expected;
-    } partial_encrypt_vectors[] = {
-        {"belt-ecb256", 47,
-         "69CCA1C93557C9E3D66BC3E0FA88FA6E"
-         "36F00CFED6D1CA1498C12798F4BEB207"
-         "5F23102EF109710775017F73806DA9"},
-        {"belt-cbc256", 36,
-         "10116EFAE6AD58EE14852E11DA1B8A74"
-         "6A9BBADCAF73F968F875DEDC0A44F6B1"
-         "5CF2480E"}
-    };
-    /* Independent reference decryption answers, not round trips. */
-    static const struct {
-        const char *name;
-        size_t length;
-        const char *expected;
-    } partial_decrypt_vectors[] = {
-        {"belt-ecb256", 36,
-         "0DC5300600CAB840B38448E5E993F421"
-         "5780A6E2B69EAFBB258726D7B6718523"
-         "E55A239F"},
-        {"belt-cbc256", 36,
-         "730894D6158E17CC1600185A8F411CAB"
-         "B6AB7AF8541CF85755B8EA27239F08D2"
-         "166646E4"}
-    };
     size_t i;
 
     for (i = 0; i < sizeof(encrypt_vectors) / sizeof(encrypt_vectors[0]); ++i) {
@@ -401,20 +370,6 @@ static int check_belt_block_vectors(const unsigned char h[256])
         if (!belt_decrypt_vector(h, decrypt_vectors[i].name,
                                  decrypt_vectors[i].length,
                                  decrypt_vectors[i].expected))
-            return 0;
-    for (i = 0; i < sizeof(partial_encrypt_vectors) /
-                    sizeof(partial_encrypt_vectors[0]); ++i)
-        if (!belt_encrypt_vector(partial_encrypt_vectors[i].name, h + 128,
-                                 strstr(partial_encrypt_vectors[i].name, "ecb")
-                                     ? NULL : h + 192,
-                                 h, partial_encrypt_vectors[i].length,
-                                 partial_encrypt_vectors[i].expected))
-            return 0;
-    for (i = 0; i < sizeof(partial_decrypt_vectors) /
-                    sizeof(partial_decrypt_vectors[0]); ++i)
-        if (!belt_decrypt_vector(h, partial_decrypt_vectors[i].name,
-                                 partial_decrypt_vectors[i].length,
-                                 partial_decrypt_vectors[i].expected))
             return 0;
     return 1;
 }

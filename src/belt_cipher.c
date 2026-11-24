@@ -6,7 +6,7 @@
  *   BELT-CBC  — Cipher Block Chaining
  *   BELT-CFB  — Cipher Feedback (streaming; supports partial last block)
  *   BELT-CTR  — Counter mode (streaming; supports partial last block)
- *   ECB/CBC without padding use Bee2 ciphertext stealing for final partial blocks.
+ *   ECB/CBC without padding require complete blocks; with padding use PKCS#7.
  *   BELT-BDE  — Block Disk Encryption (XEX-based tweakable block cipher)
  *
  * Key  : 16/24/32 bytes (128/192/256-bit)
@@ -103,7 +103,6 @@ typedef struct {
     int have_last;
     int padding;
     int started;
-    int cts_done;
     int finalized;
 } bee2_belt_ctx_t;
 
@@ -187,32 +186,6 @@ static void belt_process_block(bee2_belt_ctx_t *c, const octet *in, octet *out) 
         memcpy(c->updated_iv, out, sizeof(c->updated_iv));
 }
 
-/* Bee2 processes the final partial ECB/CBC fragment in one Step call.
- * The EVP Final callback cannot emit more than one declared block, so CTS
- * must be completed in Update, as in OpenSSL's built-in CTS ciphers. */
-static void belt_process_tail(bee2_belt_ctx_t *c, const octet *input,
-                              size_t count, octet *output) {
-    size_t last_block = (count / BELT_BLOCK_SIZE - 1u) * BELT_BLOCK_SIZE;
-
-    if (c->mode == &belt_cbc_mode && !c->enc)
-        memcpy(c->updated_iv, input + last_block, BELT_BLOCK_SIZE);
-
-    memmove(output, input, count);
-    if (c->mode == &belt_ecb_mode) {
-        if (c->enc)
-            beltECBStepE(output, count, &c->backend_state.state);
-        else
-            beltECBStepD(output, count, &c->backend_state.state);
-    } else {
-        if (c->enc)
-            beltCBCStepE(output, count, &c->backend_state.state);
-        else
-            beltCBCStepD(output, count, &c->backend_state.state);
-        if (c->enc)
-            memcpy(c->updated_iv, output + last_block, BELT_BLOCK_SIZE);
-    }
-}
-
 /* ------------------------------------------------------------------ */
 /*  Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
@@ -292,7 +265,6 @@ static int belt_init(void *vctx,
     c->enc = enc;
     c->buf_len = 0;
     c->have_last = 0;
-    c->cts_done = 0;
     c->finalized = 0;
     if (key != NULL) {
         c->mode->set_key(&c->backend_state, key, keylen);
@@ -367,21 +339,12 @@ static int belt_update(void *vctx,
         return 1;
     }
 
-    if (c->cts_done && inl != 0)
+    /* In raw ECB/CBC, Update consumes only whole blocks.  PKCS#7
+     * operations retain the usual buffered EVP behavior. */
+    if (!c->padding &&
+        (c->mode == &belt_ecb_mode || c->mode == &belt_cbc_mode) &&
+        inl % BELT_BLOCK_SIZE != 0)
         return 0;
-
-    /* A final nonaligned ECB/CBC fragment must contain a complete block.
-     * Once processed, accepting more input would change its CTS result. */
-    if (!c->padding && (c->mode == &belt_ecb_mode || c->mode == &belt_cbc_mode) &&
-        c->buf_len == 0 && inl >= BELT_BLOCK_SIZE && inl % BELT_BLOCK_SIZE != 0) {
-        if (outsize < inl)
-            return 0;
-        belt_process_tail(c, in, inl, out);
-        c->started = 1;
-        c->cts_done = 1;
-        *outl = inl;
-        return 1;
-    }
 
     if (inl > SIZE_MAX - c->buf_len)
         return 0;

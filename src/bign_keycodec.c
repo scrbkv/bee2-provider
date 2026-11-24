@@ -157,6 +157,10 @@ static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
                 return 0;
             }
         }
+        if (kwp_len != 0 && iterations > BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER) {
+            EVP_CIPHER_free(cipher);
+            return 0;
+        }
         EVP_CIPHER_free(ctx->cipher);
         ctx->encrypt = cipher != NULL;
         ctx->kwp_key_len = kwp_len;
@@ -164,6 +168,8 @@ static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         if (kwp_len != 0)
             EVP_CIPHER_free(cipher);
     }
+    if (ctx->kwp_key_len != 0 && iterations > BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER)
+        return 0;
     ctx->pbkdf2_iterations = iterations;
     ctx->pbkdf2_salt_len = salt_len;
     return 1;

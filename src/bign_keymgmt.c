@@ -67,8 +67,10 @@ bign_apply_encoding_params(int *encode_explicit, int *encode_cofactor, const OSS
             goto cleanup;
         if (OPENSSL_strcasecmp(value, OSSL_PKEY_EC_ENCODING_EXPLICIT) == 0)
             explicit_encoding = 1;
-        else if (OPENSSL_strcasecmp(value, OSSL_PKEY_EC_ENCODING_GROUP) == 0)
+        else if (OPENSSL_strcasecmp(value, OSSL_PKEY_EC_ENCODING_GROUP) == 0) {
             explicit_encoding = 0;
+            cofactor_encoding = 0;
+        }
         else
             goto cleanup;
         OPENSSL_free(value);
@@ -86,6 +88,9 @@ bign_apply_encoding_params(int *encode_explicit, int *encode_cofactor, const OSS
         else
             goto cleanup;
     }
+    /* Named-curve parameters cannot encode a cofactor. */
+    if (cofactor_encoding && !explicit_encoding)
+        goto cleanup;
     *encode_explicit = explicit_encoding;
     *encode_cofactor = cofactor_encoding;
     ok = 1;
@@ -358,8 +363,7 @@ int bee2_bign_import_params(void *vkey, int selection, const OSSL_PARAM params[]
 
         if (valid && candidate.has_pub)
             valid = CRYPTO_memcmp(derived, candidate.pub, pub_len) == 0;
-        if (valid && !candidate.has_pub &&
-            (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) {
+        if (valid && !candidate.has_pub) {
             memcpy(candidate.pub, derived, pub_len);
             candidate.has_pub = 1;
         }
@@ -503,7 +507,9 @@ static void *bign_dup(const void *vkey_from, int selection) {
         dst->has_pub = 1;
     }
 
-    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) && !dst->has_pub && src->has_priv) {
+    /* A copied private scalar always retains its derived public point. */
+    if (!dst->has_pub && src->has_priv &&
+        (dst->has_priv || (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY))) {
         if (!bee2_bign_derive_pubkey(src->variant, dst->pub, src->priv)) {
             bign_key_free(dst);
             return NULL;
@@ -617,7 +623,8 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
         bee2_bign_cleanse(key->priv, priv_len);
         key->has_priv = 0;
     }
-    if (!(gctx->selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) {
+    if (!(gctx->selection & (OSSL_KEYMGMT_SELECT_PUBLIC_KEY |
+                             OSSL_KEYMGMT_SELECT_PRIVATE_KEY))) {
         bee2_bign_cleanse(key->pub, pub_len);
         key->has_pub = 0;
     }

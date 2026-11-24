@@ -84,9 +84,9 @@ the standard's example.
 
 ## EVP-specific details
 
-ECB/CBC default to PKCS#7 padding, whereas the published nonaligned examples
-use STB ciphertext stealing. Their known-answer tests disable padding and
-provide the complete final partial block in one update. For SDE, sectors are
+ECB/CBC support PKCS#7 padding by default. Without padding, ECB/CBC
+accept only complete 16-byte blocks; STB ciphertext stealing is not exposed
+as ECB/CBC through EVP. Published nonaligned CTS cases are not EVP KATs. For SDE, sectors are
 at least 32 bytes and multiples of 16. Short or nonaligned inputs that are
 rejected by an operation's documented contract are not substituted with
 synthetic expected ciphertexts.

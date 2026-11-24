@@ -102,44 +102,30 @@ static int test_invalid_padding(EVP_CIPHER *cipher, const unsigned char *key,
 static int test_no_padding(EVP_CIPHER *cipher, const unsigned char *key,
                            const unsigned char *iv)
 {
-    static const size_t lengths[] = {16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65};
+    static const size_t lengths[] = {0, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65};
     unsigned char input[MESSAGE_MAX] = {0};
     unsigned char whole[MESSAGE_MAX + 2 * BLOCK_SIZE] = {0};
-    unsigned char split[MESSAGE_MAX + 2 * BLOCK_SIZE] = {0};
     unsigned char decoded[MESSAGE_MAX + 2 * BLOCK_SIZE] = {0};
-    size_t clen = 0, slen = 0, plen = 0;
-    size_t i;
+    size_t clen = 0, plen = 0, i;
 
     for (i = 0; i < sizeof(input); i++)
         input[i] = (unsigned char)(i * 13 + 19);
     for (i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
         size_t n = lengths[i];
-        if (!crypt(cipher, 1, 0, 0, key, iv, input, n, whole, &clen) ||
-            clen != n ||
-            !crypt(cipher, 0, 0, 0, key, iv, whole, clen, decoded, &plen) ||
-            plen != n || CRYPTO_memcmp(input, decoded, n) != 0) {
-            fprintf(stderr, "unpadded ciphertext-stealing failure at length %zu\n", n);
-            return 0;
-        }
-        /* Partial final blocks use one Update; aligned data remain streamable. */
-        if (n % BLOCK_SIZE == 0) {
-            if (!crypt(cipher, 1, 0, 1, key, iv, input, n, split, &slen) ||
-                slen != n || CRYPTO_memcmp(whole, split, n) != 0 ||
-                !crypt(cipher, 0, 0, 1, key, iv, whole, n, decoded, &plen) ||
-                plen != n || CRYPTO_memcmp(input, decoded, n) != 0)
+        int encrypted = crypt(cipher, 1, 0, 0, key, iv,
+                              input, n, whole, &clen);
+
+        if (n % BLOCK_SIZE != 0) {
+            if (encrypted) {
+                fprintf(stderr, "raw ECB/CBC accepted %zu nonaligned bytes\n", n);
                 return 0;
-        } else if (crypt(cipher, 1, 0, 1, key, iv, input, n, split, &slen)) {
-            fprintf(stderr, "unsupported split CTS input accepted at length %zu\n", n);
-            return 0;
+            }
+            continue;
         }
-    }
-    /* EVP permits an empty no-op; Bee2's CTS minimum applies to nonempty data. */
-    if (!crypt(cipher, 1, 0, 0, key, iv, input, 0, whole, &clen) || clen != 0)
-        return 0;
-    for (i = 1; i < BLOCK_SIZE; i++) {
-        if (crypt(cipher, 1, 0, 1, key, iv, input, i, whole, &clen) ||
-            crypt(cipher, 0, 0, 1, key, iv, input, i, decoded, &plen)) {
-            fprintf(stderr, "short unpadded ECB/CBC input accepted at length %zu\n", i);
+        if (!encrypted || clen != n ||
+            !crypt(cipher, 0, 0, 0, key, iv, whole, n, decoded, &plen) ||
+            plen != n || CRYPTO_memcmp(input, decoded, n) != 0) {
+            fprintf(stderr, "raw ECB/CBC failed at %zu aligned bytes\n", n);
             return 0;
         }
     }

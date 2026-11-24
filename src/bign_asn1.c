@@ -45,9 +45,8 @@ int bign_der_sequence_body(const unsigned char *data, size_t length,
 }
 
 
-/* Identify DER key envelopes before invoking ASN.1 decoders. In particular,
- * SPKI must not be speculatively decoded as PKCS#8: failed d2i calls leave
- * errors on the application's OpenSSL error queue. */
+/* Recognise the key envelope and BIGN OID in a single pass.  The real
+ * PKCS#8/SPKI decoders perform strict validation after this dispatch. */
 typedef enum {
     BIGN_DER_UNKNOWN,
     BIGN_DER_PRIVATE,
@@ -55,33 +54,55 @@ typedef enum {
     BIGN_DER_PUBLIC
 } BIGN_DER_KIND;
 
-static BIGN_DER_KIND bign_der_kind(const unsigned char *der, size_t len)
+static int oid_equals(const ASN1_OBJECT *obj, const char *oid);
+
+static BIGN_DER_KIND bign_der_classify(const unsigned char *der, size_t len,
+                                      int *is_bign)
 {
     const unsigned char *p, *end;
-    long alg_len;
-    int tag, xclass, status;
+    ASN1_INTEGER *version = NULL;
+    X509_ALGOR *alg = NULL;
+    const ASN1_OBJECT *oid = NULL;
+    BIGN_DER_KIND kind = BIGN_DER_UNKNOWN;
+    int marked;
 
+    *is_bign = 0;
     if (!bign_der_sequence_body(der, len, &p))
-        return BIGN_DER_UNKNOWN;
+        return kind;
     end = der + len;
     if (p == end)
-        return BIGN_DER_UNKNOWN;
-    if (*p == V_ASN1_INTEGER)
-        return BIGN_DER_PRIVATE;
-    if (*p != (V_ASN1_CONSTRUCTED | V_ASN1_SEQUENCE))
-        return BIGN_DER_UNKNOWN;
+        return kind;
 
-    status = ASN1_get_object(&p, &alg_len, &tag, &xclass, (long)(end - p));
-    if ((status & 0x81) != 0 || tag != V_ASN1_SEQUENCE ||
-        xclass != V_ASN1_UNIVERSAL || alg_len < 0 ||
-        (size_t)alg_len >= (size_t)(end - p))
-        return BIGN_DER_UNKNOWN;
-    p += alg_len;
-    if (*p == V_ASN1_OCTET_STRING)
-        return BIGN_DER_ENCRYPTED;
-    if (*p == V_ASN1_BIT_STRING)
-        return BIGN_DER_PUBLIC;
-    return BIGN_DER_UNKNOWN;
+    marked = ERR_set_mark();
+    if (*p == V_ASN1_INTEGER) {
+        version = d2i_ASN1_INTEGER(NULL, &p, (long)(end - p));
+        if (version == NULL || p == end)
+            goto end;
+        kind = BIGN_DER_PRIVATE;
+    } else if (*p != (V_ASN1_CONSTRUCTED | V_ASN1_SEQUENCE)) {
+        goto end;
+    }
+
+    alg = d2i_X509_ALGOR(NULL, &p, (long)(end - p));
+    if (alg == NULL || p == end)
+        goto end;
+    X509_ALGOR_get0(&oid, NULL, NULL, alg);
+    if (kind == BIGN_DER_PRIVATE) {
+        *is_bign = oid_equals(oid, BEE2_OID_BIGN_PUBKEY);
+    } else if (*p == V_ASN1_BIT_STRING) {
+        kind = BIGN_DER_PUBLIC;
+        *is_bign = oid_equals(oid, BEE2_OID_BIGN_PUBKEY);
+    } else if (*p == V_ASN1_OCTET_STRING) {
+        kind = BIGN_DER_ENCRYPTED;
+    }
+end:
+    X509_ALGOR_free(alg);
+    ASN1_INTEGER_free(version);
+    if (marked)
+        ERR_pop_to_mark();
+    else
+        ERR_clear_error();
+    return kind;
 }
 
 
@@ -771,40 +792,6 @@ cleanup:
 }
 
 
-/* Recognise the BIGN algorithm without decoding the key payload. */
-static int bign_der_has_bign_oid(const unsigned char *der, size_t len)
-{
-    const unsigned char *p, *end;
-    ASN1_INTEGER *version = NULL;
-    X509_ALGOR *alg = NULL;
-    const ASN1_OBJECT *oid = NULL;
-    int match = 0;
-
-    if (!bign_der_sequence_body(der, len, &p) || p == der + len)
-        return 0;
-    end = der + len;
-    if (*p != V_ASN1_INTEGER &&
-        *p != (V_ASN1_CONSTRUCTED | V_ASN1_SEQUENCE))
-        return 0;
-
-    ERR_set_mark();
-    if (*p == V_ASN1_INTEGER) {
-        version = d2i_ASN1_INTEGER(NULL, &p, (long)(end - p));
-        if (version == NULL)
-            goto end;
-    }
-    alg = d2i_X509_ALGOR(NULL, &p, (long)(end - p));
-    if (alg != NULL) {
-        X509_ALGOR_get0(&oid, NULL, NULL, alg);
-        match = oid_equals(oid, BEE2_OID_BIGN_PUBKEY);
-    }
-end:
-    ASN1_INTEGER_free(version);
-    X509_ALGOR_free(alg);
-    ERR_pop_to_mark();
-    return match;
-}
-
 int bee2_bign_asn1_decoder_decode(void *vctx,
                                   OSSL_CORE_BIO *in, int selection,
                                   OSSL_CALLBACK *data_cb, void *data_cbarg,
@@ -814,7 +801,7 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
     BIGN_INPUT input = {0};
     bee2_bign_key_t *key = NULL;
     BIGN_DER_KIND kind;
-    int decoded = 0, ok = 0;
+    int is_bign = 0, decoded = 0, ok = 0;
 
     (void)pw_cb;
     (void)pw_cbarg;
@@ -826,17 +813,15 @@ int bee2_bign_asn1_decoder_decode(void *vctx,
         ok = 1;
         goto end;
     }
-    /* Skip foreign key types without allocating a key or attempting
-     * full BIGN parsing. Invalid data with the BIGN OID is fatal. */
-    if (!bign_der_has_bign_oid(input.der, input.der_len)) {
+    /* Reject malformed BIGN keys, but leave foreign key types to OpenSSL. */
+    kind = bign_der_classify(input.der, input.der_len, &is_bign);
+    if (!is_bign) {
         ok = 1;
         goto end;
     }
     key = bee2_bign_key_new(NULL);
     if (key == NULL)
         goto end;
-
-    kind = bign_der_kind(input.der, input.der_len);
     switch (kind) {
     case BIGN_DER_PRIVATE:
         decoded = bee2_bign_asn1_decode_pkcs8_der(input.der, input.der_len,
@@ -980,7 +965,7 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     unsigned char *plain_der = NULL;
     char password[PEM_BUFSIZE] = {0};
     size_t password_len = 0;
-    int plain_len = 0, recognised = 0, ok = 0;
+    int plain_len = 0, recognised = 0, ok = 0, marked = 0;
 
     (void)selection;
     if (ctx == NULL || in == NULL || data_cb == NULL)
@@ -1005,8 +990,10 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
             goto end;
         }
     } else {
-        BIGN_DER_KIND kind = bign_der_kind(input.der, input.der_len);
+        int is_bign;
+        BIGN_DER_KIND kind = bign_der_classify(input.der, input.der_len, &is_bign);
 
+        (void)is_bign;
         if (kind == BIGN_DER_PRIVATE || kind == BIGN_DER_PUBLIC) {
             ok = bign_forward_plain(data_cb, data_cbarg, input.der,
                                     input.der_len, kind);
@@ -1019,16 +1006,24 @@ int bee2_bign_asn1_stb_epki_decode(void *vctx, OSSL_CORE_BIO *in, int selection,
     }
 
     p = input.der;
+    marked = ERR_set_mark();
     encrypted = d2i_X509_SIG(NULL, &p, (long)input.der_len);
     if (encrypted == NULL || p != input.der + input.der_len ||
         !bee2_stb_pbes2_is_stb(encrypted)) {
-        /* Delegate other PBES2 schemes to OpenSSL without requiring the
-         * original BIO to support seeking or rewinding. */
+        /* Speculative detection must not leak errors into OpenSSL's chain. */
+        if (marked)
+            ERR_pop_to_mark();
+        else
+            ERR_clear_error();
         ok = bign_emit_der(data_cb, data_cbarg, NULL,
                            "EncryptedPrivateKeyInfo",
                            input.der, input.der_len);
         goto end;
     }
+    if (marked)
+        ERR_pop_to_mark();
+    else
+        ERR_clear_error();
 
     if (pw_cb == NULL || !pw_cb(password, sizeof(password), &password_len,
                                NULL, pw_cbarg) ||
@@ -1153,13 +1148,16 @@ static int stb_pbkdf2_derive(OSSL_LIB_CTX *libctx,
                              unsigned int iterations,
                              unsigned char key[32])
 {
-    EVP_KDF *kdf = EVP_KDF_fetch(libctx, "belt-pbkdf", "provider=bee2");
+    EVP_KDF *kdf = EVP_KDF_fetch(libctx, "PBKDF2", "provider=default");
     EVP_KDF_CTX *kctx = kdf != NULL ? EVP_KDF_CTX_new(kdf) : NULL;
     uint64_t iter = iterations;
+    int pkcs5 = 1;
     OSSL_PARAM params[] = {
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD, (void *)password, password_len),
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, (void *)salt, salt_len),
         OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &iter),
+        OSSL_PARAM_utf8_string(OSSL_KDF_PARAM_DIGEST, "belt-hash", 0),
+        OSSL_PARAM_int(OSSL_KDF_PARAM_PKCS5, &pkcs5),
         OSSL_PARAM_END
     };
     int ok = kctx != NULL && EVP_KDF_derive(kctx, key, 32, params) > 0;
