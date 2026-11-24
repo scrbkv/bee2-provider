@@ -6,6 +6,7 @@
 #include <openssl/evp.h>
 #include <openssl/params.h>
 #include <openssl/provider.h>
+#include "bign_asn1.h"
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -37,6 +38,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     OSSL_DECODER_CTX *ctx = NULL;
     EVP_PKEY *key = NULL;
     BIO *bio = NULL;
+    bee2_bign_key_t parsed = {0};
     const char *format, *structure;
     unsigned int kind;
     int selection = OSSL_KEYMGMT_SELECT_KEYPAIR;
@@ -52,6 +54,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
                 kind == 2 ? "EncryptedPrivateKeyInfo" : NULL;
     if (kind == 1)
         selection = OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
+    /* Compile the existing DER helpers into this target: libFuzzer now
+     * observes actual ASN.1 parser edges, not just harness dispatch. */
+    if (kind == 0)
+        (void)bee2_bign_asn1_decode_pkcs8_der(data, size,
+                                                bee2_bign_variant_256(), &parsed);
+    else if (kind == 1)
+        (void)bee2_bign_asn1_decode_spki_der(data, size,
+                                               bee2_bign_variant_256(), &parsed);
+    bee2_bign_cleanse(&parsed, sizeof(parsed));
     ctx = OSSL_DECODER_CTX_new_for_pkey(&key, format, structure, "bign",
                                         selection, libctx, "provider=bee2");
     if (ctx && OSSL_DECODER_CTX_set_passphrase(ctx, password,

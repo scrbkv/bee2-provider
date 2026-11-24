@@ -671,8 +671,14 @@ if(BEE2_PROVIDER_BUILD_FUZZERS)
     file(MAKE_DIRECTORY "${BEE2_ASN1_FUZZ_CORPUS}")
     add_executable(bee2_bign_asn1_fuzz_seed bign_asn1_seed.c)
     target_link_libraries(bee2_bign_asn1_fuzz_seed PRIVATE OpenSSL::Crypto)
-    add_executable(bee2_bign_asn1_fuzz bign_asn1_fuzz.c)
-    target_link_libraries(bee2_bign_asn1_fuzz PRIVATE OpenSSL::Crypto)
+    add_executable(bee2_bign_asn1_fuzz
+        bign_asn1_fuzz.c
+        ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
+        ${CMAKE_SOURCE_DIR}/src/bign_common.c
+        ${CMAKE_SOURCE_DIR}/src/provider_util.c)
+    target_include_directories(bee2_bign_asn1_fuzz PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(bee2_bign_asn1_fuzz SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/bee2/include)
+    target_link_libraries(bee2_bign_asn1_fuzz PRIVATE bee2_static OpenSSL::Crypto)
     target_compile_options(bee2_bign_asn1_fuzz PRIVATE
         -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
     target_link_options(bee2_bign_asn1_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
