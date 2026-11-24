@@ -28,7 +28,7 @@ ctest --test-dir build -L stb --output-on-failure
 | Category | Verification |
 | --- | --- |
 | STB known-answer tests | Fixed published BELT, BASH, HMAC, BRNG, PBKDF and BIGN examples; independent expected outputs |
-| EVP integration | One-shot and streaming ciphers, authenticated decryption, MAC/HMAC, KDF, randomness, cipher padding/CTS, key agreement and transport |
+| EVP integration | One-shot and streaming ciphers, authenticated decryption, MAC/HMAC, KDF, randomness, cipher PKCS#7 padding and raw-block rejection, key agreement and transport |
 | Key serialization | BIGN-256/384/512 named and explicit parameters; SPKI/PKCS#8; DER and PEM; ordinary and encrypted keys; OpenSSL STORE |
 | PBES2 | STB PBKDF2-HMAC-HBELT/BELT-KWP DER parameters, password rejection and decode iteration limit; OpenSSL-native PBES2/AES compatibility |
 | Negative inputs | Wrong lengths, invalid modes and tags, malformed DER/PEM, unsupported parameters and state transitions |

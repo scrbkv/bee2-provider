@@ -323,15 +323,14 @@ end:
     return ok;
 }
 
-static int test_pbkdf_empty_inputs(const unsigned char *password,
-                                    size_t password_len,
-                                    const unsigned char *salt,
-                                    size_t salt_len)
+static int test_pbkdf_inputs(const unsigned char *password,
+                             size_t password_len,
+                             const unsigned char *salt,
+                             size_t salt_len, uint64_t iterations)
 {
     EVP_KDF *kdf = NULL;
     EVP_KDF_CTX *ctx = NULL;
     unsigned char actual[32], expected[32];
-    uint64_t iterations = 3;
     OSSL_PARAM params[] = {
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD,
                                 (void *)password, password_len),
@@ -355,7 +354,8 @@ static int test_pbkdf_empty_inputs(const unsigned char *password,
 
 end:
     if (!ok)
-        fprintf(stderr, "BELT-PBKDF empty-input interoperability failed\n");
+        fprintf(stderr, "BELT-PBKDF interoperability failed (password=%zu, salt=%zu, iterations=%llu)\n",
+                password_len, salt_len, (unsigned long long)iterations);
     EVP_KDF_CTX_free(ctx);
     EVP_KDF_free(kdf);
     OPENSSL_cleanse(actual, sizeof(actual));
@@ -363,18 +363,26 @@ end:
     return ok;
 }
 
-static int test_pbkdf_empty_boundaries(void)
+static int test_pbkdf_boundaries(void)
 {
     static const unsigned char password[] = "provider test password";
     static const unsigned char salt[] = {
         0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE
     };
+    static const uint64_t iterations[] = {1, 2, 3, 17};
+    size_t i;
 
-    return test_pbkdf_empty_inputs(NULL, 0, NULL, 0) &&
-           test_pbkdf_empty_inputs(NULL, 0, salt, sizeof(salt)) &&
-           test_pbkdf_empty_inputs(password, sizeof(password) - 1, NULL, 0) &&
-           test_pbkdf_empty_inputs(password, sizeof(password) - 1,
-                                   salt, sizeof(salt));
+    for (i = 0; i < ARRAY_SIZE(iterations); ++i) {
+        uint64_t count = iterations[i];
+
+        if (!test_pbkdf_inputs(NULL, 0, NULL, 0, count) ||
+            !test_pbkdf_inputs(NULL, 0, salt, sizeof(salt), count) ||
+            !test_pbkdf_inputs(password, sizeof(password) - 1, NULL, 0, count) ||
+            !test_pbkdf_inputs(password, sizeof(password) - 1,
+                               salt, sizeof(salt), count))
+            return 0;
+    }
+    return 1;
 }
 
 int main(int argc, char **argv)
@@ -448,7 +456,7 @@ int main(int argc, char **argv)
                 if (!test_mac(16 + 8 * i, n, profile))
                     goto end;
         }
-    if (!test_pbkdf_empty_boundaries() || !test_bash_zero_iv())
+    if (!test_pbkdf_boundaries() || !test_bash_zero_iv())
         goto end;
     ok = 1;
 end:

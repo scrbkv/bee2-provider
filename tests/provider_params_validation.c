@@ -201,6 +201,11 @@ static int check_bign_encoding(const char *algorithm)
     gen = EVP_PKEY_CTX_new_from_name(NULL, algorithm, "provider=bee2");
     if (!gen || EVP_PKEY_keygen_init(gen) <= 0 ||
         EVP_PKEY_keygen(gen, &key) <= 0 ||
+        /* Named-curve keys must reject cofactor rather than ignore it. */
+        EVP_PKEY_set_utf8_string_param(key, "enc_params", "cofactor") > 0 ||
+        EVP_PKEY_get_utf8_string_param(key, OSSL_PKEY_PARAM_EC_ENCODING,
+                                       encoding, sizeof(encoding), NULL) <= 0 ||
+        strcmp(encoding, OSSL_PKEY_EC_ENCODING_GROUP) != 0 ||
         EVP_PKEY_set_utf8_string_param(key, "enc_params", "specified") <= 0 ||
         EVP_PKEY_get_utf8_string_param(key, OSSL_PKEY_PARAM_EC_ENCODING,
                                        encoding, sizeof(encoding), NULL) <= 0 ||
@@ -210,6 +215,11 @@ static int check_bign_encoding(const char *algorithm)
         EVP_PKEY_set_utf8_string_param(key, "enc_params", "cofactor") <= 0 ||
         EVP_PKEY_set_utf8_string_param(key, OSSL_PKEY_PARAM_EC_ENCODING,
                                        OSSL_PKEY_EC_ENCODING_GROUP) <= 0 ||
+        EVP_PKEY_get_utf8_string_param(key, OSSL_PKEY_PARAM_EC_ENCODING,
+                                       encoding, sizeof(encoding), NULL) <= 0 ||
+        strcmp(encoding, OSSL_PKEY_EC_ENCODING_GROUP) != 0 ||
+        /* Switching to named parameters clears cofactor state. */
+        EVP_PKEY_set_utf8_string_param(key, "enc_params", "cofactor") > 0 ||
         EVP_PKEY_get_utf8_string_param(key, OSSL_PKEY_PARAM_EC_ENCODING,
                                        encoding, sizeof(encoding), NULL) <= 0 ||
         strcmp(encoding, OSSL_PKEY_EC_ENCODING_GROUP) != 0)

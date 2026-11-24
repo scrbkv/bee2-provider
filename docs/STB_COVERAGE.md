@@ -28,7 +28,7 @@ in the original specification sources:
 | Standard and examples | Provider test | Operation |
 | --- | --- | --- |
 | BELT 34.101.31, A.1–A.2 | `stb_kat.c` | Single-block BELT answers embedded in the ECB encryption/decryption KATs |
-| BELT 34.101.31, A.9–A.16 | `stb_kat.c` | ECB, CBC, CFB, CTR encryption and decryption, including published nonaligned CTS cases |
+| BELT 34.101.31, A.9–A.16 | `stb_kat.c` | ECB/CBC on complete blocks and CFB/CTR encryption/decryption; nonaligned ECB/CBC CTS vectors are outside the provider contract |
 | BELT 34.101.31, A.17 | `stb_kat.c` | MAC outputs |
 | BELT 34.101.31, A.19–A.20 | `belt_aead_stb.c` | DWP and CHE encryption, authentication and decryption |
 | BELT 34.101.31, A.21–A.22 | `stb_kat.c` | KWP wrapping and unwrapping |

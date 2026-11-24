@@ -723,6 +723,7 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
     const char *oid = "1.2.112.0.2.0.34.101.31.73";
     size_t key_len = 32u;
     unsigned int iterations = 12000, invalid_iterations = 0;
+    unsigned int maximum_iterations = 1000000, excessive_iterations = 1000001;
     size_t salt_length = 24, invalid_salt_length = 0;
     OSSL_PARAM settings[] = {
         OSSL_PARAM_uint("stb-pbkdf2-iterations", &iterations),
@@ -730,6 +731,12 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
         OSSL_PARAM_END};
     OSSL_PARAM invalid_iter[] = {
         OSSL_PARAM_uint("stb-pbkdf2-iterations", &invalid_iterations),
+        OSSL_PARAM_END};
+    OSSL_PARAM maximum_iter[] = {
+        OSSL_PARAM_uint("stb-pbkdf2-iterations", &maximum_iterations),
+        OSSL_PARAM_END};
+    OSSL_PARAM excessive_iter[] = {
+        OSSL_PARAM_uint("stb-pbkdf2-iterations", &excessive_iterations),
         OSSL_PARAM_END};
     OSSL_PARAM invalid_salt[] = {
         OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &invalid_salt_length),
@@ -747,6 +754,12 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
          !OSSL_ENCODER_CTX_set_params(encoder, settings) ||
          !OSSL_ENCODER_CTX_set_cipher(encoder, cipher, NULL) ||
          !OSSL_ENCODER_CTX_set_passphrase(encoder, password, sizeof(password) - 1)))
+        goto cleanup;
+    if (encrypted &&
+        /* Check the encode/decode policy without performing a million-round KDF. */
+        (!OSSL_ENCODER_CTX_set_params(encoder, maximum_iter) ||
+         OSSL_ENCODER_CTX_set_params(encoder, excessive_iter) > 0 ||
+         !OSSL_ENCODER_CTX_set_params(encoder, settings)))
         goto cleanup;
     if (!OSSL_ENCODER_to_bio(encoder, output) || !BIO_get_mem_ptr(output, &data) ||
         data == NULL || data->length == 0)
