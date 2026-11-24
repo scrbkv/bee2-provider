@@ -660,3 +660,30 @@ add_test(NAME bee2_bign_decoder_error_queue
     COMMAND bee2_bign_decoder_error_queue $<TARGET_FILE_DIR:bee2_provider>)
 set_tests_properties(bee2_bign_decoder_error_queue PROPERTIES
     LABELS "regression;bign;codec;native")
+
+# Fuzzing is optional and requires Clang/libFuzzer.
+option(BEE2_PROVIDER_BUILD_FUZZERS "Build BIGN ASN.1 libFuzzer target" OFF)
+if(BEE2_PROVIDER_BUILD_FUZZERS)
+    if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR "BIGN fuzzing requires Clang/libFuzzer")
+    endif()
+    set(BEE2_ASN1_FUZZ_CORPUS "${CMAKE_CURRENT_BINARY_DIR}/fuzz-corpus")
+    file(MAKE_DIRECTORY "${BEE2_ASN1_FUZZ_CORPUS}")
+    add_executable(bee2_bign_asn1_fuzz_seed bign_asn1_seed.c)
+    target_link_libraries(bee2_bign_asn1_fuzz_seed PRIVATE OpenSSL::Crypto)
+    add_executable(bee2_bign_asn1_fuzz bign_asn1_fuzz.c)
+    target_link_libraries(bee2_bign_asn1_fuzz PRIVATE OpenSSL::Crypto)
+    target_compile_options(bee2_bign_asn1_fuzz PRIVATE
+        -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+    target_link_options(bee2_bign_asn1_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+    add_test(NAME bee2_bign_asn1_fuzz_seed COMMAND bee2_bign_asn1_fuzz_seed
+        $<TARGET_FILE_DIR:bee2_provider> "${BEE2_ASN1_FUZZ_CORPUS}")
+    set_tests_properties(bee2_bign_asn1_fuzz_seed PROPERTIES
+        FIXTURES_SETUP bee2_asn1_corpus LABELS "fuzz;asn1;seed")
+    add_test(NAME bee2_bign_asn1_fuzz COMMAND bee2_bign_asn1_fuzz
+        -runs=256 -max_len=4097 -timeout=5 "${BEE2_ASN1_FUZZ_CORPUS}")
+    set_tests_properties(bee2_bign_asn1_fuzz PROPERTIES
+        FIXTURES_REQUIRED bee2_asn1_corpus
+        ENVIRONMENT "BEE2_FUZZ_MODULES=$<TARGET_FILE_DIR:bee2_provider>"
+        LABELS "fuzz;asn1;smoke" TIMEOUT 45)
+endif()

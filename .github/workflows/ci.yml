@@ -60,6 +60,7 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
             -DBEE2_PROVIDER_BUILD_TESTS=ON \
             -DBEE2_PROVIDER_ENABLE_INTEROP=OFF \
+            -DBEE2_PROVIDER_BUILD_FUZZERS=$([[ "$CC" = "clang" ]] && echo ON || echo OFF) \
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_C_FLAGS="-Wall -Wextra" \
             -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
