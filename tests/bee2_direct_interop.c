@@ -413,7 +413,7 @@ int main(int argc, char **argv)
         if (mode == MODE_CFB || mode == MODE_CTR) {
             lengths = stream_lengths;
             count = ARRAY_SIZE(stream_lengths);
-        } else if (mode == MODE_KWP) {
+        } else if (mode == MODE_KWP || mode == MODE_ECB || mode == MODE_CBC) {
             lengths = kwp_lengths;
             count = ARRAY_SIZE(kwp_lengths);
         }

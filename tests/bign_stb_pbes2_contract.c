@@ -118,7 +118,7 @@ static int check_stb_pbes2_classification(void)
          * KWP's absent parameters.  Recognition precedes validation. */
         recognised = 0;
         plain = bee2_stb_pbes2_decrypt(info, password,
-                                       sizeof(password) - 1, 10000, NULL, &recognised);
+                                       sizeof(password) - 1, 10000, &recognised);
         if (plain != NULL || recognised != (i == 2))
             goto end;
         X509_SIG_free(info);
@@ -235,35 +235,32 @@ static int check_stb_decrypt_parameters(void)
 
     for (i = 0; i < sizeof(curve_oids) / sizeof(curve_oids[0]); ++i) {
         const unsigned int iterations = i == 0 ? 1u : BEE2_STB_PBKDF2_DEFAULT_ITER;
-        const size_t salt_len = i == 0 ? 1u : BEE2_STB_PBKDF2_DEFAULT_SALT;
-        const unsigned char *p, *private_bytes = NULL;
+        const size_t salt_len = i == 0 ? 0 : BEE2_STB_PBKDF2_DEFAULT_SALT;
+        const size_t password_len = i == 0 ? 0 : sizeof(password) - 1;
+        const unsigned char *private_bytes = NULL;
         const ASN1_OBJECT *algorithm = NULL;
         const X509_ALGOR *key_alg = NULL;
         const void *parameters = NULL;
         char oid[96];
-        int private_len = 0, parameter_type = 0;
+        int private_len = 0, parameter_type = 0, length;
         size_t scalar_len = 32u + 16u * i;
 
         OPENSSL_clear_free(encrypted, encrypted_len);
         encrypted = NULL;
         encrypted_len = 0;
-        encrypted = bee2_stb_pbes2_encrypt(
-            scalar, scalar_len, password, sizeof(password) - 1,
-            iterations, salt_len, NULL, &encrypted_len);
-        if (encrypted == NULL)
-            goto end;
-        p = encrypted;
         X509_SIG_free(info);
-        info = d2i_X509_SIG(NULL, &p, (long)encrypted_len);
-        if (info == NULL || p != encrypted + encrypted_len ||
-            !bee2_stb_pbes2_is_stb(info))
+        info = bee2_stb_pbes2_protect(scalar, scalar_len, password, password_len,
+                                     iterations, salt_len, NULL);
+        length = info != NULL ? i2d_X509_SIG(info, &encrypted) : 0;
+        if (length <= 0 || !bee2_stb_pbes2_is_stb(info))
             goto end;
+        encrypted_len = (size_t)length;
 
         PKCS8_PRIV_KEY_INFO_free(decoded);
         decoded = NULL;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000, NULL,
+                                          password_len, 10000,
                                           &recognised);
         if (decoded == NULL || !recognised ||
             !PKCS8_pkey_get0(&algorithm, &private_bytes, &private_len,
@@ -281,19 +278,16 @@ static int check_stb_decrypt_parameters(void)
     }
 
     if (bee2_stb_pbes2_decrypt(info, password, sizeof(password) - 1,
-                                10000, NULL, NULL) != NULL)
+                                10000, NULL) != NULL)
         goto end;
 
     /* A salt larger than the maximum DER object must fail before PBKDF2. */
     {
-        unsigned char *oversized;
-        size_t oversized_len = 17;
+        X509_SIG *oversized = bee2_stb_pbes2_protect(
+            scalar, 32, password, sizeof(password) - 1, 1, 1024u * 1024u, NULL);
 
-        oversized = bee2_stb_pbes2_encrypt(
-            scalar, 32, password, sizeof(password) - 1,
-            1, 1024u * 1024u, NULL, &oversized_len);
-        if (oversized != NULL || oversized_len != 0) {
-            OPENSSL_clear_free(oversized, oversized_len);
+        if (oversized != NULL) {
+            X509_SIG_free(oversized);
             goto end;
         }
     }
@@ -307,7 +301,7 @@ static int check_stb_decrypt_parameters(void)
             fprintf(stderr, "STB PBES2 mutation failed: case %d\n", wrong_type);
             goto end;
         }
-        if (!bee2_stb_pbes2_is_stb(info)) {
+        if (wrong_type < 2 && !bee2_stb_pbes2_is_stb(info)) {
             fprintf(stderr, "STB PBES2 classification failed: case %d\n", wrong_type);
             goto end;
         }
@@ -315,9 +309,9 @@ static int check_stb_decrypt_parameters(void)
         decoded = NULL;
         recognised = 0;
         decoded = bee2_stb_pbes2_decrypt(info, password,
-                                          sizeof(password) - 1, 10000, NULL,
+                                          sizeof(password) - 1, 10000,
                                           &recognised);
-        if (decoded != NULL || !recognised) {
+        if (decoded != NULL || (wrong_type < 2 && !recognised)) {
             fprintf(stderr,
                     "STB PBES2 nested DER validation failed: case %d, recognised %d\n",
                     wrong_type, recognised);

@@ -140,16 +140,21 @@ extern const OSSL_DISPATCH bee2_bign_keytransport_functions[];
 
 /* ---- ENCODER/DECODER dispatch tables ----------------------------- */
 
-extern const OSSL_DISPATCH bee2_bign_256_pem_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_256_der_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_384_pem_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_384_der_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_512_pem_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_512_der_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_pem_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_der_encoder_functions[];
-extern const OSSL_DISPATCH bee2_bign_decoder_functions[];
+#define BEE2_DECLARE_BIGN_ENCODERS(GROUP) \
+    extern const OSSL_DISPATCH bee2_bign_##GROUP##_private_pem_encoder_functions[]; \
+    extern const OSSL_DISPATCH bee2_bign_##GROUP##_private_der_encoder_functions[]; \
+    extern const OSSL_DISPATCH bee2_bign_##GROUP##_public_pem_encoder_functions[]; \
+    extern const OSSL_DISPATCH bee2_bign_##GROUP##_public_der_encoder_functions[]
+
+BEE2_DECLARE_BIGN_ENCODERS(any);
+BEE2_DECLARE_BIGN_ENCODERS(256);
+BEE2_DECLARE_BIGN_ENCODERS(384);
+BEE2_DECLARE_BIGN_ENCODERS(512);
+#undef BEE2_DECLARE_BIGN_ENCODERS
+
+extern const OSSL_DISPATCH bee2_bign_pkcs8_decoder_functions[];
 extern const OSSL_DISPATCH bee2_stb_epki_decoder_functions[];
 extern const OSSL_DISPATCH bee2_stb_pem_decoder_functions[];
+extern const OSSL_DISPATCH bee2_bign_spki_decoder_functions[];
 
 #endif /* BEE2_PROVIDER_H */

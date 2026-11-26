@@ -7,6 +7,7 @@
 #include <bee2/crypto/bign192.h>
 #include <bee2/crypto/bign256.h>
 
+#include <openssl/bn.h>
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include <string.h>
@@ -23,7 +24,8 @@ static const bee2_bign_variant_t bee2_bign_var_512 = {
 void bee2_bign_openssl_rng(void *buf, size_t count, void *state) {
     bee2_bign_rng_t *rng = state;
 
-    if (rng == NULL || RAND_priv_bytes_ex(rng->libctx, buf, count, 0) != 1) {
+    if (rng == NULL || rng->failed ||
+        RAND_priv_bytes_ex(rng->libctx, buf, count, rng->strength) != 1) {
         if (buf != NULL)
             OPENSSL_cleanse(buf, count);
         if (rng != NULL)
@@ -98,14 +100,32 @@ int bee2_bign_derive_pubkey(const bee2_bign_variant_t *variant,
 
 int bee2_bign_keypair_generate(const bee2_bign_variant_t *variant,
                                unsigned char *priv, unsigned char *pub,
-                               bee2_bign_rng_t *rng) {
-    if (variant == &bee2_bign_var_256)
-        return bign128KeypairGen(priv, pub, bee2_bign_openssl_rng, rng) == ERR_OK;
-    if (variant == &bee2_bign_var_384)
-        return bign192KeypairGen(priv, pub, bee2_bign_openssl_rng, rng) == ERR_OK;
-    if (variant == &bee2_bign_var_512)
-        return bign256KeypairGen(priv, pub, bee2_bign_openssl_rng, rng) == ERR_OK;
-    return 0;
+                               OSSL_LIB_CTX *libctx)
+{
+    bign_params curve;
+    BN_CTX *ctx;
+    BIGNUM *range, *secret;
+    int length, ok;
+
+    if (!bee2_bign_curve_init_std(variant, &curve))
+        return 0;
+    ctx = BN_CTX_secure_new_ex(libctx);
+    if (ctx == NULL)
+        return 0;
+    length = (int)bee2_bign_priv_len(variant);
+    BN_CTX_start(ctx);
+    range = BN_CTX_get(ctx);
+    secret = BN_CTX_get(ctx);
+
+    /* The private scalar is uniform on [1, q - 1], where q is the order. */
+    ok = secret != NULL &&
+         BN_lebin2bn(curve.q, length, range) != NULL && BN_sub_word(range, 1) &&
+         BN_priv_rand_range_ex(secret, range, variant->security_bits, ctx) &&
+         BN_add_word(secret, 1) && BN_bn2lebinpad(secret, priv, length) == length &&
+         bee2_bign_derive_pubkey(variant, pub, priv);
+    BN_CTX_end(ctx);
+    BN_CTX_free(ctx);
+    return ok;
 }
 
 int bee2_bign_key_wrap(const bee2_bign_variant_t *variant, unsigned char *token,

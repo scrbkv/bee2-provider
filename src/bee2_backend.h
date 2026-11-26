@@ -8,6 +8,7 @@
  */
 
 #include <bee2/core/err.h>
+#include <bee2/core/mem.h>
 #include <bee2/core/u32.h>
 #include <bee2/crypto/bash.h>
 #include <bee2/crypto/belt.h>
@@ -31,7 +32,7 @@
  * store so provider contexts remain trivially copyable for dupctx(). */
 #define BEE2_BACKEND_STATE_SIZE 4096u
 typedef union {
-    max_align_t align;
+    mem_align_t align;
     octet bytes[BEE2_BACKEND_STATE_SIZE];
 } bee2_backend_state_t;
 

@@ -1,306 +1,253 @@
-#include "bee2_oids.h"
-#include "bign_common.h"
 #include "bign_asn1.h"
+#include "bign_der_frame.h"
 #include "bign_stb_pbes2.h"
 
 #include <limits.h>
-#include <openssl/core_object.h>
-#include <openssl/crypto.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/objects.h>
 #include <openssl/pem.h>
-#include <stdlib.h>
-#include <string.h>
+#include <openssl/pkcs12.h>
 
-#define BIGN_PEM_LABEL "PRIVATE KEY"
-#define BIGN_ENCRYPTED_PEM_LABEL "ENCRYPTED PRIVATE KEY"
-#define BIGN_PUB_PEM_LABEL "PUBLIC KEY"
-
-/* ASN.1 and PKCS#8 serialization live in bign_asn1.c. The STB
- * decoder enforces an application-adjustable PBKDF2 work limit. */
+typedef enum {
+    BIGN_ENCODE_PLAIN, BIGN_ENCODE_STB, BIGN_ENCODE_PBES2, BIGN_ENCODE_INVALID
+} bign_encryption;
 
 typedef struct {
-    const bee2_bign_variant_t *variant;
     OSSL_LIB_CTX *libctx;
-    int output_pem;
-    EVP_CIPHER *cipher; /* Only used for OpenSSL PBES2 ciphers. */
-    size_t kwp_key_len;
-    int encrypt;
-    unsigned int pbkdf2_iterations;
-    size_t pbkdf2_salt_len;
-} bee2_bign_encoder_ctx_t;
+    EVP_CIPHER *cipher;
+    const bee2_bign_variant_t *variant;
+    bign_encryption encryption;
+    int pem;
+    int private_key;
+    unsigned int iterations;
+    size_t salt_len;
+} bign_encoder_ctx;
 
-static int write_all(BIO *bio, const void *data, size_t len) {
-    const unsigned char *p = data;
+static void *encoder_new(void *provctx, const bee2_bign_variant_t *variant,
+                          int pem, int private_key)
+{
+    bign_encoder_ctx *ctx = OPENSSL_zalloc(sizeof(*ctx));
 
-    while (len > 0) {
-        size_t written = 0;
-
-        if (!BIO_write_ex(bio, p, len, &written) || written == 0)
-            return 0;
-        p += written;
-        len -= written;
+    if (ctx != NULL) {
+        ctx->libctx = bee2_provider_libctx(provctx);
+        ctx->variant = variant;
+        ctx->pem = pem;
+        ctx->private_key = private_key;
+        ctx->iterations = BEE2_STB_PBKDF2_DEFAULT_ITER;
+        ctx->salt_len = BEE2_STB_PBKDF2_DEFAULT_SALT;
     }
-    return 1;
-}
-
-static unsigned char *encrypt_key_material(const unsigned char *der, size_t der_len,
-                                         const bee2_bign_encoder_ctx_t *ctx,
-                                        OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg,
-                                        size_t *out_len) {
-    unsigned char *out = NULL;
-    char password[PEM_BUFSIZE];
-    size_t password_len = 0;
-    size_t key_len;
-
-    if (!cb)
-        return NULL;
-    *out_len = 0;
-    key_len = ctx->kwp_key_len;
-    OPENSSL_cleanse(password, sizeof(password));
-    if (cb(password, sizeof(password), &password_len, NULL, cbarg) &&
-        password_len <= sizeof(password)) {
-        if (key_len != 0)
-            out = bee2_stb_pbes2_encrypt(der, der_len, (const unsigned char *)password,
-                                         password_len, ctx->pbkdf2_iterations,
-                                         ctx->pbkdf2_salt_len, ctx->libctx, out_len);
-        else
-            out = bee2_bign_asn1_encrypt_standard_pkcs8(
-                der, der_len, (const unsigned char *)password, password_len,
-                ctx->cipher, ctx->pbkdf2_iterations, ctx->pbkdf2_salt_len,
-                ctx->libctx, out_len);
-    }
-    OPENSSL_cleanse(password, sizeof(password));
-    return out;
-}
-
-static void *bign_encoder_newctx_common(const bee2_bign_variant_t *variant,
-                                        int output_pem,
-                                        void *provctx) {
-    bee2_bign_encoder_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
-    if (!ctx)
-        return NULL;
-    ctx->variant = variant;
-    ctx->libctx = bee2_provider_libctx(provctx);
-    ctx->output_pem = output_pem;
-    ctx->kwp_key_len = 32; /* Default when encryption is explicitly requested. */
-    ctx->pbkdf2_iterations = BEE2_STB_PBKDF2_DEFAULT_ITER;
-    ctx->pbkdf2_salt_len = BEE2_STB_PBKDF2_DEFAULT_SALT;
     return ctx;
 }
 
-static void bign_encoder_freectx(void *vctx) {
-    bee2_bign_encoder_ctx_t *ctx = vctx;
+static void encoder_free(void *vctx)
+{
+    bign_encoder_ctx *ctx = vctx;
 
-    if (ctx) {
+    if (ctx != NULL) {
         EVP_CIPHER_free(ctx->cipher);
         OPENSSL_free(ctx);
     }
 }
 
-static const OSSL_PARAM bee2_bign_encoder_settable[] = {
-    OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_CIPHER, NULL, 0),
-    OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_PROPERTIES, NULL, 0),
-    OSSL_PARAM_uint(BEE2_STB_PBKDF2_PARAM_ITER, NULL),
-    OSSL_PARAM_size_t(BEE2_STB_PBKDF2_PARAM_SALTLEN, NULL),
-    OSSL_PARAM_END};
-
-static const OSSL_PARAM *bign_encoder_settable_ctx_params(void *provctx) {
+static const OSSL_PARAM *encoder_settable(void *provctx)
+{
+    static const OSSL_PARAM params[] = {
+        OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_CIPHER, NULL, 0),
+        OSSL_PARAM_utf8_string(OSSL_ENCODER_PARAM_PROPERTIES, NULL, 0),
+        OSSL_PARAM_uint(BEE2_STB_PBKDF2_PARAM_ITER, NULL),
+        OSSL_PARAM_size_t(BEE2_STB_PBKDF2_PARAM_SALTLEN, NULL),
+        OSSL_PARAM_END
+    };
     (void)provctx;
-    return bee2_bign_encoder_settable;
+    return params;
 }
 
-static int bign_encoder_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
-    bee2_bign_encoder_ctx_t *ctx = vctx;
-    const OSSL_PARAM *param, *properties, *iter_param, *salt_param;
-    const char *cipher_name = NULL;
-    const char *propq = NULL;
+static int encoder_set_params(void *vctx, const OSSL_PARAM params[])
+{
+    bign_encoder_ctx *ctx = vctx;
+    const OSSL_PARAM *p, *cipher_param;
+    const char *name = NULL, *properties = NULL;
     EVP_CIPHER *cipher = NULL;
-    unsigned int iterations;
-    size_t salt_len;
+    unsigned int iterations = ctx->iterations;
+    size_t salt_len = ctx->salt_len;
 
-    if (!params)
-        return 1;
-    iterations = ctx->pbkdf2_iterations;
-    salt_len = ctx->pbkdf2_salt_len;
-    iter_param = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_ITER);
-    salt_param = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_SALTLEN);
-    /* Annex E recommends work factors; it does not make them format bounds.
-     * Zero cannot represent an explicit PBKDF2 count or generated salt. */
-    if ((iter_param && (!OSSL_PARAM_get_uint(iter_param, &iterations) ||
-                        iterations == 0 || iterations > INT_MAX)) ||
-        (salt_param && (!OSSL_PARAM_get_size_t(salt_param, &salt_len) ||
-                        salt_len == 0 || salt_len > INT_MAX)))
+    cipher_param = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_CIPHER);
+    if (cipher_param != NULL)
+        ctx->encryption = BIGN_ENCODE_INVALID;
+    p = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_ITER);
+    if (p != NULL && (!OSSL_PARAM_get_uint(p, &iterations) || iterations == 0 || iterations > INT_MAX))
         return 0;
-    param = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_CIPHER);
-    if (param != NULL) {
-        if (!OSSL_PARAM_get_utf8_string_ptr(param, &cipher_name))
+    p = OSSL_PARAM_locate_const(params, BEE2_STB_PBKDF2_PARAM_SALTLEN);
+    if (p != NULL && (!OSSL_PARAM_get_size_t(p, &salt_len) || salt_len >= BIGN_MAX_KEY_INPUT))
+        return 0;
+    if (cipher_param != NULL) {
+        if (!OSSL_PARAM_get_utf8_string_ptr(cipher_param, &name))
             return 0;
-        properties = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_PROPERTIES);
-        if (properties && !OSSL_PARAM_get_utf8_string_ptr(properties, &propq))
+        p = OSSL_PARAM_locate_const(params, OSSL_ENCODER_PARAM_PROPERTIES);
+        if (p != NULL && !OSSL_PARAM_get_utf8_string_ptr(p, &properties))
             return 0;
-        size_t kwp_len = 0;
-
-        /* "default" requests the STB profile without choosing a key size. */
-        if (cipher_name && OPENSSL_strcasecmp(cipher_name, "default") == 0)
-            cipher_name = "belt-kwp256";
-        if (cipher_name && (cipher = EVP_CIPHER_fetch(ctx->libctx, cipher_name, propq)) == NULL)
+        if (name != NULL && OPENSSL_strcasecmp(name, "default") == 0)
+            name = "belt-kwp256";
+        if (name != NULL && (cipher = EVP_CIPHER_fetch(ctx->libctx, name, properties)) == NULL)
             return 0;
-        if (cipher) {
-            if (EVP_CIPHER_is_a(cipher, "belt-kwp256")) {
-                kwp_len = (size_t)EVP_CIPHER_get_key_length(cipher);
-            } else if (EVP_CIPHER_get_mode(cipher) != EVP_CIPH_CBC_MODE ||
-                       EVP_CIPHER_get_nid(cipher) == NID_undef ||
-                       EVP_CIPHER_get_iv_length(cipher) <= 0) {
-                EVP_CIPHER_free(cipher);
-                return 0;
-            }
-        }
-        if (kwp_len != 0 && iterations > BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER) {
+        if (cipher == NULL) {
+            ctx->encryption = BIGN_ENCODE_PLAIN;
+        } else if (EVP_CIPHER_is_a(cipher, "belt-kwp256")) {
+            ctx->encryption = BIGN_ENCODE_STB;
+            EVP_CIPHER_free(cipher);
+            cipher = NULL;
+        } else if (EVP_CIPHER_get_mode(cipher) == EVP_CIPH_CBC_MODE &&
+                   EVP_CIPHER_get_nid(cipher) != NID_undef && EVP_CIPHER_get_iv_length(cipher) > 0) {
+            ctx->encryption = BIGN_ENCODE_PBES2;
+        } else {
             EVP_CIPHER_free(cipher);
             return 0;
         }
         EVP_CIPHER_free(ctx->cipher);
-        ctx->encrypt = cipher != NULL;
-        ctx->kwp_key_len = kwp_len;
-        ctx->cipher = kwp_len == 0 ? cipher : NULL;
-        if (kwp_len != 0)
-            EVP_CIPHER_free(cipher);
+        ctx->cipher = cipher;
     }
-    if (ctx->kwp_key_len != 0 && iterations > BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER)
-        return 0;
-    ctx->pbkdf2_iterations = iterations;
-    ctx->pbkdf2_salt_len = salt_len;
+    ctx->iterations = iterations;
+    ctx->salt_len = salt_len;
     return 1;
 }
 
-/* The supported selections are identical for encoder and decoder. */
-static int bign_codec_does_selection(void *provctx, int selection) {
+static int select_private(void *provctx, int selection)
+{
     (void)provctx;
-    return selection == 0 ||
-           (selection & (OSSL_KEYMGMT_SELECT_PRIVATE_KEY |
-                         OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) != 0;
+    return selection == 0 || (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0;
 }
 
-static int bign_encoder_encode(void *vctx,
-                               OSSL_CORE_BIO *out,
-                               const void *obj_raw,
-                               const OSSL_PARAM obj_abstract[],
-                               int selection,
-                               OSSL_PASSPHRASE_CALLBACK *cb,
-                               void *cbarg) {
-    (void)obj_abstract;
+static int select_public(void *provctx, int selection)
+{
+    (void)provctx;
+    return selection == 0 ||
+        ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) == 0 &&
+         (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0);
+}
 
-    if (!(selection & (OSSL_KEYMGMT_SELECT_PRIVATE_KEY | OSSL_KEYMGMT_SELECT_PUBLIC_KEY))) {
-        ERR_raise_data(ERR_LIB_PROV,
-                       ERR_R_PASSED_INVALID_ARGUMENT,
-                       "bign_encoder_encode: selection=%d",
-                       selection);
-        return 0;
-    }
-    if (!obj_raw) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER, "bign_encoder_encode: obj_raw is null");
-        return 0;
-    }
-
-    const bee2_bign_key_t *key = obj_raw;
-    bee2_bign_encoder_ctx_t *ctx = vctx;
-    if (!ctx || !key->variant) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER, "bign_encoder_encode: missing ctx/variant");
-        return 0;
-    }
-    if (ctx->variant && ctx->variant != key->variant) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT, "bign_encoder_encode: variant mismatch");
-        return 0;
-    }
-    size_t der_len = 0;
-    unsigned char *der = NULL;
-    const char *label = BIGN_PEM_LABEL;
-    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
-        if (!key->has_priv) {
-            ERR_raise_data(
-                ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT, "bign_encoder_encode: no private key");
-            return 0;
-        }
-        label = BIGN_PEM_LABEL;
-        if (ctx->encrypt && ctx->kwp_key_len != 0) {
-            der = encrypt_key_material(key->priv, bee2_bign_priv_len(key->variant),
-                                       ctx, cb, cbarg, &der_len);
-            label = BIGN_ENCRYPTED_PEM_LABEL;
-        } else {
-            der = bee2_bign_asn1_encode_pkcs8_der(key, &der_len);
-            if (der && ctx->encrypt) {
-                unsigned char *encrypted;
-                size_t encrypted_len = 0;
-
-                encrypted = encrypt_key_material(der, der_len, ctx,
-                                                 cb, cbarg, &encrypted_len);
-                OPENSSL_clear_free(der, der_len);
-                der = encrypted;
-                der_len = encrypted_len;
-                label = BIGN_ENCRYPTED_PEM_LABEL;
-            }
-        }
-    } else if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
-        der = bee2_bign_asn1_encode_spki_der(key, &der_len);
-        label = BIGN_PUB_PEM_LABEL;
-    }
-    if (!der) {
-        ERR_raise_data(
-            ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "bign_encoder_encode: key encoding failed");
-        return 0;
-    }
-
+static int write_protected(bign_encoder_ctx *ctx, BIO *out, const bee2_bign_key_t *key,
+                           OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg)
+{
+    char pass[PEM_BUFSIZE];
+    size_t pass_len = 0;
+    X509_SIG *encrypted = NULL;
     int ok = 0;
-    BIO *bio = BIO_new_from_core_bio(ctx->libctx, out);
 
-    if (bio != NULL) {
-        if (ctx->output_pem) {
-            ok = PEM_write_bio(bio, label, NULL, der, (long)der_len);
+    if (cb != NULL && cb(pass, sizeof(pass), &pass_len, NULL, cbarg) && pass_len <= sizeof(pass)) {
+        if (ctx->encryption == BIGN_ENCODE_STB) {
+            encrypted = bee2_stb_pbes2_protect(key->priv, bee2_bign_priv_len(key->variant),
+                                               (const unsigned char *)pass, pass_len,
+                                               ctx->iterations, ctx->salt_len, ctx->libctx);
         } else {
-            ok = write_all(bio, der, der_len);
-        }
-        BIO_free(bio);
-    }
-    if (!ok) {
-        ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR, "bign_encoder_encode: write failed");
-    }
+            PKCS8_PRIV_KEY_INFO *p8 = bee2_bign_asn1_pkcs8(key);
 
-    OPENSSL_cleanse(der, der_len);
-    OPENSSL_free(der);
+            if (p8 != NULL)
+                encrypted = PKCS8_encrypt_ex(-1, ctx->cipher, pass, (int)pass_len, NULL,
+                                              (int)ctx->salt_len, (int)ctx->iterations,
+                                              p8, ctx->libctx, NULL);
+            PKCS8_PRIV_KEY_INFO_free(p8);
+        }
+    }
+    OPENSSL_cleanse(pass, sizeof(pass));
+    if (encrypted != NULL) {
+        int length = i2d_X509_SIG(encrypted, NULL);
+
+        if (length > 0 && (size_t)length <= BIGN_MAX_KEY_INPUT)
+            ok = ctx->pem ? PEM_write_bio_PKCS8(out, encrypted) : i2d_PKCS8_bio(out, encrypted);
+        X509_SIG_free(encrypted);
+    }
     return ok;
 }
 
-static void *bign_encoder_import_object(void *vctx, int selection, const OSSL_PARAM params[]) {
-    const bee2_bign_encoder_ctx_t *ctx = vctx;
-    bee2_bign_key_t *key;
+static int encoder_encode(void *vctx, OSSL_CORE_BIO *out, const void *obj,
+                          const OSSL_PARAM abstract[], int selection,
+                          OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg)
+{
+    bign_encoder_ctx *ctx = vctx;
+    const bee2_bign_key_t *key = obj;
+    BIO *bio;
+    int ok = 0;
 
-    if (params == NULL)
-        return NULL;
-    key = bee2_bign_key_new(ctx->variant);
-    if (key == NULL)
-        return NULL;
-    if (!bee2_bign_import_params(key, selection, params)) {
+    (void)abstract;
+    if (key == NULL || key->variant == NULL || (ctx->variant && ctx->variant != key->variant) ||
+        ctx->encryption == BIGN_ENCODE_INVALID ||
+        !(ctx->private_key ? select_private(NULL, selection) : select_public(NULL, selection)))
+        return 0;
+    bio = BIO_new_from_core_bio(ctx->libctx, out);
+    if (bio == NULL)
+        return 0;
+    if (!ctx->private_key) {
+        X509_PUBKEY *spki = bee2_bign_asn1_spki(key);
+
+        if (spki != NULL)
+            ok = ctx->pem ? PEM_write_bio_X509_PUBKEY(bio, spki) : i2d_X509_PUBKEY_bio(bio, spki);
+        X509_PUBKEY_free(spki);
+    } else if (key->has_priv && ctx->encryption == BIGN_ENCODE_PLAIN) {
+        PKCS8_PRIV_KEY_INFO *p8 = bee2_bign_asn1_pkcs8(key);
+
+        if (p8 != NULL)
+            ok = ctx->pem ? PEM_write_bio_PKCS8_PRIV_KEY_INFO(bio, p8) : i2d_PKCS8_PRIV_KEY_INFO_bio(bio, p8);
+        PKCS8_PRIV_KEY_INFO_free(p8);
+    } else if (key->has_priv) {
+        ok = write_protected(ctx, bio, key, cb, cbarg);
+    }
+    BIO_free(bio);
+    return ok;
+}
+
+static void *encoder_import(void *vctx, int selection, const OSSL_PARAM params[])
+{
+    bign_encoder_ctx *ctx = vctx;
+    bee2_bign_key_t *key = bee2_bign_key_new(ctx->variant);
+
+    if (key == NULL || !bee2_bign_import_params(key, selection, params)) {
         bee2_bign_key_free(key);
         return NULL;
     }
     return key;
 }
 
-static void bign_encoder_free_object(void *obj) {
+static void encoder_free_object(void *obj)
+{
     bee2_bign_key_free(obj);
 }
 
-static void *bign_decoder_newctx_common(const bee2_bign_variant_t *variant, void *provctx) {
+#define PRIVATE_ENCODER_PARAMS \
+    {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))encoder_set_params}, \
+    {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))encoder_settable},
+#define PUBLIC_ENCODER_PARAMS
+
+#define BIGN_ENCODER(NAME, VARIANT, PEM, PRIV, SELECT, PARAMS) \
+    static void *encoder_##NAME##_new(void *provctx) \
+    { \
+        return encoder_new(provctx, VARIANT, PEM, PRIV); \
+    } \
+    const OSSL_DISPATCH bee2_bign_##NAME##_encoder_functions[] = { \
+        {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))encoder_##NAME##_new}, \
+        {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))encoder_free}, \
+        {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))SELECT}, \
+        {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))encoder_encode}, \
+        {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))encoder_import}, \
+        {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))encoder_free_object}, \
+        PARAMS \
+        {0, NULL} \
+    }
+
+#define BIGN_ENCODER_FORMATS(GROUP, VARIANT) \
+    BIGN_ENCODER(GROUP##_private_pem, VARIANT, 1, 1, select_private, PRIVATE_ENCODER_PARAMS); \
+    BIGN_ENCODER(GROUP##_private_der, VARIANT, 0, 1, select_private, PRIVATE_ENCODER_PARAMS); \
+    BIGN_ENCODER(GROUP##_public_pem, VARIANT, 1, 0, select_public, PUBLIC_ENCODER_PARAMS); \
+    BIGN_ENCODER(GROUP##_public_der, VARIANT, 0, 0, select_public, PUBLIC_ENCODER_PARAMS)
+
+BIGN_ENCODER_FORMATS(any, NULL);
+BIGN_ENCODER_FORMATS(256, bee2_bign_variant_256());
+BIGN_ENCODER_FORMATS(384, bee2_bign_variant_384());
+BIGN_ENCODER_FORMATS(512, bee2_bign_variant_512());
+
+static void *decoder_new(void *provctx, bign_decode_kind kind) {
     bee2_bign_decoder_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
 
     if (!ctx)
         return NULL;
-    ctx->variant = variant;
+    ctx->kind = kind;
     ctx->libctx = bee2_provider_libctx(provctx);
     ctx->max_pbkdf2_iterations = BEE2_STB_PBKDF2_DEFAULT_MAX_DECODE_ITER;
     return ctx;
@@ -342,13 +289,13 @@ static int bign_decoder_export_object(void *vctx,
                                       size_t objref_sz,
                                       OSSL_CALLBACK *export_cb,
                                       void *export_cbarg) {
-    bee2_bign_decoder_ctx_t *ctx = vctx;
     bee2_bign_key_t *key = NULL;
 
-    if (!ctx || !objref || !export_cb || objref_sz != sizeof(key))
+    (void)vctx;
+    if (!objref || !export_cb || objref_sz != sizeof(key))
         return 0;
     memcpy(&key, objref, sizeof(key));
-    if (!key || (ctx->variant && key->variant != ctx->variant))
+    if (!key)
         return 0;
 
     return bee2_bign_export_params(
@@ -358,106 +305,36 @@ static int bign_decoder_export_object(void *vctx,
 }
 
 
-#define BIGN_CODEC_NEWCTX(BITS) \
-    static void *bign##BITS##_pem_encoder_newctx(void *provctx) { \
-        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 1, provctx); \
+static int decode_private_selection(void *provctx, int selection)
+{
+    (void)provctx;
+    return selection == 0 || (selection & OSSL_KEYMGMT_SELECT_KEYPAIR) != 0;
+}
+
+#define BIGN_DECODER(NAME, KIND, SELECT) \
+    static void *NAME##_new(void *provctx) \
+    { \
+        return decoder_new(provctx, KIND); \
     } \
-    static void *bign##BITS##_der_encoder_newctx(void *provctx) { \
-        return bign_encoder_newctx_common(bee2_bign_variant_##BITS(), 0, provctx); \
+    const OSSL_DISPATCH NAME##_functions[] = { \
+        {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))NAME##_new}, \
+        {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx}, \
+        {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))SELECT}, \
+        {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params}, \
+        {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_decoder_settable_ctx_params}, \
+        {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bee2_bign_asn1_decoder_decode}, \
+        {OSSL_FUNC_DECODER_EXPORT_OBJECT, (void (*)(void))bign_decoder_export_object}, \
+        {0, NULL} \
     }
 
-BIGN_CODEC_NEWCTX(256)
-BIGN_CODEC_NEWCTX(384)
-BIGN_CODEC_NEWCTX(512)
-
-static void *bign_decoder_newctx(void *provctx) {
-    return bign_decoder_newctx_common(NULL, provctx);
+BIGN_DECODER(bee2_bign_pkcs8_decoder, BIGN_DECODE_PRIVATE, decode_private_selection);
+BIGN_DECODER(bee2_bign_spki_decoder, BIGN_DECODE_PUBLIC, select_public);
+static int decode_any_selection(void *provctx, int selection)
+{
+    (void)provctx;
+    (void)selection;
+    return 1;
 }
 
-/* STB PBES2 must precede OpenSSL's generic encrypted-PKCS#8 decoder. */
-static void *bign_stb_pem_newctx(void *provctx) {
-    bee2_bign_decoder_ctx_t *ctx = bign_decoder_newctx_common(NULL, provctx);
-
-    if (ctx != NULL)
-        ctx->input_pem = 1;
-    return ctx;
-}
-
-static void *bign_pem_encoder_newctx(void *provctx) {
-    return bign_encoder_newctx_common(NULL, 1, provctx);
-}
-
-static void *bign_der_encoder_newctx(void *provctx) {
-    return bign_encoder_newctx_common(NULL, 0, provctx);
-}
-
-#define BIGN_ENCODER_DISPATCH(BITS, FORMAT) \
-    const OSSL_DISPATCH bee2_bign_##BITS##_##FORMAT##_encoder_functions[] = { \
-        {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign##BITS##_##FORMAT##_encoder_newctx}, \
-        {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx}, \
-        {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params}, \
-        {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, \
-         (void (*)(void))bign_encoder_settable_ctx_params}, \
-        {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection}, \
-        {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode}, \
-        {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object}, \
-        {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object}, \
-        {0, NULL}};
-
-BIGN_ENCODER_DISPATCH(256, pem)
-BIGN_ENCODER_DISPATCH(256, der)
-BIGN_ENCODER_DISPATCH(384, pem)
-BIGN_ENCODER_DISPATCH(384, der)
-BIGN_ENCODER_DISPATCH(512, pem)
-BIGN_ENCODER_DISPATCH(512, der)
-
-const OSSL_DISPATCH bee2_bign_pem_encoder_functions[] = {
-    {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign_pem_encoder_newctx},
-    {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},
-    {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params},
-    {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_encoder_settable_ctx_params},
-    {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection},
-    {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
-    {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},
-    {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object},
-    {0, NULL}};
-
-const OSSL_DISPATCH bee2_bign_der_encoder_functions[] = {
-    {OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))bign_der_encoder_newctx},
-    {OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))bign_encoder_freectx},
-    {OSSL_FUNC_ENCODER_SET_CTX_PARAMS, (void (*)(void))bign_encoder_set_ctx_params},
-    {OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS, (void (*)(void))bign_encoder_settable_ctx_params},
-    {OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection},
-    {OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))bign_encoder_encode},
-    {OSSL_FUNC_ENCODER_IMPORT_OBJECT, (void (*)(void))bign_encoder_import_object},
-    {OSSL_FUNC_ENCODER_FREE_OBJECT, (void (*)(void))bign_encoder_free_object},
-    {0, NULL}};
-
-const OSSL_DISPATCH bee2_stb_epki_decoder_functions[] = {
-    {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
-    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
-    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
-     (void (*)(void))bign_decoder_settable_ctx_params},
-    {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
-    {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bee2_bign_asn1_stb_epki_decode},
-    {0, NULL}};
-
-const OSSL_DISPATCH bee2_stb_pem_decoder_functions[] = {
-    {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_stb_pem_newctx},
-    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
-    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
-     (void (*)(void))bign_decoder_settable_ctx_params},
-    {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
-    {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bee2_bign_asn1_stb_epki_decode},
-    {0, NULL}};
-
-const OSSL_DISPATCH bee2_bign_decoder_functions[] = {
-    {OSSL_FUNC_DECODER_NEWCTX, (void (*)(void))bign_decoder_newctx},
-    {OSSL_FUNC_DECODER_SET_CTX_PARAMS, (void (*)(void))bign_decoder_set_ctx_params},
-    {OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS,
-     (void (*)(void))bign_decoder_settable_ctx_params},
-    {OSSL_FUNC_DECODER_FREECTX, (void (*)(void))bign_decoder_freectx},
-    {OSSL_FUNC_DECODER_DOES_SELECTION, (void (*)(void))bign_codec_does_selection},
-    {OSSL_FUNC_DECODER_DECODE, (void (*)(void))bee2_bign_asn1_decoder_decode},
-    {OSSL_FUNC_DECODER_EXPORT_OBJECT, (void (*)(void))bign_decoder_export_object},
-    {0, NULL}};
+BIGN_DECODER(bee2_stb_epki_decoder, BIGN_DECODE_DER, decode_any_selection);
+BIGN_DECODER(bee2_stb_pem_decoder, BIGN_DECODE_PEM, decode_any_selection);

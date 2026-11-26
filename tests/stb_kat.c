@@ -308,29 +308,38 @@ static int check_belt_block_vectors(const unsigned char h[256])
 {
     static const struct {
         const char *name;
+        size_t length;
         const char *expected;
     } encrypt_vectors[] = {
-        {"belt-ecb256",
+        {"belt-ecb256", 48,
          "69CCA1C93557C9E3D66BC3E0FA88FA6E"
          "5F23102EF109710775017F73806DA9DC"
          "46FB2ED2CE771F26DCB5E5D1569F9AB0"},
-        {"belt-cbc256",
+        {"belt-cbc256", 48,
          "10116EFAE6AD58EE14852E11DA1B8A74"
          "5CF2480E8D03F1C19492E53ED3A70F60"
          "657C1EE8C0E0AE5B58388BF8A68E3309"},
-        {"belt-cfb256",
+        {"belt-ecb256", 47,
+         "69CCA1C93557C9E3D66BC3E0FA88FA6E"
+         "36F00CFED6D1CA1498C12798F4BEB207"
+         "5F23102EF109710775017F73806DA9"},
+        {"belt-cbc256", 36,
+         "10116EFAE6AD58EE14852E11DA1B8A74"
+         "6A9BBADCAF73F968F875DEDC0A44F6B1"
+         "5CF2480E"},
+        {"belt-cfb256", 48,
          "C31E490A90EFA374626CC99E4B7B8540"
          "A6E48685464A5A06849C9CA769A1B0AE"
          "55C2CC5939303EC832DD2FE16C8E5A1B"},
-        {"belt-ctr256",
+        {"belt-ctr256", 48,
          "52C9AF96FF50F64435FC43DEF56BD797"
          "D5B5B1FF79FB41257AB9CDF6E63E81F8"
          "F00341473EAE409833622DE05213773A"},
-        {"belt-bde256",
+        {"belt-bde256", 48,
          "E9CAB32D879CC50C10378EB07C10F263"
          "07257E2DBE2B854CBC9F38282D59D6A7"
          "7F952001C5D1244F53210A27C216D4BB"},
-        {"belt-sde256",
+        {"belt-sde256", 48,
          "1FCBB01852003D60B66024C508608BAA"
          "2C21AF1E884CF31154D3077D4643CF22"
          "49EB2F5A68E4BA019D90211A81D690D9"}
@@ -348,6 +357,14 @@ static int check_belt_block_vectors(const unsigned char h[256])
          "730894D6158E17CC1600185A8F411CAB"
          "0471FF85C83792398D8924EBD57D03DB"
          "95B97A9B7907E4B020960455E46176F8"},
+        {"belt-ecb256", 36,
+         "0DC5300600CAB840B38448E5E993F421"
+         "5780A6E2B69EAFBB258726D7B6718523"
+         "E55A239F"},
+        {"belt-cbc256", 36,
+         "730894D6158E17CC1600185A8F411CAB"
+         "B6AB7AF8541CF85755B8EA27239F08D2"
+         "166646E4"},
         {"belt-cfb256", 48,
          "FA9D107A86F375EE65CD1DB881224BD0"
          "16AFF814938ED39B3361ABB0BF0851B6"
@@ -363,7 +380,7 @@ static int check_belt_block_vectors(const unsigned char h[256])
         const char *name = encrypt_vectors[i].name;
         if (!belt_encrypt_vector(name, h + 128,
                                  strstr(name, "ecb") ? NULL : h + 192,
-                                 h, 48, encrypt_vectors[i].expected))
+                                 h, encrypt_vectors[i].length, encrypt_vectors[i].expected))
             return 0;
     }
     for (i = 0; i < sizeof(decrypt_vectors) / sizeof(decrypt_vectors[0]); ++i)

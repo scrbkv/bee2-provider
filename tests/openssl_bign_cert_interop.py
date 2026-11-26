@@ -168,7 +168,7 @@ def main() -> int:
                 (provider_openssl, provider_backend, None),
                 (bee2evp_openssl, bee2evp_backend, bee2evp_env),
             ):
-                run_checked([openssl, "verify", *backend, "-CAfile", str(cert),
+                run_checked([openssl, "verify", *backend, "-check_ss_sig", "-CAfile", str(cert),
                              str(cert)], env)
 
         # Sign with both implementations using keys generated on both sides,

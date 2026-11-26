@@ -595,14 +595,12 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
     bee2_bign_key_t *key = NULL;
     size_t priv_len;
     size_t pub_len;
-    bee2_bign_rng_t rng = {0};
     int ok = 0;
 
     (void)cb;
     (void)cbarg;
     if (!gctx->variant)
         return NULL;
-    rng.libctx = gctx->libctx;
 
     key = bign_new_common(gctx->variant);
     if (!key)
@@ -612,8 +610,7 @@ static void *bign_gen(void *vgenctx, OSSL_CALLBACK *cb, void *cbarg) {
 
     priv_len = bee2_bign_priv_len(gctx->variant);
     pub_len = bee2_bign_pub_len(gctx->variant);
-    if (!bee2_bign_keypair_generate(gctx->variant, key->priv, key->pub, &rng) ||
-        rng.failed)
+    if (!bee2_bign_keypair_generate(gctx->variant, key->priv, key->pub, gctx->libctx))
         goto cleanup;
 
     key->has_priv = 1;

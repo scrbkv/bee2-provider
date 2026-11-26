@@ -90,6 +90,7 @@ static int bign_keytransport_init(void *vctx, void *vkey,
 
     ctx->key = NULL;
     ctx->encrypt = 0;
+    memset(ctx->header, 0, sizeof(ctx->header));
     if (!key || !key->variant ||
         (encrypt ? !key->has_pub : !key->has_priv) ||
         !bign_keytransport_set_ctx_params(ctx, params))
@@ -130,6 +131,7 @@ static int bign_keytransport_encrypt(void *vctx,
     if (outsize < need)
         return 0;
     rng.libctx = ctx->libctx;
+    rng.strength = ctx->key->variant->security_bits;
     if (!bee2_bign_key_wrap(ctx->key->variant, out, in, inlen,
                             ctx->header, ctx->key->pub, &rng) || rng.failed)
         goto cleanup;

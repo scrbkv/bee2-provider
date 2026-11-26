@@ -1,5 +1,6 @@
 /* BIGN key serialization, including encrypted PKCS#8 PEM and DER. */
 #include <limits.h>
+#include <limits.h>
 #include <openssl/asn1t.h>
 #include <openssl/buffer.h>
 #include <openssl/core_names.h>
@@ -723,8 +724,8 @@ static int check_serialization(EVP_PKEY *key, const char *format, int encrypted)
     const char *oid = "1.2.112.0.2.0.34.101.31.73";
     size_t key_len = 32u;
     unsigned int iterations = 12000, invalid_iterations = 0;
-    unsigned int maximum_iterations = 1000000, excessive_iterations = 1000001;
-    size_t salt_length = 24, invalid_salt_length = 0;
+    unsigned int maximum_iterations = INT_MAX, excessive_iterations = (unsigned int)INT_MAX + 1;
+    size_t salt_length = 24, invalid_salt_length = 1024u * 1024u;
     OSSL_PARAM settings[] = {
         OSSL_PARAM_uint("stb-pbkdf2-iterations", &iterations),
         OSSL_PARAM_size_t("stb-pbkdf2-saltlen", &salt_length),
@@ -1022,8 +1023,8 @@ done:
     return ok;
 }
 
-/* Failed cipher selection must not poison the encoder.  Writable output must
- * still succeed; read-only BIO output must fail rather than losing the key. */
+/* Failed cipher selection must leave the destination empty until the
+ * caller explicitly selects an unencrypted output. */
 static int check_encoder_failures(EVP_PKEY *key, const char *format)
 {
     OSSL_ENCODER_CTX *encoder = OSSL_ENCODER_CTX_new_for_pkey(
@@ -1039,6 +1040,8 @@ static int check_encoder_failures(EVP_PKEY *key, const char *format)
         OSSL_ENCODER_CTX_set_cipher(encoder, "belt-kwp128", NULL) > 0 ||
         OSSL_ENCODER_CTX_set_cipher(encoder, "belt-kwp192", NULL) > 0 ||
         OSSL_ENCODER_CTX_set_cipher(encoder, "no-such-cipher", NULL) > 0 ||
+        OSSL_ENCODER_to_bio(encoder, writable) > 0 || BIO_ctrl_pending(writable) != 0 ||
+        !OSSL_ENCODER_CTX_set_cipher(encoder, NULL, NULL) ||
         OSSL_ENCODER_to_bio(encoder, writable) <= 0 ||
         OSSL_ENCODER_to_bio(encoder, read_only) > 0)
         goto end;
@@ -1051,6 +1054,23 @@ end:
     BIO_free(read_only);
     BIO_free(writable);
     OSSL_ENCODER_CTX_free(encoder);
+    return ok;
+}
+
+static int check_spki_selection(EVP_PKEY *key, const char *format)
+{
+    OSSL_ENCODER_CTX *encoder = OSSL_ENCODER_CTX_new_for_pkey(
+        key, OSSL_KEYMGMT_SELECT_KEYPAIR, format, "SubjectPublicKeyInfo",
+        "provider=bee2");
+    BIO *output = BIO_new(BIO_s_mem());
+    int ok = encoder != NULL && output != NULL &&
+             OSSL_ENCODER_to_bio(encoder, output) <= 0 && BIO_ctrl_pending(output) == 0;
+
+    if (!ok)
+        fprintf(stderr, "%s SPKI accepted a private key selection\n", format);
+    ERR_clear_error();
+    OSSL_ENCODER_CTX_free(encoder);
+    BIO_free(output);
     return ok;
 }
 
@@ -1083,7 +1103,8 @@ int main(int argc, char **argv)
             !check_key_stream(key, "DER") || !check_key_stream(key, "PEM"))
             goto cleanup;
         for (j = 0; j < sizeof(formats) / sizeof(formats[0]); ++j) {
-            if (!check_serialization(key, formats[j], 0) ||
+            if (!check_spki_selection(key, formats[j]) ||
+                !check_serialization(key, formats[j], 0) ||
                 !check_serialization(key, formats[j], 1) ||
                 !check_selected_cipher(key, formats[j], "AES-256-CBC") ||
                 !check_selected_cipher(key, formats[j], "AES-192-CBC") ||

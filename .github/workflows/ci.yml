@@ -160,8 +160,8 @@ jobs:
     env:
       OPENSSL_CONF: /dev/null
       CC: gcc
-      OPENSSL_TAG: openssl-3.5.9
-      OPENSSL_COMMIT: 45e844fa2a14ec92d146bd8f5778ac130b6625fb
+      OPENSSL_TAG: openssl-4.1.0
+      OPENSSL_COMMIT: 2f4e3a5fec05394068cfa7379890ab552483a8a6
     steps:
       - name: Check out provider and pinned Bee2
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

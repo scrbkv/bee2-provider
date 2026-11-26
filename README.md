@@ -96,19 +96,16 @@ BIGN private keys use PKCS#8 `PrivateKeyInfo` and
 `EncryptedPrivateKeyInfo`; public keys use `SubjectPublicKeyInfo`. Both DER
 and PEM encodings are supported. The OpenSSL `file:` STORE loader is supported.
 
-OpenSSL's default PEM-to-DER and PKCS#8/SPKI decoder chain handles the
-standard containers and dispatches by algorithm OID. The registered BIGN OID
-alias routes the key payload to the BIGN-specific decoder. Bee2 Provider adds
-the STB PBES2 decryption step and a small PEM bridge for STB-encrypted keys:
-OpenSSL's generic PBES2 decoder otherwise attempts BELT-KWP as an ordinary
-cipher before STB-specific private-scalar decryption can run. The bridge uses
-OpenSSL's native PEM parser and limits raw PEM input to 2 MiB, alongside the
-1 MiB limit on decoded key DER. This is a provider-bridge limit; it does not
-change the limits of OpenSSL's default decoder.
+OpenSSL serializes the PKCS#8 and SPKI containers and handles PEM. Bee2 encodes
+explicit parameters for the three standard BIGN curves. OpenSSL adds the optional
+cofactor. The decoder accepts these curves by name or by their explicit
+parameters. Inherited parameters require the enclosing protocol to supply a
+curve, which is outside the current decoder interface.
 
-For PEM and standard PBES2 decoding, leave the decoder property query broad
-enough to include the default provider; `provider=bee2` alone excludes the
-standard PEM and generic PBES2 decoder steps.
+The decoder bridge handles Annex E before OpenSSL's generic PBES2 decoder can
+attempt to decrypt it. Other inputs continue through the usual decoder
+chain. The bridge limits PEM text to 2 MiB and decoded key DER to 1 MiB.
+Ordinary PBES2 decoding requires the default provider in the decoder chain.
 
 When private-key encryption is explicitly requested with
 `OSSL_ENCODER_CTX_set_cipher()`, `"default"` or `"belt-kwp256"` selects
@@ -134,7 +131,8 @@ The STB PBES2 encoder defaults to 10,000 iterations and a fresh 16-byte salt.
 Use `OSSL_ENCODER_CTX_set_params()` with `stb-pbkdf2-iterations` (unsigned int)
 and `stb-pbkdf2-saltlen` (`size_t`) to customize them. The Annex E minimums
 (10,000 iterations and 8 salt bytes) are security recommendations, not format
-requirements; the encoder accepts positive iteration counts up to INT_MAX.
+requirements. The encoder accepts an empty salt and positive iteration
+counts up to `INT_MAX` for the Annex E profile.
 The resulting encrypted DER container must fit the provider's 1 MiB input
 limit; oversized salts and encodings are rejected. Choosing weaker values
 is the caller's responsibility.
@@ -184,13 +182,22 @@ this provider-specific iteration limit.
 Passwords and plaintext key material are cleared from provider temporary
 buffers on cleanup.
 
+## BIGN signatures in certificates and requests
+
+OpenSSL 4.1 and later can verify BIGN signatures with fixed HBELT and BASH
+digest OIDs through its standard X.509 and CSR APIs. Earlier OpenSSL releases
+can sign these objects and verify BIGN signatures through EVP with an
+explicit digest. With `bign-with-hspec`, applications must read the digest
+OID from the signature's `AlgorithmIdentifier` and pass the digest to EVP.
+OpenSSL's generic ASN.1 verifier does not pass those parameters to providers.
+
 ## Cipher behavior
 
 BELT-ECB and BELT-CBC use PKCS#7 padding by default. Disable padding with
 `EVP_CIPHER_CTX_set_padding(ctx, 0)` or `openssl enc -nopad` for STB
 ciphertext stealing. Nonaligned CTS input must contain at least one complete
-16-byte block, and the final partial input must be supplied in a single
-`EVP_CipherUpdate()` operation. Aligned input can be streamed across updates.
+16-byte block, and the final `EVP_CipherUpdate()` must contain both the last complete block
+and the partial block. Aligned input can be streamed across updates.
 With padding enabled, the output is PKCS#7 ciphertext rather than STB CTS.
 
 BELT-CFB, BELT-CTR, BELT-DWP, BELT-CHE, BELT-KWP and BASH-PRG-AE accept

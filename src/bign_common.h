@@ -27,6 +27,7 @@ typedef struct {
 
 typedef struct {
     OSSL_LIB_CTX *libctx;
+    unsigned int strength;
     int failed;
 } bee2_bign_rng_t;
 
@@ -53,7 +54,7 @@ int bee2_bign_derive_pubkey(const bee2_bign_variant_t *variant,
 
 int bee2_bign_keypair_generate(const bee2_bign_variant_t *variant,
                                unsigned char *priv, unsigned char *pub,
-                               bee2_bign_rng_t *rng);
+                               OSSL_LIB_CTX *libctx);
 int bee2_bign_key_wrap(const bee2_bign_variant_t *variant, unsigned char *token,
                        const unsigned char *key, size_t len,
                        const unsigned char header[16], const unsigned char *pub,

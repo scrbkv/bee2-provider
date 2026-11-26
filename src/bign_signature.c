@@ -301,6 +301,7 @@ static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
     if (!hash_oid)
         return 0;
     rng.libctx = ctx->libctx;
+    rng.strength = ctx->variant->security_bits;
     OPENSSL_cleanse(&curve, sizeof(curve));
     switch (bign_sig_fixed_curve(ctx, hash_oid)) {
     case 1:
@@ -335,6 +336,10 @@ static int bign_sig_sign_hash(const bee2_bign_sig_ctx_t *ctx,
     ok = 1;
 
 cleanup:
+    if (!ok) {
+        OPENSSL_cleanse(sig, need_sig_len);
+        *siglen = 0;
+    }
     bee2_bign_cleanse(&curve, sizeof(curve));
     return ok;
 }
@@ -735,6 +740,8 @@ static int bign_sig_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         ok = bign_sig_set_md(ctx, mdname, props);
     } else if (mdprops && ctx->mdname[0] != '\0') {
         ok = bign_sig_set_md(ctx, ctx->mdname, mdprops);
+    } else if (mdprops) {
+        ok = bign_str_copy(ctx->mdprops, sizeof(ctx->mdprops), mdprops);
     }
     if (!ok)
         goto cleanup;

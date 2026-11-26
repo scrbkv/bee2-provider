@@ -114,12 +114,23 @@ static int check_bign_key_der(void)
     key.has_priv = 1;
     key.priv[0] = 3;
     for (encoding_case = 0; encoding_case < 3; ++encoding_case) {
+        PKCS8_PRIV_KEY_INFO *p8;
+        X509_PUBKEY *spki;
+        int private_size, public_size;
+
         key.encode_explicit = encoding_case != 0;
         key.encode_cofactor = encoding_case == 2;
-        private_der = bee2_bign_asn1_encode_pkcs8_der(&key, &private_len);
-        public_der = bee2_bign_asn1_encode_spki_der(&key, &public_len);
-        if (!private_der || !public_der || private_len < 32 || public_len < 64 ||
-            !check_der_mutations(private_der, private_len, curve, 0) ||
+        p8 = bee2_bign_asn1_pkcs8(&key);
+        spki = bee2_bign_asn1_spki(&key);
+        private_size = p8 != NULL ? i2d_PKCS8_PRIV_KEY_INFO(p8, &private_der) : 0;
+        public_size = spki != NULL ? i2d_X509_PUBKEY(spki, &public_der) : 0;
+        PKCS8_PRIV_KEY_INFO_free(p8);
+        X509_PUBKEY_free(spki);
+        if (private_size < 32 || public_size < 64)
+            goto done;
+        private_len = (size_t)private_size;
+        public_len = (size_t)public_size;
+        if (!check_der_mutations(private_der, private_len, curve, 0) ||
             !check_der_mutations(public_der, public_len, curve, 1))
             goto done;
 
@@ -173,11 +184,9 @@ static int check_bign_key_der(void)
     }
 
     absent.variant = curve;
-    if (bee2_bign_asn1_encode_pkcs8_der(&absent, &private_len) != NULL ||
-        bee2_bign_asn1_encode_spki_der(&absent, &public_len) != NULL ||
-        bee2_bign_asn1_encode_pkcs8_der(&key, NULL) != NULL ||
-        bee2_bign_asn1_encode_spki_der(&key, NULL) != NULL ||
-        bee2_bign_asn1_encode_pkcs8_der(NULL, &private_len) != NULL ||
+    if (bee2_bign_asn1_pkcs8(&absent) != NULL ||
+        bee2_bign_asn1_spki(&absent) != NULL ||
+        bee2_bign_asn1_pkcs8(NULL) != NULL ||
         bee2_bign_asn1_decode_pkcs8_der(NULL, 0, curve, &parsed) ||
         bee2_bign_asn1_decode_spki_der(NULL, 0, curve, &parsed))
         goto done;

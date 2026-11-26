@@ -70,7 +70,12 @@ static int check_variant(const char *name, int is_hmac)
         EVP_RAND_CTX_set_params(implicit, incorrect_iv_type) > 0)
         goto done;
     if (is_hmac) {
-        if (EVP_RAND_CTX_set_params(implicit, empty_hmac_key) > 0)
+        if (EVP_RAND_CTX_set_params(implicit, empty_hmac_key) <= 0 ||
+            EVP_RAND_instantiate(implicit, 1, 0, NULL, 0, NULL) > 0 ||
+            EVP_RAND_instantiate(implicit, 0, 0, NULL, 0, NULL) <= 0 ||
+            EVP_RAND_get_strength(implicit) != 0 ||
+            EVP_RAND_generate(implicit, out1, sizeof(out1), 0, 0, NULL, 0) <= 0 ||
+            EVP_RAND_uninstantiate(implicit) <= 0)
             goto done;
     } else if (EVP_RAND_CTX_set_params(implicit, short_ctr_key) > 0 ||
                EVP_RAND_CTX_set_params(implicit, short_ctr_iv) > 0)
@@ -78,6 +83,8 @@ static int check_variant(const char *name, int is_hmac)
 
     if (EVP_RAND_CTX_set_params(implicit, key_only) <= 0 ||
         EVP_RAND_CTX_set_params(explicit, key_and_iv) <= 0 ||
+        EVP_RAND_CTX_get_params(explicit, read_iv) <= 0 ||
+        read_iv[0].return_size != (is_hmac ? 0u : sizeof(iv)) ||
         EVP_RAND_instantiate(implicit, 256, 0, NULL, 0, NULL) <= 0 ||
         EVP_RAND_instantiate(explicit, 256, 0, NULL, 0, NULL) <= 0 ||
         EVP_RAND_generate(implicit, out1, sizeof(out1), 256, 0, NULL, 0) <= 0 ||

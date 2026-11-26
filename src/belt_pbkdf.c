@@ -1,13 +1,10 @@
 #include "bee2_backend.h"
 #include "provider.h"
-#include "provider_util.h"
 
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
-#include <openssl/kdf.h>
 
 typedef struct {
-    OSSL_LIB_CTX *libctx;
     unsigned char *password;
     size_t password_len;
     unsigned char *salt;
@@ -30,11 +27,8 @@ static void belt_pbkdf_clear(bee2_belt_pbkdf_ctx_t *ctx) {
 }
 
 static void *belt_pbkdf_newctx(void *provctx) {
-    bee2_belt_pbkdf_ctx_t *ctx = OPENSSL_zalloc(sizeof(*ctx));
-
-    if (ctx != NULL)
-        ctx->libctx = bee2_provider_libctx(provctx);
-    return ctx;
+    (void)provctx;
+    return OPENSSL_zalloc(sizeof(bee2_belt_pbkdf_ctx_t));
 }
 
 static void belt_pbkdf_freectx(void *vctx) {
@@ -94,32 +88,24 @@ static int belt_pbkdf_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
 static int
 belt_pbkdf_derive(void *vctx, unsigned char *key, size_t keylen, const OSSL_PARAM params[]) {
     bee2_belt_pbkdf_ctx_t *ctx = vctx;
-    EVP_KDF *kdf;
-    EVP_KDF_CTX *kctx;
-    uint64_t iterations;
-    int pkcs5 = 1;
-    int ok;
-
-    if (!belt_pbkdf_set_ctx_params(ctx, params))
-        return 0;
-    if (key == NULL || keylen != 32 ||
+    if (key == NULL || keylen != 32 || !belt_pbkdf_set_ctx_params(ctx, params) ||
         !ctx->password_set || !ctx->salt_set || ctx->iter == 0)
         return 0;
-    iterations = (uint64_t)ctx->iter;
-    OSSL_PARAM kdf_params[] = {
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_PASSWORD, ctx->password, ctx->password_len),
-        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, ctx->salt, ctx->salt_len),
-        OSSL_PARAM_uint64(OSSL_KDF_PARAM_ITER, &iterations),
-        OSSL_PARAM_utf8_string(OSSL_KDF_PARAM_DIGEST, "belt-hash", 0),
-        OSSL_PARAM_int(OSSL_KDF_PARAM_PKCS5, &pkcs5),
-        OSSL_PARAM_END
+    return beltPBKDF2(key, ctx->password, ctx->password_len,
+                      ctx->iter, ctx->salt, ctx->salt_len) == ERR_OK;
+}
+
+static const OSSL_PARAM *belt_pbkdf_gettable_params(void *provctx) {
+    static const OSSL_PARAM params[] = {
+        OSSL_PARAM_size_t(OSSL_KDF_PARAM_SIZE, NULL), OSSL_PARAM_END
     };
-    kdf = EVP_KDF_fetch(ctx->libctx, "PBKDF2", "provider=default");
-    kctx = kdf != NULL ? EVP_KDF_CTX_new(kdf) : NULL;
-    ok = kctx != NULL && EVP_KDF_derive(kctx, key, keylen, kdf_params) > 0;
-    EVP_KDF_CTX_free(kctx);
-    EVP_KDF_free(kdf);
-    return ok;
+    (void)provctx;
+    return params;
+}
+
+static int belt_pbkdf_get_params(OSSL_PARAM params[]) {
+    OSSL_PARAM *size = OSSL_PARAM_locate(params, OSSL_KDF_PARAM_SIZE);
+    return size == NULL || OSSL_PARAM_set_size_t(size, 32);
 }
 
 static const OSSL_PARAM belt_pbkdf_settable[] = {
@@ -135,6 +121,8 @@ static const OSSL_PARAM *belt_pbkdf_settable_ctx_params(void *ctx, void *provctx
 }
 
 const OSSL_DISPATCH bee2_belt_pbkdf_functions[] = {
+    {OSSL_FUNC_KDF_GETTABLE_PARAMS, (void (*)(void))belt_pbkdf_gettable_params},
+    {OSSL_FUNC_KDF_GET_PARAMS, (void (*)(void))belt_pbkdf_get_params},
     {OSSL_FUNC_KDF_NEWCTX, (void (*)(void))belt_pbkdf_newctx},
     {OSSL_FUNC_KDF_FREECTX, (void (*)(void))belt_pbkdf_freectx},
     {OSSL_FUNC_KDF_RESET, (void (*)(void))belt_pbkdf_reset},

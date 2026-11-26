@@ -6,7 +6,7 @@
  *   BELT-CBC  — Cipher Block Chaining
  *   BELT-CFB  — Cipher Feedback (streaming; supports partial last block)
  *   BELT-CTR  — Counter mode (streaming; supports partial last block)
- *   ECB/CBC without padding require complete blocks; with padding use PKCS#7.
+ *   ECB/CBC use ciphertext stealing without padding and PKCS#7 otherwise.
  *   BELT-BDE  — Block Disk Encryption (XEX-based tweakable block cipher)
  *
  * Key  : 16/24/32 bytes (128/192/256-bit)
@@ -103,6 +103,7 @@ typedef struct {
     int have_last;
     int padding;
     int started;
+    int stolen;
     int finalized;
 } bee2_belt_ctx_t;
 
@@ -265,6 +266,7 @@ static int belt_init(void *vctx,
     c->enc = enc;
     c->buf_len = 0;
     c->have_last = 0;
+    c->stolen = 0;
     c->finalized = 0;
     if (key != NULL) {
         c->mode->set_key(&c->backend_state, key, keylen);
@@ -339,12 +341,37 @@ static int belt_update(void *vctx,
         return 1;
     }
 
-    /* In raw ECB/CBC, Update consumes only whole blocks.  PKCS#7
-     * operations retain the usual buffered EVP behavior. */
-    if (!c->padding &&
-        (c->mode == &belt_ecb_mode || c->mode == &belt_cbc_mode) &&
-        inl % BELT_BLOCK_SIZE != 0)
+    if (inl == 0)
+        return 1;
+    if (c->stolen)
         return 0;
+
+    /* A partial final update contains both blocks used by Bee2 CTS. */
+    if (!c->padding && inl % BELT_BLOCK_SIZE != 0 && c->mode != &belt_bde_mode) {
+        size_t last_block = inl - inl % BELT_BLOCK_SIZE;
+
+        if (last_block == 0 || outsize < inl)
+            return 0;
+        last_block -= BELT_BLOCK_SIZE;
+        if (c->mode == &belt_cbc_mode && !c->enc)
+            memcpy(c->updated_iv, in + last_block, BELT_BLOCK_SIZE);
+        memmove(out, in, inl);
+        if (c->mode == &belt_ecb_mode) {
+            if (c->enc)
+                beltECBStepE(out, inl, &c->backend_state.state);
+            else
+                beltECBStepD(out, inl, &c->backend_state.state);
+        } else if (c->enc) {
+            beltCBCStepE(out, inl, &c->backend_state.state);
+            memcpy(c->updated_iv, out + last_block, BELT_BLOCK_SIZE);
+        } else {
+            beltCBCStepD(out, inl, &c->backend_state.state);
+        }
+        c->stolen = 1;
+        c->started = 1;
+        *outl = inl;
+        return 1;
+    }
 
     if (inl > SIZE_MAX - c->buf_len)
         return 0;

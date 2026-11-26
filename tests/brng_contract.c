@@ -9,8 +9,8 @@ static int check_ctr_additional_input(void)
 {
     unsigned char key[32] = {0}, iv[32] = {0};
     unsigned char first_left, first_right, first_overlap;
-    unsigned char x[16] = {1}, y[16] = {2};
-    unsigned char left_output[16], right_output[16], overlap_output[16];
+    unsigned char x[32] = {1}, y[32] = {2};
+    unsigned char left_output[32], right_output[32], overlap_output[32];
     EVP_RAND *alg = NULL;
     EVP_RAND_CTX *left = NULL, *right = NULL, *overlap = NULL;
     OSSL_PARAM params[] = {
@@ -36,7 +36,8 @@ static int check_ctr_additional_input(void)
         first_left != first_right || first_left != first_overlap)
         goto cleanup;
     memcpy(overlap_output, x, sizeof(x));
-    if (!EVP_RAND_generate(left, left_output, sizeof(left_output), 256, 0, x, sizeof(x)) ||
+    if (!EVP_RAND_generate(left, left_output, 1, 256, 0, x, sizeof(x)) ||
+        !EVP_RAND_generate(left, left_output + 1, sizeof(left_output) - 1, 256, 0, NULL, 0) ||
         !EVP_RAND_generate(right, right_output, sizeof(right_output), 256, 0, y, sizeof(y)) ||
         !EVP_RAND_generate(overlap, overlap_output, sizeof(overlap_output), 256, 0,
                            overlap_output, sizeof(overlap_output)) ||
@@ -81,8 +82,10 @@ static int check_rand(const char *name, int is_hmac) {
         if (EVP_RAND_generate(ctx, out, sizeof(out), 256, 0, extra, sizeof(extra)))
             goto end;
     } else {
-        if (EVP_RAND_generate(ctx, out, 1, 256, 0, extra, sizeof(extra)))
-            goto end; /* X must fit within the output provided to Bee2. */
+        unsigned char too_much_input[33] = {0};
+
+        if (EVP_RAND_generate(ctx, out, 1, 256, 0, too_much_input, sizeof(too_much_input)))
+            goto end;
     }
     if (!EVP_RAND_generate(ctx, out, sizeof(out), 256, 0, NULL, 0) ||
         !EVP_RAND_reseed(ctx, 0, entropy, sizeof(entropy), NULL, 0) ||

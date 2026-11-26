@@ -30,12 +30,13 @@ typedef struct {
     unsigned char *iv;
     size_t iv_len;
     int have_key;
-    int have_iv;
     bee2_backend_state_t backend;
+    unsigned char ctr_block[BRNG_BLOCK_SIZE];
 } bee2_brng_ctx_t;
 
 static void brng_clear_backend(bee2_brng_ctx_t *c) {
     OPENSSL_cleanse(&c->backend, sizeof(c->backend));
+    OPENSSL_cleanse(c->ctr_block, sizeof(c->ctr_block));
     c->ctr_unused = 0;
     c->instantiated = 0;
 }
@@ -138,12 +139,12 @@ static int brng_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
             brngCTRStepG(live_iv, &c->backend);
             iv_data = live_iv;
         } else {
-            iv_data = c->have_iv ? c->iv : zero_iv;
+            iv_data = c->iv ? c->iv : zero_iv;
         }
         iv_len = BRNG_BLOCK_SIZE;
     } else {
-        iv_data = c->have_iv ? c->iv : &empty_octet;
-        iv_len = c->have_iv ? c->iv_len : 0;
+        iv_data = c->iv ? c->iv : &empty_octet;
+        iv_len = c->iv_len;
     }
     return OSSL_PARAM_set_octet_string(p, iv_data, iv_len);
 }
@@ -173,8 +174,7 @@ static int brng_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     if (key_param &&
         (!OSSL_PARAM_get_octet_string_ptr(key_param, &key_data, &key_len) ||
          (key_data == NULL && key_len != 0) ||
-         (c->mode == BRNG_MODE_CTR_HBELT && key_len != BRNG_BLOCK_SIZE) ||
-         (c->mode == BRNG_MODE_HMAC_HBELT && key_len == 0)))
+         (c->mode == BRNG_MODE_CTR_HBELT && key_len != BRNG_BLOCK_SIZE)))
         return 0;
     if (iv_param &&
         (!OSSL_PARAM_get_octet_string_ptr(iv_param, &iv_data, &iv_len) ||
@@ -202,7 +202,6 @@ static int brng_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
         OPENSSL_clear_free(c->iv, c->iv_len);
         c->iv = new_iv;
         c->iv_len = iv_len;
-        c->have_iv = 1;
     }
     return 1;
 }
@@ -213,7 +212,6 @@ static int brng_instantiate(void *vctx,
                             const unsigned char *pstr,
                             size_t pstr_len,
                             const OSSL_PARAM params[]) {
-    static const unsigned char zero_iv[BRNG_BLOCK_SIZE] = {0};
     static const unsigned char empty_octet = 0;
     bee2_brng_ctx_t *c = vctx;
     unsigned int max_strength;
@@ -225,9 +223,7 @@ static int brng_instantiate(void *vctx,
     brng_clear_backend(c);
     if (prediction_resistance || pstr_len != 0 || !brng_set_ctx_params(vctx, params))
         return 0;
-    if (!c->have_key || c->key_len == 0)
-        return 0;
-    if (c->mode == BRNG_MODE_CTR_HBELT && c->key_len != BRNG_BLOCK_SIZE)
+    if (!c->have_key)
         return 0;
 
     max_strength = c->key_len >= BRNG_BLOCK_SIZE ? BRNG_STRENGTH_BITS
@@ -235,13 +231,13 @@ static int brng_instantiate(void *vctx,
     if (strength > max_strength)
         return 0;
     if (c->mode == BRNG_MODE_CTR_HBELT) {
-        brngCTRStart(&c->backend, c->key, c->have_iv ? c->iv : zero_iv);
+        brngCTRStart(&c->backend, c->key, c->iv);
     } else {
         brngHMACStart(&c->backend,
-                      c->key,
+                      c->key ? c->key : &empty_octet,
                       c->key_len,
-                      c->have_iv ? c->iv : &empty_octet,
-                      c->have_iv ? c->iv_len : 0);
+                      c->iv ? c->iv : &empty_octet,
+                      c->iv_len);
     }
     c->instantiated = 1;
     c->strength = max_strength;
@@ -256,7 +252,7 @@ static int brng_uninstantiate(void *vctx) {
     c->key = NULL;
     c->iv = NULL;
     c->key_len = c->iv_len = 0;
-    c->have_key = c->have_iv = 0;
+    c->have_key = 0;
     c->strength = BRNG_STRENGTH_BITS;
     return 1;
 }
@@ -266,9 +262,8 @@ static int brng_generate_ctr(bee2_brng_ctx_t *c,
                              size_t outlen,
                              const unsigned char *addin,
                              size_t addin_len) {
-    unsigned char block[BRNG_BLOCK_SIZE];
     unsigned char *additional = NULL;
-    size_t pos = 0;
+    size_t input_pos = 0;
 
     /* Copy additional input before changing BRNG state. It may overlap
      * the output, and an allocation failure must leave the state intact. */
@@ -280,31 +275,29 @@ static int brng_generate_ctr(bee2_brng_ctx_t *c,
 
     /* A new X must apply to a new BRNG block. Bee2 otherwise returns
      * previously reserved bytes without reading the caller's X. */
-    if (addin_len != 0 && c->ctr_unused != 0) {
-        brngCTRStepR(block, c->ctr_unused, &c->backend);
+    if (addin_len != 0)
         c->ctr_unused = 0;
-        OPENSSL_cleanse(block, sizeof(block));
+    while (outlen != 0) {
+        size_t chunk;
+
+        if (c->ctr_unused == 0) {
+            size_t input = addin_len - input_pos;
+
+            if (input > BRNG_BLOCK_SIZE)
+                input = BRNG_BLOCK_SIZE;
+            memset(c->ctr_block, 0, BRNG_BLOCK_SIZE);
+            if (input != 0)
+                memcpy(c->ctr_block, additional + input_pos, input);
+            input_pos += input;
+            brngCTRStepR(c->ctr_block, BRNG_BLOCK_SIZE, &c->backend);
+            c->ctr_unused = BRNG_BLOCK_SIZE;
+        }
+        chunk = outlen < c->ctr_unused ? outlen : c->ctr_unused;
+        memcpy(out, c->ctr_block + BRNG_BLOCK_SIZE - c->ctr_unused, chunk);
+        c->ctr_unused -= chunk;
+        out += chunk;
+        outlen -= chunk;
     }
-    while (pos < outlen) {
-        size_t chunk = outlen - pos;
-        size_t input = pos < addin_len ? addin_len - pos : 0;
-        if (chunk > sizeof(block))
-            chunk = sizeof(block);
-        if (input > chunk)
-            input = chunk;
-        memset(block, 0, sizeof(block));
-        if (input)
-            memcpy(block, additional + pos, input);
-        brngCTRStepR(block, chunk, &c->backend);
-        memcpy(out + pos, block, chunk);
-        if (chunk <= c->ctr_unused)
-            c->ctr_unused -= chunk;
-        else
-            c->ctr_unused =
-                (BRNG_BLOCK_SIZE - (chunk - c->ctr_unused) % BRNG_BLOCK_SIZE) % BRNG_BLOCK_SIZE;
-        pos += chunk;
-    }
-    OPENSSL_cleanse(block, sizeof(block));
     OPENSSL_clear_free(additional, addin_len);
     return 1;
 }
@@ -329,9 +322,9 @@ static int brng_generate(void *vctx,
             brngHMACStepR(out, outlen, &c->backend);
         return 1;
     }
-    /* Bee2 BRNG-CTR consumes X from the output buffer. If X is longer
-     * than the requested output, it would otherwise be silently ignored. */
-    if (addin_len > outlen)
+    /* STB 34.101.47 assigns a complete X block to each new Y block. */
+    if (addin_len != 0 && (outlen == 0 ||
+        (addin_len - 1) / BRNG_BLOCK_SIZE > (outlen - 1) / BRNG_BLOCK_SIZE))
         return 0;
     return brng_generate_ctr(c, out, outlen, addin, addin_len);
 }
@@ -358,15 +351,9 @@ static int brng_reseed(void *vctx,
 
 static int brng_verify_zeroization(void *vctx) {
     const bee2_brng_ctx_t *c = vctx;
-    const unsigned char *p = (const unsigned char *)&c->backend;
-    size_t i;
-    if (c->instantiated || c->have_key || c->have_iv)
-        return 0;
-    for (i = 0; i < sizeof(c->backend); ++i) {
-        if (p[i])
-            return 0;
-    }
-    return 1;
+    return !c->instantiated && !c->have_key && !c->key && !c->iv &&
+           memIsZero(&c->backend, sizeof(c->backend)) &&
+           memIsZero(c->ctr_block, sizeof(c->ctr_block));
 }
 
 const OSSL_DISPATCH bee2_brng_ctr_hbelt_functions[] = {

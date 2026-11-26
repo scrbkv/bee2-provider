@@ -222,6 +222,7 @@ static int bign_keyexchange_set_ctx_params(void *vctx, const OSSL_PARAM params[]
 }
 
 static int bign_keyexchange_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
+    static const unsigned char empty = 0;
     const bee2_bign_keyexchange_ctx_t *ctx = vctx;
     OSSL_PARAM *param;
     const char *kdf_name;
@@ -231,7 +232,7 @@ static int bign_keyexchange_get_ctx_params(void *vctx, OSSL_PARAM params[]) {
     if (param && !OSSL_PARAM_set_utf8_string(param, kdf_name))
         return 0;
     param = OSSL_PARAM_locate(params, OSSL_EXCHANGE_PARAM_KDF_UKM);
-    if (param && !OSSL_PARAM_set_octet_string(param, ctx->ukm, ctx->ukm_len))
+    if (param && !OSSL_PARAM_set_octet_string(param, ctx->ukm ? ctx->ukm : &empty, ctx->ukm_len))
         return 0;
     param = OSSL_PARAM_locate(params, OSSL_EXCHANGE_PARAM_KDF_OUTLEN);
     if (param && !OSSL_PARAM_set_size_t(param, ctx->kdf_output_len))

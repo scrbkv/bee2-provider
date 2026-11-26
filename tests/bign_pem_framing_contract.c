@@ -1,4 +1,4 @@
-/* OpenSSL's default PEM decoder chain: CRLF, no final newline, malformed footer. */
+/* PEM boundaries through the OpenSSL decoder chain and the Bee2 bridge. */
 #include <openssl/core_names.h>
 #include <openssl/decoder.h>
 #include <openssl/encoder.h>
@@ -204,6 +204,8 @@ int main(int argc, char **argv)
         if (!test_case(names[i], 0) || !test_case(names[i], 1))
             goto done;
     }
+    OSSL_PROVIDER_unload(def);
+    def = NULL;
     if (!test_oversized_pem())
         goto done;
     ok = 1;

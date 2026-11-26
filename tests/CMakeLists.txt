@@ -313,6 +313,17 @@ add_test(NAME bee2_bign_codec_roundtrip
         -P "${CMAKE_SOURCE_DIR}/tests/bign_cli_contract.cmake")
 set_tests_properties(bee2_bign_codec_roundtrip PROPERTIES LABELS "regression;bign;codec")
 
+if(OPENSSL_VERSION VERSION_GREATER_EQUAL "4.1")
+    add_test(NAME bee2_bign_x509_signatures
+        COMMAND ${CMAKE_COMMAND}
+            "-DOPENSSL_EXECUTABLE=${BEE2_OPENSSL_EXECUTABLE}"
+            "-DPROVIDER_PATH=$<TARGET_FILE_DIR:bee2_provider>"
+            "-DWORK_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/bign-x509-signatures"
+            "-DCASE=signatures"
+            -P "${CMAKE_SOURCE_DIR}/tests/bign_cli_contract.cmake")
+    set_tests_properties(bee2_bign_x509_signatures PROPERTIES LABELS "regression;bign;x509")
+endif()
+
 add_executable(bee2_bign_der_framing
     bign_der_framing.c
     ${CMAKE_SOURCE_DIR}/src/bign_asn1.c
